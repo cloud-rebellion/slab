@@ -101,7 +101,7 @@
 						e.stopPropagation();
 						onMove?.(media);
 					}}
-					class="pointer-events-auto inline-flex h-7 w-7 items-center justify-center rounded-md border border-border bg-bg-surface/90 text-text-secondary backdrop-blur transition-colors hover:bg-bg-hover hover:text-text-primary"
+					class="pointer-events-auto inline-flex h-7 w-7 items-center justify-center rounded-md border border-border bg-bg-surface/90 text-text-secondary backdrop-blur transition-colors hover:bg-bg-hover hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-1 focus-visible:ring-offset-bg"
 					aria-label="Move to folder"
 				>
 					<svg class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor">
@@ -116,7 +116,7 @@
 						e.stopPropagation();
 						onEdit?.(media);
 					}}
-					class="pointer-events-auto inline-flex h-7 w-7 items-center justify-center rounded-md border border-border bg-bg-surface/90 text-text-secondary backdrop-blur transition-colors hover:bg-bg-hover hover:text-text-primary"
+					class="pointer-events-auto inline-flex h-7 w-7 items-center justify-center rounded-md border border-border bg-bg-surface/90 text-text-secondary backdrop-blur transition-colors hover:bg-bg-hover hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-1 focus-visible:ring-offset-bg"
 					aria-label="Edit alt text"
 				>
 					<svg
@@ -141,7 +141,7 @@
 						e.stopPropagation();
 						onCopyUrl?.(media);
 					}}
-					class="pointer-events-auto inline-flex h-7 w-7 items-center justify-center rounded-md border border-border bg-bg-surface/90 text-text-secondary backdrop-blur transition-colors hover:bg-bg-hover hover:text-text-primary"
+					class="pointer-events-auto inline-flex h-7 w-7 items-center justify-center rounded-md border border-border bg-bg-surface/90 text-text-secondary backdrop-blur transition-colors hover:bg-bg-hover hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-1 focus-visible:ring-offset-bg"
 					aria-label="Copy URL"
 				>
 					<svg
@@ -166,7 +166,7 @@
 						e.stopPropagation();
 						onDelete?.(media);
 					}}
-					class="pointer-events-auto inline-flex h-7 w-7 items-center justify-center rounded-md border border-danger/40 bg-bg-surface/90 text-danger backdrop-blur transition-colors hover:bg-danger/10"
+					class="pointer-events-auto inline-flex h-7 w-7 items-center justify-center rounded-md border border-danger/40 bg-bg-surface/90 text-danger backdrop-blur transition-colors hover:bg-danger/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-danger focus-visible:ring-offset-1 focus-visible:ring-offset-bg"
 					aria-label="Delete"
 				>
 					<svg

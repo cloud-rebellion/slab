@@ -319,7 +319,7 @@
 				aria-pressed={previewOpen}
 				aria-label={hasID ? 'Open live preview' : 'Save the page once before previewing'}
 				title={hasID ? 'Live preview' : 'Save the page once first'}
-				class="inline-flex h-7 w-7 items-center justify-center rounded-md transition-colors text-text-muted hover:bg-bg-hover hover:text-text-primary disabled:opacity-40 disabled:cursor-not-allowed"
+				class="inline-flex h-7 w-7 items-center justify-center rounded-md transition-colors text-text-muted hover:bg-bg-hover hover:text-text-primary disabled:opacity-40 disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-1 focus-visible:ring-offset-bg"
 				disabled={!hasID}
 				onclick={() => (previewOpen = true)}
 			>
@@ -332,7 +332,7 @@
 				title={codeOpen ? 'Hide source' : hasID ? 'Show source' : 'Save the page once first'}
 				class="inline-flex h-7 w-7 items-center justify-center rounded-md transition-colors {codeOpen
 					? 'bg-bg-elevated text-text-primary'
-					: 'text-text-muted hover:bg-bg-hover hover:text-text-primary'} disabled:opacity-40 disabled:cursor-not-allowed"
+					: 'text-text-muted hover:bg-bg-hover hover:text-text-primary'} disabled:opacity-40 disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-1 focus-visible:ring-offset-bg"
 				disabled={!hasID}
 				onclick={toggleCode}
 			>
@@ -340,7 +340,7 @@
 			</button>
 			<button
 				type="button"
-				class="inline-flex h-7 items-center gap-1 rounded-md px-2 text-[12px] text-text-muted transition-colors hover:bg-bg-hover hover:text-danger"
+				class="inline-flex h-7 items-center gap-1 rounded-md px-2 text-[12px] text-text-muted transition-colors hover:bg-bg-hover hover:text-danger focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-danger focus-visible:ring-offset-1 focus-visible:ring-offset-bg"
 				onclick={onDelete}
 			>
 				<Trash2 class="h-3.5 w-3.5" />
@@ -348,7 +348,7 @@
 			</button>
 			<button
 				type="button"
-				class="inline-flex h-7 w-7 items-center justify-center rounded-md text-text-muted transition-colors hover:bg-bg-hover hover:text-text-primary"
+				class="icon-btn"
 				aria-label={expanded ? 'Collapse' : 'Expand'}
 				onclick={onToggleExpanded}
 			>

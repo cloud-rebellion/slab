@@ -118,7 +118,7 @@
 		{#if onMove}
 			<button
 				type="button"
-				class="inline-flex h-7 w-7 items-center justify-center rounded-md text-text-muted transition-colors hover:bg-bg-hover hover:text-text-primary"
+				class="icon-btn"
 				aria-label="Move page"
 				title="Move to another silo or top-level"
 				onclick={onMove}
@@ -137,7 +137,7 @@
 		{#if onHistory}
 			<button
 				type="button"
-				class="inline-flex h-7 w-7 items-center justify-center rounded-md text-text-muted transition-colors hover:bg-bg-hover hover:text-text-primary"
+				class="icon-btn"
 				aria-label="Version history"
 				title="Version history"
 				onclick={onHistory}
@@ -147,7 +147,7 @@
 		{/if}
 		<button
 			type="button"
-			class="inline-flex h-7 w-7 items-center justify-center rounded-md text-text-muted transition-colors hover:bg-bg-hover hover:text-danger"
+			class="inline-flex h-7 w-7 items-center justify-center rounded-md text-text-muted transition-colors hover:bg-bg-hover hover:text-danger focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-1 focus-visible:ring-offset-bg"
 			aria-label="Delete page"
 			onclick={onDelete}
 		>

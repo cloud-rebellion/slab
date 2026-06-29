@@ -12,6 +12,7 @@
 	import Badge from '$lib/components/ui/Badge.svelte';
 	import Skeleton from '$lib/components/ui/Skeleton.svelte';
 	import EmptyState from '$lib/components/ui/EmptyState.svelte';
+	import ErrorState from '$lib/components/ui/ErrorState.svelte';
 	import type { Site, Evaluation } from '$lib/api/types';
 
 	let { data }: { data: { site: Site } } = $props();
@@ -235,9 +236,7 @@
 					{/each}
 				</div>
 			{:else if loadError}
-				<Card padding="md">
-					<p class="text-[13px] text-danger">{loadError}</p>
-				</Card>
+				<ErrorState message={loadError} onRetry={() => loadAll(siteID)} />
 			{:else if !evaluations || evaluations.length === 0}
 				<Card padding="none">
 					<EmptyState

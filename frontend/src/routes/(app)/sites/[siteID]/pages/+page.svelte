@@ -6,6 +6,7 @@
 	import Card from '$lib/components/ui/Card.svelte';
 	import Skeleton from '$lib/components/ui/Skeleton.svelte';
 	import EmptyState from '$lib/components/ui/EmptyState.svelte';
+	import ErrorState from '$lib/components/ui/ErrorState.svelte';
 	import Dialog from '$lib/components/ui/Dialog.svelte';
 	import Input from '$lib/components/ui/Input.svelte';
 	import Select from '$lib/components/ui/Select.svelte';
@@ -374,9 +375,7 @@
 				{/each}
 			</div>
 		{:else if loadError}
-			<Card padding="md">
-				<p class="text-[13px] text-danger">{loadError}</p>
-			</Card>
+			<ErrorState message={loadError} />
 		{:else if pages.length === 0}
 			<Card padding="none">
 				<EmptyState
