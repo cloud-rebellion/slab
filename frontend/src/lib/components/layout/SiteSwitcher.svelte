@@ -136,7 +136,7 @@
 		<Popover.Content
 			sideOffset={6}
 			align="start"
-			class="z-[110] w-72 rounded-xl border border-border bg-bg-surface p-2 shadow-xl focus:outline-none data-[state=open]:animate-fadeIn"
+			class="z-[110] w-72 rounded-xl border border-border bg-bg-surface p-2 shadow-popover focus:outline-none data-[state=open]:animate-fadeIn"
 		>
 			{#if loaded && sites.length === 0}
 				<div class="px-3 py-6 text-center">

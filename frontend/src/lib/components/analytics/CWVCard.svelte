@@ -136,7 +136,7 @@
 							<Badge variant={variantFor(m.rating)}>{badgeLabel(m.rating)}</Badge>
 						{/if}
 					</div>
-					<p class="mt-2 font-display text-2xl font-extralight tracking-tight text-text-primary">
+					<p class="mt-2 font-mono text-2xl font-normal tracking-tight tabular-nums text-text-primary">
 						{m && m.samples > 0 ? fmt(metric, m.p75) : '-'}
 					</p>
 					<p class="mt-1 text-[11px] text-text-muted">

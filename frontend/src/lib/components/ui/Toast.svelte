@@ -21,7 +21,7 @@
 >
 	{#each toasts.value as t (t.id)}
 		<div
-			class="pointer-events-auto flex items-start gap-3 rounded-xl border bg-bg-surface px-4 py-3 shadow-lg animate-fadeIn {kindClasses[
+			class="pointer-events-auto flex items-start gap-3 rounded-xl border bg-bg-surface px-4 py-3 shadow-popover animate-fadeIn {kindClasses[
 				t.kind
 			]}"
 			role="status"

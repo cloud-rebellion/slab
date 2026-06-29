@@ -64,7 +64,7 @@
 		<header class="flex items-end justify-between gap-6">
 			<div class="space-y-2">
 				<p class="font-mono text-[11px] uppercase tracking-[0.2em] text-text-muted">workspaces</p>
-				<h1 class="font-display text-4xl font-extralight tracking-tight text-text-primary">
+				<h1 class="page-title">
 					Sites
 				</h1>
 			</div>

@@ -156,7 +156,7 @@
 	<div class="mx-auto max-w-6xl space-y-12">
 		<header class="space-y-2">
 			<p class="font-mono text-[11px] uppercase tracking-[0.2em] text-text-muted">dashboard</p>
-			<h1 class="font-display text-4xl font-extralight tracking-tight text-text-primary">
+			<h1 class="page-title">
 				Welcome back{userName ? `, ${userName.split(' ')[0]}` : ''}.
 			</h1>
 		</header>
@@ -184,7 +184,7 @@
 			<section class="grid grid-cols-1 gap-5 md:grid-cols-3">
 				<div class="card p-6 animate-stagger-1">
 					<p class="text-sm font-medium text-text-secondary">Total sites</p>
-					<p class="mt-3 font-display text-3xl font-extralight tracking-tight text-text-primary">
+					<p class="mt-3 font-mono text-3xl font-normal tracking-tight tabular-nums text-text-primary">
 						{sites.length}
 					</p>
 					<p class="mt-1 text-xs text-text-muted">
@@ -194,7 +194,7 @@
 
 				<div class="card p-6 animate-stagger-2">
 					<p class="text-sm font-medium text-text-secondary">Builds, last 7 days</p>
-					<p class="mt-3 font-display text-3xl font-extralight tracking-tight text-text-primary">
+					<p class="mt-3 font-mono text-3xl font-normal tracking-tight tabular-nums text-text-primary">
 						{recent.length === 0 ? '0' : buildsLast7Days}
 					</p>
 					<p class="mt-1 text-xs text-text-muted">

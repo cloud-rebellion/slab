@@ -444,7 +444,7 @@
 			class="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm data-[state=open]:animate-fadeIn"
 		/>
 		<BitsDialog.Content
-			class="fixed left-1/2 top-[15%] z-50 w-[calc(100%-2rem)] max-w-2xl -translate-x-1/2 rounded-2xl border border-border/50 bg-bg-surface shadow-xl focus:outline-none data-[state=open]:animate-scaleIn"
+			class="fixed left-1/2 top-[15%] z-50 w-[calc(100%-2rem)] max-w-2xl -translate-x-1/2 rounded-2xl border border-border/50 bg-bg-surface shadow-modal focus:outline-none data-[state=open]:animate-scaleIn"
 			onkeydown={onKeyDown}
 		>
 			<BitsDialog.Title class="sr-only">Command palette</BitsDialog.Title>
@@ -493,7 +493,7 @@
 									aria-selected={active}
 									onmousemove={() => (highlight = flatIdx)}
 									onclick={() => void result.run()}
-									class="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left transition-colors {active
+									class="flex w-full items-center gap-3 rounded-md px-3 py-2 text-left transition-colors {active
 										? 'bg-bg-hover'
 										: 'hover:bg-bg-hover/60'}"
 								>

@@ -151,7 +151,7 @@
 		<Popover.Content
 			sideOffset={8}
 			align="center"
-			class="z-[110] max-h-[36rem] w-[34rem] overflow-y-auto rounded-xl border border-border bg-bg-surface p-3 shadow-xl focus:outline-none data-[state=open]:animate-fadeIn"
+			class="z-[110] max-h-[36rem] w-[34rem] overflow-y-auto rounded-xl border border-border bg-bg-surface p-3 shadow-popover focus:outline-none data-[state=open]:animate-fadeIn"
 		>
 			<p class="px-1 pb-2 text-[11px] font-mono uppercase tracking-[0.2em] text-text-muted">
 				Choose block type

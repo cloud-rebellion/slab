@@ -31,7 +31,7 @@
 		{rows}
 		bind:value
 		style="field-sizing: content;"
-		class="w-full rounded-lg border bg-bg-elevated px-3 py-2 text-[13px] text-text-primary placeholder:text-text-muted transition-colors resize-y focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent disabled:cursor-not-allowed disabled:opacity-50 {error
+		class="w-full rounded-lg border bg-bg-elevated px-3 py-2 text-[13px] text-text-primary placeholder:text-text-muted transition-colors resize-y focus-visible:outline-none focus-visible:border-accent focus-visible:ring-2 focus-visible:ring-accent disabled:cursor-not-allowed disabled:opacity-50 {error
 			? 'border-danger'
 			: 'border-border'}"
 		{...rest}

@@ -4,7 +4,7 @@
 
 <button
 	type="button"
-	class="inline-flex h-9 w-9 items-center justify-center rounded-lg text-text-secondary hover:text-text-primary hover:bg-bg-hover transition-all duration-200 active:scale-[0.96]"
+	class="inline-flex h-9 w-9 items-center justify-center rounded-lg text-text-secondary hover:text-text-primary hover:bg-bg-hover transition-all duration-200 active:scale-[0.96] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg"
 	onclick={toggleTheme}
 	aria-label={`Switch to ${theme.value === 'dark' ? 'light' : 'dark'} mode`}
 	title={`Switch to ${theme.value === 'dark' ? 'light' : 'dark'} mode`}

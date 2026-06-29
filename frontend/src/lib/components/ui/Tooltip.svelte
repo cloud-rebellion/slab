@@ -30,7 +30,7 @@
 			<BitsTooltip.Content
 				{side}
 				{sideOffset}
-				class="z-[120] rounded-md border border-border bg-bg-elevated px-2 py-1 text-[11px] font-medium text-text-primary shadow-sm select-none pointer-events-none animate-fadeIn"
+				class="z-[120] rounded-md border border-border bg-bg-elevated px-2 py-1 text-[11px] font-medium text-text-primary shadow-popover select-none pointer-events-none animate-fadeIn"
 			>
 				{content}
 			</BitsTooltip.Content>

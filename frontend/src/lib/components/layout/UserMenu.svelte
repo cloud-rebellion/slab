@@ -47,7 +47,7 @@
 		<DropdownMenu.Content
 			sideOffset={6}
 			align="end"
-			class="z-[110] w-56 rounded-xl border border-border bg-bg-surface p-1 shadow-xl focus:outline-none data-[state=open]:animate-fadeIn"
+			class="z-[110] w-56 rounded-xl border border-border bg-bg-surface p-1 shadow-popover focus:outline-none data-[state=open]:animate-fadeIn"
 		>
 			<div class="px-2.5 py-2">
 				<p class="truncate text-[13px] font-medium text-text-primary">{displayName}</p>

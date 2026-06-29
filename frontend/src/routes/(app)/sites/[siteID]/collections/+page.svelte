@@ -79,7 +79,7 @@
 							<p class="mt-1 text-[12px] text-text-muted">
 								<span class="font-mono">/{col.slug}</span>
 								{#if col.settings.schema_org_type}
-									<span class="ml-2 rounded bg-bg-elevated px-1.5 py-0.5 text-[10px] uppercase tracking-wider">{col.settings.schema_org_type}</span>
+									<span class="ml-2 rounded-md bg-bg-elevated px-1.5 py-0.5 text-[10px] uppercase tracking-wider">{col.settings.schema_org_type}</span>
 								{/if}
 								{#if col.settings.render_as_pages}
 									<span class="ml-2 text-[10px] text-accent">renders as pages</span>

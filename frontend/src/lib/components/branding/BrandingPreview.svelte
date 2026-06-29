@@ -76,7 +76,7 @@
 					<span class="block h-1 w-12 rounded-full bg-border"></span>
 				</div>
 				<div
-					class="overflow-hidden rounded-[1.4rem] border"
+					class="overflow-hidden rounded-2xl border"
 					style={style +
 						"background:var(--bp-bg);color:var(--bp-text);border-color:var(--bp-border);font-feature-settings:'cv11','ss01';"}
 				>

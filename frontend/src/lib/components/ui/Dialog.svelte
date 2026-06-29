@@ -55,7 +55,7 @@
 		<BitsDialog.Content
 			class="fixed left-1/2 top-1/2 z-50 flex w-[calc(100%-2rem)] {sizeClasses[
 				size
-			]} max-h-[calc(100vh-2rem)] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-2xl border border-border bg-bg-surface shadow-2xl focus:outline-none data-[state=open]:animate-scaleIn"
+			]} max-h-[calc(100vh-2rem)] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-2xl border border-border bg-bg-surface shadow-modal focus:outline-none data-[state=open]:animate-scaleIn"
 		>
 			{#if title || description}
 				<div class="flex items-start justify-between gap-4 px-6 pt-6 pb-2">

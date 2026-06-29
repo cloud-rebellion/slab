@@ -16,14 +16,15 @@
 
 	const tone: Tone = $derived(gradeTone(grade));
 
+	// System semantic tokens (self-theme in dark via the [data-theme] ramps),
+	// not raw Tailwind palette. The two success / warning tiers vary opacity,
+	// not hue, to preserve the monochrome-plus-single-semantic discipline.
 	const toneClasses: Record<Tone, string> = {
-		success: 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 ring-1 ring-emerald-500/30',
-		'success-soft':
-			'bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 ring-1 ring-emerald-500/20',
-		warning: 'bg-amber-500/15 text-amber-600 dark:text-amber-400 ring-1 ring-amber-500/30',
-		'warning-strong':
-			'bg-orange-500/15 text-orange-600 dark:text-orange-400 ring-1 ring-orange-500/30',
-		danger: 'bg-red-500/15 text-red-600 dark:text-red-400 ring-1 ring-red-500/30',
+		success: 'bg-success/15 text-success ring-1 ring-success/30',
+		'success-soft': 'bg-success/10 text-success ring-1 ring-success/20',
+		warning: 'bg-warning/15 text-warning ring-1 ring-warning/30',
+		'warning-strong': 'bg-warning/20 text-warning ring-1 ring-warning/40',
+		danger: 'bg-danger/15 text-danger ring-1 ring-danger/30',
 		muted: 'bg-bg-elevated text-text-muted ring-1 ring-border-light'
 	};
 

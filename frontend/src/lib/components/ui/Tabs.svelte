@@ -22,7 +22,7 @@
 		{#each tabs as tab (tab.id)}
 			<BitsTabs.Trigger
 				value={tab.id}
-				class="relative -mb-px inline-flex items-center gap-2 px-3 py-2 text-[13px] text-text-muted transition-colors hover:text-text-secondary data-[state=active]:text-text-primary data-[state=active]:border-b-2 data-[state=active]:border-accent focus-visible:outline-none"
+				class="relative -mb-px inline-flex items-center gap-2 rounded-md px-3 py-2 text-[13px] text-text-muted transition-colors hover:text-text-secondary data-[state=active]:text-text-primary data-[state=active]:border-b-2 data-[state=active]:border-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg"
 			>
 				{#if tab.icon}
 					{@render tab.icon()}

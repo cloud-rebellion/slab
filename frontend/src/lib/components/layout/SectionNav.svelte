@@ -31,12 +31,14 @@
 </script>
 
 <nav class="border-b border-border-light bg-bg">
-	<div class="mx-auto flex max-w-7xl items-center gap-1 px-6">
+	<div
+		class="mx-auto flex max-w-7xl items-center gap-1 overflow-x-auto px-6 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+	>
 		{#each tabs as tab (tab.id)}
 			{@const active = isActive(tab.href)}
 			<a
 				href={tab.href}
-				class="relative -mb-px inline-flex items-center px-3 py-3 text-[13px] transition-colors focus-visible:outline-none focus-visible:text-text-primary {active
+				class="relative -mb-px inline-flex shrink-0 items-center whitespace-nowrap px-3 py-3 text-[13px] transition-colors focus-visible:outline-none focus-visible:text-text-primary {active
 					? 'text-text-primary border-b-2 border-accent font-medium'
 					: 'text-text-muted hover:text-text-primary border-b-2 border-transparent'}"
 				aria-current={active ? 'page' : undefined}

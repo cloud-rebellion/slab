@@ -26,6 +26,11 @@
 	--color-warning: var(--t-warning);
 	--color-danger: var(--t-danger);
 	--color-info: var(--t-info);
+
+	/* Elevation: theme-aware, tinted to the bg hue (never raw black in light).
+	   Generates shadow-popover / shadow-modal utilities. */
+	--shadow-popover: var(--t-shadow-popover);
+	--shadow-modal: var(--t-shadow-modal);
 }
 
 :root {
@@ -45,6 +50,11 @@
 	--t-warning: #d97706;
 	--t-danger: #dc2626;
 	--t-info: #4f46e5;
+
+	/* Tinted to the warm-stone near-black, not raw #000, so depth reads
+	   premium on the off-white base. */
+	--t-shadow-popover: 0 4px 12px -2px rgb(28 25 23 / 0.08), 0 1px 2px 0 rgb(28 25 23 / 0.04);
+	--t-shadow-modal: 0 16px 48px -12px rgb(28 25 23 / 0.16), 0 4px 12px -4px rgb(28 25 23 / 0.10);
 
 	--motion-fast: 150ms;
 	--motion-normal: 200ms;
@@ -66,6 +76,17 @@
 	--t-accent: #fafaf9;
 	--t-accent-hover: #e7e5e4;
 	--t-accent-fg: #0c0a09;
+
+	/* Lighter same-hue semantic ramps so success/warning/danger/info TEXT
+	   clears WCAG 4.5:1 on the warm-stone dark surfaces (the base values are
+	   tuned for light mode and fail in dark). Hue preserved, saturation < 80%. */
+	--t-success: #4ade80;
+	--t-warning: #fbbf24;
+	--t-danger: #f87171;
+	--t-info: #818cf8;
+
+	--t-shadow-popover: 0 4px 16px -2px rgb(0 0 0 / 0.5);
+	--t-shadow-modal: 0 24px 64px -12px rgb(0 0 0 / 0.65), inset 0 1px 0 0 rgb(250 250 249 / 0.04);
 }
 
 html,
@@ -100,21 +121,36 @@ h3 {
    Component utility classes (Swiss Minimal)
    ============================================================ */
 @layer components {
+	/* Shared focus ring for the .btn-* utilities so a raw .btn (not the Button
+	   component) is keyboard-accessible and disabled buttons stop firing. */
 	.btn-primary {
-		@apply inline-flex items-center justify-center gap-2 rounded-lg bg-accent px-4 py-2 text-[13px] font-medium text-accent-fg hover:bg-accent-hover transition-all duration-200 active:scale-[0.98] disabled:opacity-50;
+		@apply inline-flex items-center justify-center gap-2 rounded-lg bg-accent px-4 py-2 text-[13px] font-medium text-accent-fg hover:bg-accent-hover transition-all duration-200 active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg disabled:pointer-events-none disabled:opacity-50;
 	}
 	.btn-secondary {
-		@apply inline-flex items-center justify-center gap-2 rounded-lg border border-border bg-bg-elevated px-4 py-2 text-[13px] font-medium text-text-primary hover:bg-bg-hover transition-all duration-200 active:scale-[0.98] disabled:opacity-50;
+		@apply inline-flex items-center justify-center gap-2 rounded-lg border border-border bg-bg-elevated px-4 py-2 text-[13px] font-medium text-text-primary hover:bg-bg-hover transition-all duration-200 active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg disabled:pointer-events-none disabled:opacity-50;
 	}
 	.btn-ghost {
-		@apply inline-flex items-center justify-center gap-1.5 rounded-lg px-3 py-1.5 text-[13px] text-text-muted hover:text-text-primary hover:bg-bg-hover transition-all duration-200 active:scale-[0.98];
+		@apply inline-flex items-center justify-center gap-1.5 rounded-lg px-3 py-1.5 text-[13px] text-text-secondary hover:text-text-primary hover:bg-bg-hover transition-all duration-200 active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg disabled:pointer-events-none disabled:opacity-50;
 	}
 	.btn-danger {
-		@apply inline-flex items-center justify-center gap-2 rounded-lg border border-danger/40 bg-danger/10 px-4 py-2 text-[13px] font-medium text-danger hover:bg-danger/20 transition-all duration-200 active:scale-[0.98] disabled:opacity-50;
+		@apply inline-flex items-center justify-center gap-2 rounded-lg border border-danger/40 bg-danger/10 px-4 py-2 text-[13px] font-medium text-danger hover:bg-danger/20 transition-all duration-200 active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-danger focus-visible:ring-offset-2 focus-visible:ring-offset-bg disabled:pointer-events-none disabled:opacity-50;
+	}
+
+	/* Square icon button (row actions, toolbars). Keyboard-accessible by default. */
+	.icon-btn {
+		@apply inline-flex h-7 w-7 items-center justify-center rounded-md text-text-muted hover:bg-bg-hover hover:text-text-primary transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-1 focus-visible:ring-offset-bg disabled:pointer-events-none disabled:opacity-50;
 	}
 
 	.input-field {
-		@apply w-full rounded-lg border border-border bg-bg-elevated px-3 py-2 text-[13px] text-text-primary focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent transition-colors;
+		@apply w-full rounded-lg border border-border bg-bg-elevated px-3 py-2 text-[13px] text-text-primary focus-visible:border-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent transition-colors;
+	}
+
+	/* Canonical page header type (kills text-3xl/4xl + tracking drift). */
+	.page-title {
+		@apply font-display text-3xl font-extralight tracking-tight text-text-primary;
+	}
+	.eyebrow {
+		@apply font-mono text-[11px] uppercase tracking-[0.2em] text-text-muted;
 	}
 
 	.card {
@@ -232,4 +268,23 @@ h3 {
 		transparent 100%
 	);
 	animation: shimmer 1.6s ease-in-out infinite;
+}
+
+/* ============================================================
+   Respect the OS reduced-motion setting: the infinite shimmer +
+   stagger reveals must not animate for users who opt out.
+   ============================================================ */
+@media (prefers-reduced-motion: reduce) {
+	*,
+	*::before,
+	*::after {
+		animation-duration: 0.01ms !important;
+		animation-iteration-count: 1 !important;
+		transition-duration: 0.01ms !important;
+		scroll-behavior: auto !important;
+	}
+	.skeleton-shimmer {
+		animation: none;
+		background: var(--t-bg-elevated);
+	}
 }

@@ -88,15 +88,15 @@
 	function methodBarColor(method: string): string {
 		switch (method) {
 			case 'accept-all':
-				return '#10b981';
+				return 'var(--t-success)';
 			case 'reject-all':
-				return '#f43f5e';
+				return 'var(--t-danger)';
 			case 'gpc':
-				return '#8b5cf6';
+				return 'var(--t-info)';
 			case 'custom':
-				return '#f59e0b';
+				return 'var(--t-warning)';
 			default:
-				return '#94a3b8';
+				return 'var(--t-text-muted)';
 		}
 	}
 </script>

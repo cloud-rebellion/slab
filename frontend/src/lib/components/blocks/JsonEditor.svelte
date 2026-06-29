@@ -79,7 +79,7 @@
 		onblur={commit}
 		spellcheck={false}
 		style="min-height: {minHeight}rem; field-sizing: content;"
-		class="w-full rounded-lg border bg-bg-elevated px-3 py-2 font-mono text-[12px] leading-relaxed text-text-primary transition-colors focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent {error ? 'border-danger' : 'border-border'}"
+		class="w-full rounded-lg border bg-bg-elevated px-3 py-2 font-mono text-[12px] leading-relaxed text-text-primary transition-colors focus-visible:outline-none focus-visible:border-accent focus-visible:ring-2 focus-visible:ring-accent {error ? 'border-danger' : 'border-border'}"
 	></textarea>
 	{#if error}
 		<p class="text-[12px] text-danger">{error}</p>

@@ -41,7 +41,7 @@
 	}}
 >
 	<BitsSelect.Trigger
-		class="h-9 w-full inline-flex items-center justify-between rounded-lg border border-border bg-bg-elevated px-3 text-[13px] text-text-primary transition-colors focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent disabled:cursor-not-allowed disabled:opacity-50 {className}"
+		class="h-9 w-full inline-flex items-center justify-between rounded-lg border border-border bg-bg-elevated px-3 text-[13px] text-text-primary transition-colors focus-visible:outline-none focus-visible:border-accent focus-visible:ring-2 focus-visible:ring-accent disabled:cursor-not-allowed disabled:opacity-50 {className}"
 	>
 		<span class={selectedLabel ? '' : 'text-text-muted'}>
 			{selectedLabel || placeholder}
@@ -59,7 +59,7 @@
 	<BitsSelect.Portal>
 		<BitsSelect.Content
 			sideOffset={6}
-			class="z-[100] w-[var(--bits-select-anchor-width)] min-w-[8rem] rounded-xl border border-border bg-bg-surface shadow-lg py-1.5 animate-fadeIn focus:outline-none"
+			class="z-[100] w-[var(--bits-select-anchor-width)] min-w-[8rem] rounded-xl border border-border bg-bg-surface shadow-popover py-1.5 animate-fadeIn focus:outline-none"
 		>
 			{#each options as opt (opt.value)}
 				<BitsSelect.Item
