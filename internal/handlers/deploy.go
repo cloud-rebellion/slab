@@ -140,8 +140,13 @@ func (h *DeployHandler) CreateTarget(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	siteSlug := ""
+	if site, err := h.queries.GetSiteByID(r.Context(), siteID); err == nil {
+		siteSlug = site.Slug
+	}
 	if err := deployer.Validate(deploy.Target{
 		SiteID: siteID,
+		Slug:   siteSlug,
 		Name:   req.Name,
 		Kind:   req.Kind,
 		Config: req.Config,
@@ -298,9 +303,14 @@ func (h *DeployHandler) UpdateTarget(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	siteSlug := ""
+	if site, err := h.queries.GetSiteByID(r.Context(), siteID); err == nil {
+		siteSlug = site.Slug
+	}
 	if err := deployer.Validate(deploy.Target{
 		ID:     existing.ID,
 		SiteID: siteID,
+		Slug:   siteSlug,
 		Name:   name,
 		Kind:   kind,
 		Config: config,

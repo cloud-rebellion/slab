@@ -58,11 +58,19 @@ func (d *LocalDeployer) Validate(target Target) error {
 	}
 	// Cross-tenant isolation: a local target must write inside the site's own
 	// directory so one tenant cannot point `path` at /srv/atomicsite/<other>/dist
-	// and overwrite another tenant's served files. Require the site ID to appear
-	// as a path segment. target.SiteID is set from the authenticated route, so a
-	// member of site A can only ever supply A's ID here.
-	if target.SiteID != "" && !pathHasSegment(cleaned, target.SiteID) {
-		return fmt.Errorf("local deploy: path %q must be scoped to this site (include the site id %q as a path segment)", cleaned, target.SiteID)
+	// and overwrite another tenant's served files. The wildcard host serves a
+	// tenant from /srv/atomicsite/{slug}/dist, so the legitimate path contains
+	// the site's slug; some setups use the site id instead. Accept either as a
+	// full path segment. Both are set from the authenticated site, so a member
+	// of site A can only ever supply A's slug/id here.
+	if target.SiteID != "" || target.Slug != "" {
+		if !pathHasSegment(cleaned, target.SiteID) && !(target.Slug != "" && pathHasSegment(cleaned, target.Slug)) {
+			want := target.Slug
+			if want == "" {
+				want = target.SiteID
+			}
+			return fmt.Errorf("local deploy: path %q must be scoped to this site (include %q as a path segment)", cleaned, want)
+		}
 	}
 	parent := filepath.Dir(cleaned)
 	if parent == "/" {

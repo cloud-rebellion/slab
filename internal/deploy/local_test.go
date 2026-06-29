@@ -70,6 +70,31 @@ func TestLocalDeployer_Validate(t *testing.T) {
 	}
 }
 
+// TestLocalDeployer_Validate_AcceptsSlugPath covers the wildcard serving
+// convention: a tenant is served from /srv/atomicsite/{slug}/dist, so a path
+// carrying the site's slug (not its 24-hex id) must validate. Also confirms a
+// path scoped to neither slug nor id is rejected (cross-tenant guard).
+func TestLocalDeployer_Validate_AcceptsSlugPath(t *testing.T) {
+	parent := t.TempDir()
+	d := &LocalDeployer{}
+
+	okSlug := Target{
+		Kind: "local", SiteID: "517e0000000000000000000d", Slug: "demo-1700000000",
+		Config: map[string]any{"path": filepath.Join(parent, "demo-1700000000", "dist")},
+	}
+	if err := d.Validate(okSlug); err != nil {
+		t.Fatalf("slug-scoped path should validate, got: %v", err)
+	}
+
+	wrong := Target{
+		Kind: "local", SiteID: "517e0000000000000000000d", Slug: "demo-1700000000",
+		Config: map[string]any{"path": filepath.Join(parent, "someone-elses-site", "dist")},
+	}
+	if err := d.Validate(wrong); err == nil {
+		t.Fatal("path scoped to neither slug nor site id must be rejected")
+	}
+}
+
 func TestLocalDeployer_Deploy_HappyPath(t *testing.T) {
 	dist := t.TempDir()
 	writeDist(t, dist, map[string]string{

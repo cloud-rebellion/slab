@@ -452,9 +452,16 @@ func (h *BuildHandler) autoDeployDefault(ctx context.Context, siteID, distDir st
 	if strings.TrimSpace(t.ConfigJson) != "" {
 		_ = json.Unmarshal([]byte(t.ConfigJson), &cfg)
 	}
+	// Slug lets the local deployer accept a /srv/atomicsite/{slug}/dist path
+	// (the wildcard serving convention) under the cross-tenant path guard.
+	var slug string
+	if site, err := h.queries.GetSiteByID(ctx, siteID); err == nil {
+		slug = site.Slug
+	}
 	target := deploy.Target{
 		ID:     t.ID,
 		SiteID: t.SiteID,
+		Slug:   slug,
 		Name:   t.Name,
 		Kind:   t.Kind,
 		Config: cfg,
