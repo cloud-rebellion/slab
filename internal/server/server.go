@@ -148,6 +148,9 @@ func (s *Server) Router() http.Handler {
 	r.Use(authmw.TrustedProxyRealIP(s.cfg.TrustedProxies))
 	r.Use(middleware.Logger)
 	r.Use(middleware.Recoverer)
+	// Capture panics to Flare, then re-panic for Recoverer's 500. Must sit
+	// after Recoverer (inner) so it sees the panic first.
+	r.Use(authmw.FlareRecoverer)
 	r.Use(corsMiddleware(s.cfg))
 	// Global body-size cap. Sets an upper bound on every request body
 	// before any handler reads it, sized to cfg.MaxUploadSize so the
