@@ -81,6 +81,17 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   directly to the internet.
 
 ### Fixed
+- **Built sites now serve /favicon.ico and /apple-touch-icon.png.**
+  New build step `CopyBrandIcons` (`internal/builder/media.go`, wired
+  in `renderer.go` after `CopyMedia`) copies the branding favicon media
+  (`sites.favicon_id`) into the workspace `public/` root as both files,
+  so Astro carries them into `dist/`. The layout has always linked both
+  paths unconditionally on every page, but nothing emitted the files,
+  so every built site 404'd on them (broken tab icon, no iOS shortcut
+  icon, failed release hard checks). Degenerate states (no favicon_id,
+  missing media row, missing file on disk) skip with a warning instead
+  of failing the build, matching the previous degrade-silently
+  behavior.
 - **verify-live worker honors cancellation.** In-flight progress writes
   (`UpdateVerifyJobProgress`, `CreateMigrationVerification`) now use the
   worker's cancellable context instead of `context.Background()`, so

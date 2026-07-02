@@ -113,6 +113,13 @@ func Build(ctx context.Context, queries *store.Queries, siteID string, dataDir s
 		return fail("copy media: " + err.Error())
 	}
 
+	// 6c. Brand icons: /favicon.ico + /apple-touch-icon.png at the dist
+	// root, sourced from branding.favicon_id. layouts.go links both on
+	// every page, so without this step every built site 404s on them.
+	if err := CopyBrandIcons(ctx, queries, siteID, dataDir, wsDir); err != nil {
+		return fail("copy brand icons: " + err.Error())
+	}
+
 	slog.Info("build: generated files", "pages", pageCount, "workspace", wsDir)
 
 	// 7. Compile

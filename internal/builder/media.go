@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"log/slog"
 	"os"
 	"path/filepath"
 
@@ -54,6 +55,63 @@ func CopyMedia(ctx context.Context, queries *store.Queries, siteID, dataDir, wsD
 		}
 		return atomicLinkOrCopy(path, target)
 	})
+}
+
+// CopyBrandIcons emits /favicon.ico and /apple-touch-icon.png into the
+// workspace public/ root from the site's branding favicon media.
+//
+// layouts.go links both paths unconditionally on every page ("for
+// site-inspector parity"), but nothing ever placed the files in dist, so
+// every built site 404'd on them even with branding.favicon_id set
+// (browsers showed the broken-tab icon; release hard checks failed).
+//
+// Degenerate states (no favicon_id, media row missing or cross-site,
+// source file gone) are non-fatal by design: the build degrades exactly
+// like before, link tags without files. Only a real IO failure while
+// writing into the workspace errors.
+//
+// PNG bytes behind the favicon.ico name are fine: browsers sniff the
+// icon payload rather than trusting the extension or the link type.
+func CopyBrandIcons(ctx context.Context, queries *store.Queries, siteID, dataDir, wsDir string) error {
+	site, err := queries.GetSiteByID(ctx, siteID)
+	if err != nil || site.FaviconID == "" {
+		return nil
+	}
+	m, err := queries.GetMediaByID(ctx, site.FaviconID)
+	if err != nil || m.SiteID != siteID {
+		slog.Warn("build: brand icons skipped (favicon media row missing)",
+			"site_id", siteID, "favicon_id", site.FaviconID)
+		return nil
+	}
+	// Same variant resolution as resolveOgImageURL: CopyMedia hardlinks
+	// original.<ext> for every processed image; OriginalPath's basename
+	// wins when set.
+	base := "original" + extOf(m.Filename)
+	if m.OriginalPath != "" {
+		base = filepath.Base(m.OriginalPath)
+	}
+	src := filepath.Join(dataDir, "media", siteID, m.ID, base)
+	if _, err := os.Stat(src); err != nil {
+		slog.Warn("build: brand icons skipped (favicon file missing on disk)",
+			"site_id", siteID, "src", src)
+		return nil
+	}
+	return writeBrandIcons(src, wsDir)
+}
+
+// writeBrandIcons copies src into {wsDir}/public/ as favicon.ico and
+// apple-touch-icon.png so the Astro build carries both into dist/.
+func writeBrandIcons(src, wsDir string) error {
+	pubDir := filepath.Join(wsDir, "public")
+	if err := os.MkdirAll(pubDir, 0o755); err != nil {
+		return fmt.Errorf("mkdir %s: %w", pubDir, err)
+	}
+	for _, name := range []string{"favicon.ico", "apple-touch-icon.png"} {
+		if err := atomicLinkOrCopy(src, filepath.Join(pubDir, name)); err != nil {
+			return fmt.Errorf("emit %s: %w", name, err)
+		}
+	}
+	return nil
 }
 
 // atomicLinkOrCopy writes src to dst via a temp name + rename, avoiding the
