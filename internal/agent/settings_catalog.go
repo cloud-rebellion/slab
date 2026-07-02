@@ -197,6 +197,23 @@ func buildSettingsCatalog(siteID string, settingsMap map[string]string) Settings
 			AgentWritable: true,
 		},
 
+		// --- design --------------------------------------------------------
+		{
+			Category: "design", Key: "fidelity",
+			Label:       "Design fidelity",
+			Description: "The design-freedom dial. \"performance\" targets perfect scores on every category (static heroes, zero perpetual motion). \"balanced\" (default) is the standard taste rulebook and budgets. \"showcase\" unlocks expressive design (fx utility classes, scroll-driven animation, view transitions, bespoke tokens, 4-animation motion budget) and grades performance against showcase budgets with the fidelity recorded on every evaluation. Security, privacy, accessibility, self-hosted fonts and slop lint are identical in all three. Read design_playbook.fidelity for the full contract; change BEFORE authoring, then rebuild.",
+			ValueType:   "enum",
+			EnumValues:  []string{"performance", "balanced", "showcase"},
+			AgentWritable: true,
+		},
+		{
+			Category: "design", Key: "strict_lint",
+			Label:       "Strict design lint",
+			Description: "When 1 (default), create_block / update_block refuse writes carrying blocking design-lint findings (slop terms, placeholder names, fake numbers, archetype drift) unless force=true after human approval. When 0, findings are returned as warnings but writes proceed. Independent of design.fidelity: fidelity changes WHICH taste rules apply, strict_lint changes whether hard violations block writes. Slop findings block in every fidelity while strict lint is on.",
+			ValueType:   "bool",
+			AgentWritable: true,
+		},
+
 		// --- seo -----------------------------------------------------------
 		{
 			Category: "seo", Key: "meta_title_template",
@@ -599,6 +616,8 @@ func buildSettingsCatalog(siteID string, settingsMap map[string]string) Settings
 	}
 
 	defaultsByKey := map[string]string{
+		"design.fidelity":                   "balanced",
+		"design.strict_lint":                "1",
 		"general.additional_langs":          "",
 		"general.default_lang":              "",
 		"general.analytics_retention_days":  "180",
@@ -665,6 +684,9 @@ func buildSettingsCatalog(siteID string, settingsMap map[string]string) Settings
 	humanAdminURL := func(category string) string {
 		base := "/sites/" + siteID + "/settings/"
 		switch category {
+		case "design":
+			// The fidelity dial + strict-lint toggle live on the General page.
+			return base + "general"
 		case "general":
 			return base + "general"
 		case "seo":
@@ -695,7 +717,9 @@ func buildSettingsCatalog(siteID string, settingsMap map[string]string) Settings
 	}
 
 	// Sort writable / admin-only category lists deterministically.
-	writableSet := map[string]bool{"seo": true, "analytics": true, "general": true}
+	// Must mirror agentWritableSettingsCategories (handlers/agent_settings.go)
+	// and agentWritableCategories (mcp/helpers.go).
+	writableSet := map[string]bool{"seo": true, "analytics": true, "general": true, "design": true, "search": true}
 	allCats := map[string]bool{}
 	for _, d := range descriptors {
 		allCats[d.Category] = true

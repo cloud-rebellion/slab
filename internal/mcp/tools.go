@@ -386,16 +386,17 @@ func (s *Server) registerTools() {
 				return mustJSON(map[string]any{"error": "guardrail_violations", "violations": gv}), nil
 			}
 
-			findings := runBlockLint(args.BlockType, page.Archetype, args.Data)
+			fidelity := siteFidelity(ctx, s.queries, agent.SiteID)
+			findings := runBlockLint(args.BlockType, page.Archetype, args.Data, fidelity)
 			if !args.Force && strictDesignLintEnabled(ctx, s.queries, agent.SiteID) {
-				if blockers := critique.FilterBlocking(findings); len(blockers) > 0 {
+				if blockers := critique.FilterBlockingFor(findings, fidelity); len(blockers) > 0 {
 					return mustJSON(map[string]any{
 						"error":              "strict_lint_blocked",
 						"blockers":           blockers,
 						"design_warnings":    findings,
 						"design_inspiration": critique.InspirationsFor(args.BlockType),
 						"page_archetype":     page.Archetype,
-						"hint":               "Strict design lint refused the write. Each blocker carries a fix hint; revise the data and call create_block again. Override only after a human reviewer has approved the copy by passing force=true, or set site_settings design.strict_lint=0 to relax for this site.",
+						"hint":               "Strict design lint refused the write. Each blocker carries a fix hint; revise the data and call create_block again. Override only after a human reviewer has approved the copy by passing force=true, or write design.strict_lint=0 via bulk_upsert_settings to relax hard-blocking for this site. Slop findings block regardless of design.fidelity; if the TASTE rules feel too tight for the brief, the sanctioned relax path is design.fidelity=showcase (see design_playbook.fidelity), not disabling lint.",
 					}), nil
 				}
 			}
@@ -485,16 +486,17 @@ func (s *Server) registerTools() {
 			// Run lint against the incoming data BEFORE the UpdateBlock call so
 			// strict-mode blockers can refuse to overwrite a clean block with
 			// slop. Lint runs against the merged post-update state.
-			findings := runBlockLintFromJSON(bt, page.Archetype, data)
+			fidelity := siteFidelity(ctx, s.queries, agent.SiteID)
+			findings := runBlockLintFromJSON(bt, page.Archetype, data, fidelity)
 			if !args.Force && strictDesignLintEnabled(ctx, s.queries, agent.SiteID) {
-				if blockers := critique.FilterBlocking(findings); len(blockers) > 0 {
+				if blockers := critique.FilterBlockingFor(findings, fidelity); len(blockers) > 0 {
 					return mustJSON(map[string]any{
 						"error":              "strict_lint_blocked",
 						"blockers":           blockers,
 						"design_warnings":    findings,
 						"design_inspiration": critique.InspirationsFor(bt),
 						"page_archetype":     page.Archetype,
-						"hint":               "Strict design lint refused the update. Each blocker carries a fix hint; revise the data and call update_block again. Override only after human approval by passing force=true, or set site_settings design.strict_lint=0 to relax for this site.",
+						"hint":               "Strict design lint refused the update. Each blocker carries a fix hint; revise the data and call update_block again. Override only after human approval by passing force=true, or write design.strict_lint=0 via bulk_upsert_settings to relax hard-blocking for this site. Slop findings block regardless of design.fidelity; if the TASTE rules feel too tight for the brief, the sanctioned relax path is design.fidelity=showcase (see design_playbook.fidelity), not disabling lint.",
 					}), nil
 				}
 			}
@@ -841,7 +843,7 @@ func (s *Server) registerTools() {
 
 	register(Tool{
 		Name: "bulk_upsert_settings",
-		Description: "Writes one or more settings rows. ONLY general/seo/analytics categories are writable; security / allowed-scripts stay admin-only (pass them and they're rejected with a clean error). Each item validated against the catalog (enum guards, range checks, format checks). Read get_settings_catalog first so you write the right shape.",
+		Description: "Writes one or more settings rows. Writable categories: general / seo / analytics / search / design (design carries the fidelity dial + strict-lint toggle); security / allowed-scripts stay admin-only (pass them and they're rejected with a clean error). Each item validated against the catalog (enum guards, range checks, format checks). Read get_settings_catalog first so you write the right shape.",
 		InputSchema: schema(`{
 			"type":"object",
 			"properties":{
@@ -850,7 +852,7 @@ func (s *Server) registerTools() {
 					"items":{
 						"type":"object",
 						"properties":{
-							"category":{"type":"string","enum":["general","seo","analytics"]},
+							"category":{"type":"string","enum":["general","seo","analytics","search","design"]},
 							"key":{"type":"string"},
 							"value":{"type":"string"}
 						},

@@ -754,10 +754,11 @@ func (s *Server) registerExtraTools() {
 
 	register(Tool{
 		Name:        "get_design_playbook",
-		Description: "Returns the atomicsite design playbook (same payload as atomicsite://meta/design-playbook resource): principles, page archetypes, anti-patterns, vibe archetypes, materiality, content authenticity (banned slop terms), motion budget, copy voice, font system, hero graphics catalog, one-shot recipe. This is the rubric the Inspector grades against. Read this BEFORE authoring blocks so design decisions stay inside the rubric instead of being corrected after a failed eval. Stateless, free to call, agents should consult it on session start.",
+		Description: "Returns THIS site's design playbook (same payload as atomicsite://meta/design-playbook resource), adapted to its design.fidelity dial (performance / balanced / showcase): fidelity contract first (what is unlocked, how grading changes, what is never relaxed), then principles, page archetypes, anti-patterns, vibe archetypes, materiality, content authenticity (banned slop terms), motion budget, copy voice, font system, hero graphics catalog, one-shot recipe. This is the rubric the Inspector grades against. Read it BEFORE authoring blocks, and re-read after changing design.fidelity. Free to call, agents should consult it on session start.",
 		InputSchema: schema(`{"type":"object","properties":{}}`),
-		Handler: func(_ context.Context, _ *authmw.AgentIdentity, _ json.RawMessage) (string, error) {
-			return mustJSON(agentpkg.DefaultDesignPlaybook()), nil
+		Handler: func(ctx context.Context, agent *authmw.AgentIdentity, _ json.RawMessage) (string, error) {
+			fidelity := agentpkg.FidelityForSite(ctx, s.queries, agent.SiteID)
+			return mustJSON(agentpkg.DesignPlaybookFor(fidelity)), nil
 		},
 	})
 

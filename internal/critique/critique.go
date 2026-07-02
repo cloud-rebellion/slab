@@ -34,6 +34,11 @@ const Timeout = 15 * time.Second
 // Run loads the same SiteContext eval uses, runs every design check
 // against it, and persists one evaluations row with Category="design".
 // Bounded by Timeout. Failures are non-fatal at the caller level.
+//
+// The rubric follows the site's design.fidelity dial: the playbook is
+// resolved per fidelity (same choke point the agent reads), taste
+// detectors demote to advisory in showcase, and the graded fidelity is
+// stamped on the persisted row so historical grades stay honest.
 func Run(ctx context.Context, queries *store.Queries, siteID, buildID, distDir string) (eval.CategoryReport, error) {
 	ctx, cancel := context.WithTimeout(ctx, Timeout)
 	defer cancel()
@@ -43,8 +48,23 @@ func Run(ctx context.Context, queries *store.Queries, siteID, buildID, distDir s
 		return eval.CategoryReport{}, fmt.Errorf("load site context: %w", err)
 	}
 
-	playbook := agent.DefaultDesignPlaybook()
-	checks := RunChecks(site, playbook)
+	fidelity := agent.FidelityForSite(ctx, queries, siteID)
+	playbook := agent.DesignPlaybookFor(fidelity)
+	checks := RunChecksFor(site, playbook, fidelity)
+
+	// Showcase grants a real motion budget, so it also verifies the
+	// a11y contract on the agent's own CSS at the source: css_classes
+	// rows carrying animation without any reduced-motion guard fail.
+	if fidelity == agent.FidelityShowcase {
+		var cssSrc strings.Builder
+		if rows, err := queries.ListCSSClassesBySite(ctx, siteID); err == nil {
+			for _, r := range rows {
+				cssSrc.WriteString(r.Css)
+				cssSrc.WriteString("\n")
+			}
+		}
+		checks = append(checks, reducedMotionCoverageChecks(cssSrc.String())...)
+	}
 
 	score, max := eval.ComputeScore(checks)
 	report := eval.CategoryReport{
@@ -65,17 +85,25 @@ func Run(ctx context.Context, queries *store.Queries, siteID, buildID, distDir s
 		MaxScore:   int64(max),
 		Grade:      report.Grade,
 		ChecksJson: string(checksJSON),
+		Profile:    string(fidelity),
 	}); err != nil {
 		slog.Error("critique: persist failed", "site_id", siteID, "build_id", buildID, "err", err)
 	}
 
-	slog.Info("critique: complete", "site_id", siteID, "build_id", buildID, "grade", report.Grade, "checks", len(checks))
+	slog.Info("critique: complete", "site_id", siteID, "build_id", buildID, "grade", report.Grade, "fidelity", string(fidelity), "checks", len(checks))
 	return report, nil
 }
 
-// RunChecks runs every design check against the site context using the
-// playbook as the rule source. Pure function, no I/O, easy to unit test.
+// RunChecks runs every design check with the balanced rubric. Kept for
+// callers (and tests) that predate the fidelity dial.
 func RunChecks(site *eval.SiteContext, playbook agent.DesignPlaybookInfo) []eval.CheckResult {
+	return RunChecksFor(site, playbook, agent.FidelityBalanced)
+}
+
+// RunChecksFor runs every design check against the site context using
+// the playbook as the rule source and the fidelity as the rubric
+// selector. Pure function, no I/O, easy to unit test.
+func RunChecksFor(site *eval.SiteContext, playbook agent.DesignPlaybookInfo, fidelity agent.DesignFidelity) []eval.CheckResult {
 	var checks []eval.CheckResult
 
 	// Concatenate all page HTML once for whole-site searches. Per-page
@@ -85,15 +113,20 @@ func RunChecks(site *eval.SiteContext, playbook agent.DesignPlaybookInfo) []eval
 	allCSS := readSiteCSS(site)
 	headings := extractHeadings(site)
 
-	checks = append(checks, antiPatternChecks(playbook.AntiPatterns, allHTML, allCSS, allText, headings)...)
+	// Grading-context stamp: zero-weight, excluded from scoring, but
+	// every stored report names the rubric that produced it.
+	checks = append(checks, eval.Info("graded_fidelity", "meta",
+		fmt.Sprintf("Design checks graded under the %q fidelity rubric (design.fidelity setting).", string(fidelity))))
+
+	checks = append(checks, antiPatternChecks(playbook.AntiPatterns, allHTML, allCSS, allText, headings, fidelity)...)
 	checks = append(checks, contentAuthenticityChecks(playbook.ContentAuthenticity, allText, site)...)
 	checks = append(checks, motionChecks(playbook.Motion, allCSS, allHTML)...)
 	checks = append(checks, iconPolicyChecks(playbook.IconPolicy, allHTML)...)
-	checks = append(checks, designTokenCoherenceChecks(allHTML, allCSS)...)
-	checks = append(checks, motionDensityChecks(allCSS)...)
+	checks = append(checks, designTokenCoherenceChecks(allHTML, allCSS, fidelity)...)
+	checks = append(checks, motionDensityChecks(allCSS, site, fidelity)...)
 	checks = append(checks, metaCompletenessChecks(site)...)
-	checks = append(checks, heroQualityChecks(site)...)
-	checks = append(checks, aboveTheFoldTrustChecks(site)...)
+	checks = append(checks, heroQualityChecks(site, fidelity)...)
+	checks = append(checks, aboveTheFoldTrustChecks(site, fidelity)...)
 	checks = append(checks, auditChecklistInfo(playbook.AuditChecklist)...)
 
 	return checks
@@ -198,9 +231,16 @@ var (
 	fontFamilyRE   = regexp.MustCompile(`font-family\s*:\s*([^;}]+)`)
 )
 
-func designTokenCoherenceChecks(html, css string) []eval.CheckResult {
+func designTokenCoherenceChecks(html, css string, fidelity agent.DesignFidelity) []eval.CheckResult {
 	combined := html + "\n" + css
 	var findings []string
+
+	// Showcase widens the palette budget: bespoke work legitimately
+	// carries more distinct hues (gradients, aurora bands, dark vibes).
+	hexCap := 12
+	if fidelity == agent.FidelityShowcase {
+		hexCap = 24
+	}
 
 	// 1) Radii that aren't in the canonical squircle set.
 	radiiMatches := borderRadiusRE.FindAllStringSubmatch(combined, -1)
@@ -286,12 +326,29 @@ func designTokenCoherenceChecks(html, css string) []eval.CheckResult {
 	for _, h := range hexes {
 		distinct[strings.ToLower(h)] = true
 	}
-	if len(distinct) > 12 {
-		findings = append(findings, fmt.Sprintf("%d distinct hex colours found in HTML/CSS, likely a custom block hard-coded a palette instead of using var(--color-*)", len(distinct)))
+	if len(distinct) > hexCap {
+		findings = append(findings, fmt.Sprintf("%d distinct hex colours found in HTML/CSS (budget %d), likely a custom block hard-coded a palette instead of using var(--color-*)", len(distinct), hexCap))
 	}
 
 	if len(findings) == 0 {
 		return []eval.CheckResult{eval.Pass("design_token_coherence", "design_tokens", 5, "every measured token matches the canonical allowlist")}
+	}
+
+	// Showcase: bespoke tokens are the point. Findings surface as
+	// advisory Info (visible for the cohesion review, unscored) instead
+	// of weighted Fails, leaving the denominator honestly.
+	if fidelity == agent.FidelityShowcase {
+		var out []eval.CheckResult
+		for i, f := range findings {
+			if i >= 5 {
+				break
+			}
+			out = append(out, eval.Info(
+				fmt.Sprintf("token_drift_%d", i+1), "design_tokens",
+				"Advisory in showcase fidelity: "+f+". Bespoke tokens are allowed; verify they cohere with the site's DESIGN.md / chosen vibe.",
+			))
+		}
+		return out
 	}
 
 	// One Fail per finding, capped at 5 to keep the report readable.
@@ -309,13 +366,45 @@ func designTokenCoherenceChecks(html, css string) []eval.CheckResult {
 	return out
 }
 
-// motionDensityChecks counts perpetual animations on a page. The
-// playbook says max one perpetual animation per viewport; the
-// inspector enforces it. Two or more @keyframes-driven animations on
-// non-hover selectors = warning; three or more = error.
+// motionDensityChecks counts perpetual animations per viewport against
+// the fidelity's motion budget: 1 for performance/balanced (the
+// playbook's pick-one-signal rule), 4 for showcase (layered ambient
+// motion is sanctioned there; the Inspector warns at budget+1 and
+// errors at budget+3).
+//
+// Two signal sources are combined:
+//  1. inline <style> @keyframes used outside :hover/:focus/:active
+//     (custom blocks), site-wide as before, and
+//  2. rendered ambient-motion markers in the page HTML (hero graphics,
+//     marquee, fx utilities). The renderer's keyframe library lives in
+//     the external global.css bundle, so DOM presence, not CSS text, is
+//     the honest signal for what actually animates on a page. Each
+//     marker type counts once per page: five .fx-float cards are one
+//     visual signal, not five.
 var keyframesNameRE = regexp.MustCompile(`@keyframes\s+([a-zA-Z0-9_-]+)`)
 
-func motionDensityChecks(css string) []eval.CheckResult {
+// ambientMotionMarkers maps rendered class markers to the perpetual
+// signal they represent. Kept in sync with the builder's emitted CSS
+// (hero graphics in css.go, fx utilities in css_fx.go).
+var ambientMotionMarkers = []string{
+	"hero-graphic--mesh",
+	"hero-graphic--pulse",
+	"hero-graphic--aurora",
+	"block-circuit-canvas",
+	"logo-carousel-track",
+	"fx-float",
+	"fx-shimmer",
+	"fx-aurora-bg",
+}
+
+func motionBudgetFor(fidelity agent.DesignFidelity) int {
+	if fidelity == agent.FidelityShowcase {
+		return 4
+	}
+	return 1
+}
+
+func motionDensityChecks(css string, site *eval.SiteContext, fidelity agent.DesignFidelity) []eval.CheckResult {
 	matches := keyframesNameRE.FindAllStringSubmatch(css, -1)
 	// Count keyframes that are actually used outside of :hover/:focus.
 	// Heuristic: for each keyframe name, check if it appears in an
@@ -344,22 +433,65 @@ func motionDensityChecks(css string) []eval.CheckResult {
 		}
 	}
 
-	count := len(perpetualNames)
-	if count <= 1 {
-		return []eval.CheckResult{eval.Pass("motion_density", "motion", 5, fmt.Sprintf("%d perpetual animation(s) on the page (max 1 per playbook)", count))}
+	// Rendered ambient markers: worst page wins ("per viewport").
+	inlineCount := len(perpetualNames)
+	signals := mapKeys(perpetualNames)
+	renderedWorst := 0
+	for _, p := range site.Pages {
+		pageCount := 0
+		var pageSignals []string
+		for _, marker := range ambientMotionMarkers {
+			if strings.Contains(p.HTML, marker) {
+				pageCount++
+				pageSignals = append(pageSignals, marker)
+			}
+		}
+		if pageCount > renderedWorst {
+			renderedWorst = pageCount
+			signals = append(mapKeys(perpetualNames), pageSignals...)
+		}
+	}
+
+	budget := motionBudgetFor(fidelity)
+	count := inlineCount + renderedWorst
+	if count <= budget {
+		return []eval.CheckResult{eval.Pass("motion_density", "motion", 5,
+			fmt.Sprintf("%d perpetual animation signal(s) per viewport (budget %d under %s fidelity)", count, budget, string(fidelity)))}
 	}
 
 	severity := eval.SeverityWarning
 	deduct := 2
-	msg := fmt.Sprintf("%d perpetual animations detected: %v. Playbook caps at 1 per viewport.", count, mapKeys(perpetualNames))
-	if count >= 3 {
+	msg := fmt.Sprintf("%d perpetual animation signals detected: %v. The %s fidelity budget is %d per viewport.", count, signals, string(fidelity), budget)
+	if count >= budget+3 {
 		severity = eval.SeverityError
 		deduct = 5
-		msg = fmt.Sprintf("%d perpetual animations detected: %v. Stacking marquee + circuit + pulse + drift reads as AI-builder demo, not premium product.", count, mapKeys(perpetualNames))
+		msg = fmt.Sprintf("%d perpetual animation signals detected: %v. Stacking this far past the %d-signal budget reads as AI-builder demo, not premium product.", count, signals, budget)
+	}
+	rec := "Pick ONE perpetual signal (marquee, circuit, pulse, mesh). Convert the rest to load-once entry choreography (transform + opacity, one-shot transition)."
+	if fidelity == agent.FidelityShowcase {
+		rec = "Layering is allowed in showcase, soup is not: keep at most 4 ambient signals that belong to one visual system, convert the rest to scroll-driven or load-once choreography (.fx-reveal, .fx-stagger)."
+	}
+	return []eval.CheckResult{eval.Fail("motion_density", "motion", deduct, severity, msg, rec)}
+}
+
+// reducedMotionCoverageChecks (showcase-only) verifies the a11y side of
+// the motion budget at the source: css_classes rows that declare
+// @keyframes or animation properties must ship a
+// prefers-reduced-motion guard somewhere in the site's class set. The
+// renderer gates its own fx layer; this covers agent-authored CSS.
+func reducedMotionCoverageChecks(cssClassesSrc string) []eval.CheckResult {
+	low := strings.ToLower(cssClassesSrc)
+	hasMotion := strings.Contains(low, "@keyframes") || strings.Contains(low, "animation:") || strings.Contains(low, "animation-name")
+	if !hasMotion {
+		return []eval.CheckResult{eval.Pass("reduced_motion_coverage", "motion", 3, "no agent-authored css_classes animations to gate")}
+	}
+	if strings.Contains(low, "prefers-reduced-motion") {
+		return []eval.CheckResult{eval.Pass("reduced_motion_coverage", "motion", 3, "agent-authored css_classes animations ship a prefers-reduced-motion guard")}
 	}
 	return []eval.CheckResult{eval.Fail(
-		"motion_density", "motion", deduct, severity, msg,
-		"Pick ONE perpetual signal (marquee, circuit, pulse, mesh). Convert the rest to load-once entry choreography (transform + opacity, one-shot transition).",
+		"reduced_motion_coverage", "motion", 3, eval.SeverityError,
+		"css_classes declare animations but no prefers-reduced-motion guard exists in the site's class set.",
+		"Add a guard: @media (prefers-reduced-motion: reduce) { .your-animated-class { animation: none; transition: none; } }. The showcase motion budget is conditional on this a11y invariant.",
 	)}
 }
 
@@ -547,7 +679,7 @@ func isHomepageRoot(slug string) bool {
 // Severity is warning by default; an env-flagged strict mode (read by
 // the build handler) escalates warnings to errors so a non-Inspector
 // hero blocks publish.
-func heroQualityChecks(site *eval.SiteContext) []eval.CheckResult {
+func heroQualityChecks(site *eval.SiteContext, fidelity agent.DesignFidelity) []eval.CheckResult {
 	const max = 5
 	var fails []string
 	for _, p := range site.Pages {
@@ -560,6 +692,13 @@ func heroQualityChecks(site *eval.SiteContext) []eval.CheckResult {
 	}
 	if len(fails) == 0 {
 		return []eval.CheckResult{eval.Pass("hero_quality", "design_quality", max, "every landing-layout page-0 hero ships a curated graphic, circuit background, or image")}
+	}
+	// Showcase heroes are often bespoke custom blocks the block--hero
+	// matcher can't judge; a deliberately plain typographic hero is also
+	// a legitimate showcase statement. Advisory there, scored elsewhere.
+	if fidelity == agent.FidelityShowcase {
+		return []eval.CheckResult{eval.Info("hero_quality", "design_quality",
+			fmt.Sprintf("Advisory in showcase fidelity: %d landing page(s) ship a plain block--hero (%s). If this is a deliberate typographic statement, fine; if not, set hero_graphic (mesh/pulse/monogram/audit-receipt/aurora), bg=circuit, an image, or a bespoke custom hero.", len(fails), strings.Join(fails, ", ")))}
 	}
 	deduct := max
 	if deduct > len(fails)+1 {
@@ -611,7 +750,7 @@ func hasQualityHero(pageHTML string) bool {
 // signal (logos, numbers, quotes, real answers), the site reads as a
 // pitch deck. Five blocks is the canonical Base44 / Lovable / Stripe
 // pattern: hero, logos, stats, features, proof.
-func aboveTheFoldTrustChecks(site *eval.SiteContext) []eval.CheckResult {
+func aboveTheFoldTrustChecks(site *eval.SiteContext, fidelity agent.DesignFidelity) []eval.CheckResult {
 	const max = 5
 	trustTypes := map[string]bool{
 		"logo_strip":      true,
@@ -643,6 +782,12 @@ func aboveTheFoldTrustChecks(site *eval.SiteContext) []eval.CheckResult {
 	}
 	if len(fails) == 0 {
 		return []eval.CheckResult{eval.Pass("above_the_fold_trust", "design_quality", max, "every landing page ships a trust signal (logos / stats / proof / FAQ) in the first 5 blocks")}
+	}
+	// Showcase narratives (full-screen scroll stories, launch teasers)
+	// legitimately break the hero-logos-stats landing formula. Advisory.
+	if fidelity == agent.FidelityShowcase {
+		return []eval.CheckResult{eval.Info("above_the_fold_trust", "design_quality",
+			fmt.Sprintf("Advisory in showcase fidelity: %d landing page(s) ship no conventional trust signal in the first 5 blocks (%s). Unconventional narratives are allowed; make sure SOMETHING earns trust above the fold (craft, proof, or specificity).", len(fails), strings.Join(fails, ", ")))}
 	}
 	deduct := max
 	if deduct > len(fails)+1 {

@@ -445,6 +445,14 @@
 				</div>
 				{#if latestComposite}
 					<div class="flex items-center gap-2 text-right">
+						{#if latestBuildEvals[0]?.profile}
+							<span
+								class="rounded-full border border-border-light bg-bg-elevated/60 px-2 py-0.5 font-mono text-[10px] uppercase tracking-[0.14em] text-text-secondary"
+								title="Design fidelity this build was graded under"
+							>
+								{latestBuildEvals[0].profile}
+							</span>
+						{/if}
 						<span class="text-[11px] text-text-muted">Composite</span>
 						<GradeBadge grade={latestComposite} size="sm" />
 					</div>

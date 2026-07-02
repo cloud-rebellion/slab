@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"golang.org/x/net/html"
+
+	"github.com/bright-interaction/slab/internal/agent"
 )
 
 // RunGEOChecks evaluates AI-search / Generative Engine Optimization signals.
@@ -84,12 +86,19 @@ func RunGEOChecks(site *SiteContext) []CheckResult {
 
 	checks = append(checks, checkNoindexNotInSitemap(site))
 
-	checks = append(checks, perPageCheck("AI-Friendly Formatting", "geo", 1, site, func(p PageContext) (bool, string) {
-		if hasAIFormatSignal(p.Doc) {
-			return true, ""
-		}
-		return false, "no list (≥3 items), table with <th>, definition list, or sufficient h2 density"
-	}, "Use lists, tables with <th>, or denser H2 sections so LLMs can extract passages cleanly."))
+	// Structure-taste check: advisory in showcase fidelity (free-form
+	// showcase layouts legitimately skip the list/table pattern).
+	if site.Fidelity == agent.FidelityShowcase {
+		checks = append(checks, Info("AI-Friendly Formatting", "geo",
+			"Advisory in showcase fidelity: lists/tables/dense H2s still help LLM passage extraction; unscored here."))
+	} else {
+		checks = append(checks, perPageCheck("AI-Friendly Formatting", "geo", 1, site, func(p PageContext) (bool, string) {
+			if hasAIFormatSignal(p.Doc) {
+				return true, ""
+			}
+			return false, "no list (≥3 items), table with <th>, definition list, or sufficient h2 density"
+		}, "Use lists, tables with <th>, or denser H2 sections so LLMs can extract passages cleanly."))
+	}
 
 	return checks
 }

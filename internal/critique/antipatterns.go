@@ -40,41 +40,56 @@ type antiPatternInput struct {
 	headings  []string
 }
 
+// antiPatternClass separates the rules the fidelity dial may relax from
+// the ones it never touches. classAuthenticity (slop, fake data, cliche
+// copy) and classCorrectness (real bugs like 100vh on iOS) score in
+// EVERY fidelity; classTaste demotes to advisory Info in showcase so
+// the grade honestly reflects the showcase rubric (the entry leaves
+// both numerator and denominator, it is not a gifted Pass).
+type antiPatternClass int
+
+const (
+	classTaste antiPatternClass = iota
+	classAuthenticity
+	classCorrectness
+)
+
 // antiPatternRule binds a playbook entry (matched by `key`) to a detector.
 type antiPatternRule struct {
-	key      string // lowercased substring uniquely identifying the playbook Banned text
-	advisory bool   // true => no reliable rendered-output signal; emit Info
+	key      string           // lowercased substring uniquely identifying the playbook Banned text
+	advisory bool             // true => no reliable rendered-output signal; emit Info
+	class    antiPatternClass // which rules the fidelity dial may demote
 	detect   func(in antiPatternInput) bool
 }
 
 var antiPatternRules = []antiPatternRule{
-	{key: "inter font", detect: detectInterHeading},
-	{key: "roboto, open sans", detect: detectGenericHeadingFont},
-	{key: "pure black", detect: detectPureBlack},
+	{key: "inter font", class: classTaste, detect: detectInterHeading},
+	{key: "roboto, open sans", class: classTaste, detect: detectGenericHeadingFont},
+	{key: "pure black", class: classTaste, detect: detectPureBlack},
 	{key: "shadow-md", advisory: true},     // tailwind class; renderer emits computed CSS, token-coherence covers shadow drift
 	{key: "oversaturated", advisory: true}, // saturation judgement too noisy from hex alone
-	{key: "ai gradient", detect: detectAIGradient},
+	{key: "ai gradient", class: classTaste, detect: detectAIGradient},
 	{key: "warm and cool grays", advisory: true},
-	{key: "linear or ease-in-out", detect: detectBlandTransition},
+	{key: "linear or ease-in-out", class: classTaste, detect: detectBlandTransition},
 	{key: "lucide / feather", advisory: true}, // icons render as generic <svg class="icon">, default-state not visible
 	{key: "cliché icons", advisory: true},     // icon NAME is stripped at render, can't tell rocket/shield/cog apart
 	{key: "cliche icons", advisory: true},
 	{key: "three equal cards", advisory: true},
-	{key: "centered hero with text over an image", detect: detectHeroOverImage},
-	{key: "h-screen", detect: detectFixedViewportHeight},
+	{key: "centered hero with text over an image", class: classTaste, detect: detectHeroOverImage},
+	{key: "h-screen", class: classCorrectness, detect: detectFixedViewportHeight},
 	{key: "edge-to-edge content", advisory: true},
 	{key: "symmetric vertical padding", advisory: true},
 	{key: "1px solid gray border", advisory: true}, // renderer uses color-mix borders; raw-border drift is too noisy to flag cleanly
 	{key: "sticky navbars", advisory: true},
 	{key: "filling sections", advisory: true},
-	{key: "john doe", detect: detectFakeNames},
-	{key: "round fake numbers", detect: detectFakeNumbers},
-	{key: "acme corp", detect: detectFakeCompanies},
-	{key: "title case on every heading", detect: detectTitleCaseHeadings},
-	{key: "exclamation marks", detect: detectExclamationCTAs},
-	{key: "ai copywriting clichés", detect: detectAICliches},
-	{key: "ai copywriting cliches", detect: detectAICliches},
-	{key: "lorem ipsum", detect: detectLorem},
+	{key: "john doe", class: classAuthenticity, detect: detectFakeNames},
+	{key: "round fake numbers", class: classAuthenticity, detect: detectFakeNumbers},
+	{key: "acme corp", class: classAuthenticity, detect: detectFakeCompanies},
+	{key: "title case on every heading", class: classTaste, detect: detectTitleCaseHeadings},
+	{key: "exclamation marks", class: classAuthenticity, detect: detectExclamationCTAs},
+	{key: "ai copywriting clichés", class: classAuthenticity, detect: detectAICliches},
+	{key: "ai copywriting cliches", class: classAuthenticity, detect: detectAICliches},
+	{key: "lorem ipsum", class: classAuthenticity, detect: detectLorem},
 }
 
 // matchAntiPattern returns the rule whose key is a substring of the playbook
@@ -92,7 +107,10 @@ func matchAntiPattern(banned string) *antiPatternRule {
 // antiPatternChecks scans built output for each playbook anti-pattern. Detected
 // entries produce a weighted Pass/Fail; entries with no reliable rendered-output
 // signal produce an honest advisory Info (zero weight) rather than a fake Pass.
-func antiPatternChecks(patterns []agent.AntiPattern, html, css, text string, headings []string) []eval.CheckResult {
+// In showcase fidelity, taste-class detectors run but emit advisory Info
+// (visible, unscored, out of the denominator); authenticity and correctness
+// detectors score identically in every fidelity.
+func antiPatternChecks(patterns []agent.AntiPattern, html, css, text string, headings []string, fidelity agent.DesignFidelity) []eval.CheckResult {
 	in := antiPatternInput{
 		htmlLower: strings.ToLower(html),
 		cssLower:  strings.ToLower(css),
@@ -106,6 +124,14 @@ func antiPatternChecks(patterns []agent.AntiPattern, html, css, text string, hea
 		if rule == nil || rule.advisory {
 			out = append(out, eval.Info(name, "anti_patterns",
 				"Advisory (not auto-detectable from rendered output): "+ap.Preferred))
+			continue
+		}
+		if fidelity == agent.FidelityShowcase && rule.class == classTaste {
+			detail := "Advisory in showcase fidelity (taste rule, unscored): no match in built output."
+			if rule.detect(in) {
+				detail = "Advisory in showcase fidelity (taste rule, unscored): pattern present. " + ap.Preferred
+			}
+			out = append(out, eval.Info(name, "anti_patterns", detail))
 			continue
 		}
 		if rule.detect(in) {

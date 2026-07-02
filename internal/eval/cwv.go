@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math"
 
+	"github.com/bright-interaction/slab/internal/agent"
 	"github.com/bright-interaction/slab/internal/store"
 )
 
@@ -42,6 +43,21 @@ var cwvMetricThresholds = map[string]cwvThresholds{
 // Web Vitals; FCP and TTFB are supplementary diagnostics).
 var cwvMetricOrder = []string{"LCP", "INP", "CLS", "FCP", "TTFB"}
 
+// cwvWeightFor returns the scoring weight for a metric under a design
+// fidelity. Showcase halves the speed-metric weights (LCP/INP/FCP/TTFB):
+// the operator knowingly traded speed for design, so a needs-improvement
+// LCP costs less of the grade, while the p75 value itself stays in the
+// detail string, honest and Google-comparable (thresholds NEVER move;
+// they mirror cwvRatingFor in handlers/analytics.go). CLS keeps full
+// weight in every fidelity: layout jank is never a design choice.
+func cwvWeightFor(metric string, f agent.DesignFidelity) int {
+	w := cwvMetricThresholds[metric].weight
+	if f == agent.FidelityShowcase && metric != "CLS" {
+		w = (w + 1) / 2
+	}
+	return w
+}
+
 // RunCWVChecks queries measured Core Web Vitals from the analytics DB and
 // emits one check per metric (LCP, INP, CLS, FCP, TTFB) based on the p75
 // sample against Google's thresholds. Metrics with fewer than cwvMinSamples
@@ -51,7 +67,7 @@ var cwvMetricOrder = []string{"LCP", "INP", "CLS", "FCP", "TTFB"}
 // This is what closes the moat-hole vs Lovable: the static eval can call a
 // site A+ on perf even when shipping a 500KB blocking font; folding the
 // real-user beacon data in makes the grade reflect what users measured.
-func RunCWVChecks(ctx context.Context, queries *store.Queries, siteID string) []CheckResult {
+func RunCWVChecks(ctx context.Context, queries *store.Queries, siteID string, fidelity agent.DesignFidelity) []CheckResult {
 	if queries == nil || siteID == "" {
 		return nil
 	}
@@ -68,6 +84,7 @@ func RunCWVChecks(ctx context.Context, queries *store.Queries, siteID string) []
 			continue
 		}
 		t := cwvMetricThresholds[metric]
+		weight := cwvWeightFor(metric, fidelity)
 		name := fmt.Sprintf("Measured %s (p75, 7d)", metric)
 		if len(rows) < cwvMinSamples {
 			checks = append(checks, Info(name, "cwv",
@@ -80,17 +97,21 @@ func RunCWVChecks(ctx context.Context, queries *store.Queries, siteID string) []
 			idx = len(rows) - 1
 		}
 		p75 := rows[idx].Value
+		fidelityNote := ""
+		if weight != t.weight {
+			fidelityNote = fmt.Sprintf(", weight %d under %s fidelity", weight, string(fidelity))
+		}
 		switch {
 		case p75 <= t.good:
-			checks = append(checks, Pass(name, "cwv", t.weight,
-				fmt.Sprintf("p75 %s (good, n=%d)", formatCWVValue(metric, p75), len(rows))))
+			checks = append(checks, Pass(name, "cwv", weight,
+				fmt.Sprintf("p75 %s (good, n=%d%s)", formatCWVValue(metric, p75), len(rows), fidelityNote)))
 		case p75 <= t.poor:
-			checks = append(checks, Fail(name, "cwv", t.weight, SeverityWarning,
-				fmt.Sprintf("p75 %s (needs improvement, n=%d)", formatCWVValue(metric, p75), len(rows)),
+			checks = append(checks, Fail(name, "cwv", weight, SeverityWarning,
+				fmt.Sprintf("p75 %s (needs improvement, n=%d%s)", formatCWVValue(metric, p75), len(rows), fidelityNote),
 				cwvFixHint(metric)))
 		default:
-			checks = append(checks, Fail(name, "cwv", t.weight, SeverityError,
-				fmt.Sprintf("p75 %s (poor, n=%d)", formatCWVValue(metric, p75), len(rows)),
+			checks = append(checks, Fail(name, "cwv", weight, SeverityError,
+				fmt.Sprintf("p75 %s (poor, n=%d%s)", formatCWVValue(metric, p75), len(rows), fidelityNote),
 				cwvFixHint(metric)))
 		}
 	}

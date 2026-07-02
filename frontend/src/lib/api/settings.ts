@@ -6,6 +6,9 @@ export type SettingsCategory =
 	| 'seo'
 	| 'analytics'
 	| 'general'
+	| 'design'
+	| 'search'
+	| 'payments'
 	| 'wizard_state'
 	| 'server';
 

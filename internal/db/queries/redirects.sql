@@ -82,8 +82,8 @@ SELECT * FROM evaluations WHERE build_id = ? AND site_id = ? ORDER BY category;
 SELECT * FROM evaluations WHERE site_id = ? ORDER BY created_at DESC LIMIT ?;
 
 -- name: CreateEvaluation :exec
-INSERT INTO evaluations (id, build_id, site_id, category, score, max_score, grade, checks_json, created_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'));
+INSERT INTO evaluations (id, build_id, site_id, category, score, max_score, grade, checks_json, profile, created_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'));
 
 -- name: DeleteEvaluationsByBuild :exec
 DELETE FROM evaluations WHERE build_id = ?;

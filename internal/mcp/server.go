@@ -597,7 +597,7 @@ func (s *Server) handleInitialize(req Request) (any, *ResponseError) {
 			Resources: &struct{}{},
 			Prompts:   &struct{}{},
 		},
-		Instructions: "atomicsite MCP server. On session start: (1) read atomicsite://meta/design-playbook (the rubric the Inspector grades against: principles, archetypes, anti-patterns, vibe archetypes, materiality, slop terms, motion budget, copy voice, font system, hero graphics) BEFORE authoring any block, (2) read atomicsite://meta/capabilities for identity plus the live tools/resources/prompts surface, (3) read atomicsite://site/context for site state. Use tools/list to see writable surfaces. Visitor data plus identified-tier PII is intentionally NOT exposed via MCP.",
+		Instructions: "atomicsite MCP server. On session start: (1) read atomicsite://meta/design-playbook (the rubric the Inspector grades against, ADAPTED to this site's design.fidelity dial: performance / balanced / showcase; the fidelity section at the top states what is unlocked, how grading changes, and what is never relaxed) BEFORE authoring any block, (2) read atomicsite://meta/capabilities for identity plus the live tools/resources/prompts surface, (3) read atomicsite://site/context for site state. The fidelity dial is agent-writable (bulk_upsert_settings category=design key=fidelity); change it BEFORE authoring, then re-read the playbook. Use tools/list to see writable surfaces. Visitor data plus identified-tier PII is intentionally NOT exposed via MCP.",
 	}, nil
 }
 

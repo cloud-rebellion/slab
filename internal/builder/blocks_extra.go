@@ -24,7 +24,10 @@ func renderHeroGraphic(name string, data map[string]any) string {
 	}
 	cls := "hero-graphic hero-graphic--" + escapeAttr(name)
 	switch name {
-	case "mesh", "pulse", "gradient-orb":
+	// aurora: full-bleed drifting aurora gradient, the showcase-fidelity
+	// signature. Renders in any fidelity; reduced motion freezes it to a
+	// static gradient via the CSS gate.
+	case "mesh", "pulse", "gradient-orb", "aurora":
 		return fmt.Sprintf(`<div class="%s" aria-hidden="true"></div>`, cls)
 	case "globe-wire":
 		// Pure SVG rendition of the marketing site's hero globe.

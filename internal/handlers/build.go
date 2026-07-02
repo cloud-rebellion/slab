@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/bright-interaction/slab/internal/agent"
 	"github.com/bright-interaction/slab/internal/builder"
 	"github.com/bright-interaction/slab/internal/config"
 	"github.com/bright-interaction/slab/internal/critique"
@@ -104,21 +105,42 @@ var gradeRank = map[string]int{
 // existing unconditional-publish behavior is preserved unless an operator opts
 // in. This resolves the audit's "eval grade gates nothing" finding without
 // changing default behavior or risking a tenant's publish.
-func belowPublishGrade(reports []eval.CategoryReport) (bool, string) {
+//
+// Fidelity-aware: under showcase, the performance category compares
+// against a floor three ranks below the configured minimum (the operator
+// explicitly traded speed for design; blocking publish on that trade
+// would fight the dial). Security, seo, accessibility, and privacy keep
+// the full configured minimum in every fidelity.
+func belowPublishGrade(reports []eval.CategoryReport, fidelity agent.DesignFidelity) (bool, string) {
 	want, ok := gradeRank[strings.TrimSpace(os.Getenv("ATOMICSITE_MIN_PUBLISH_GRADE"))]
 	if !ok {
 		return false, ""
 	}
-	worst, worstRank := "", 1<<30
-	for _, r := range reports {
-		if rk, ok := gradeRank[r.Grade]; ok && rk < worstRank {
-			worst, worstRank = r.Grade, rk
+	perfWant := want
+	if fidelity == agent.FidelityShowcase {
+		perfWant = want - 3
+		if perfWant < 1 {
+			perfWant = 1
 		}
 	}
-	if worst == "" {
-		return false, ""
+	worst, blocked := "", false
+	for _, r := range reports {
+		rk, ok := gradeRank[r.Grade]
+		if !ok {
+			continue
+		}
+		threshold := want
+		if r.Category == "performance" {
+			threshold = perfWant
+		}
+		if rk < threshold {
+			blocked = true
+			if worst == "" || rk < gradeRank[worst] {
+				worst = r.Grade
+			}
+		}
 	}
-	return worstRank < want, worst
+	return blocked, worst
 }
 
 // acquireBuildSlot blocks until a global build slot is free or ctx is done.
@@ -388,7 +410,7 @@ func (h *BuildHandler) StartBuild(ctx context.Context, siteID string) (string, e
 			// Opt-in publish gate: when ATOMICSITE_MIN_PUBLISH_GRADE is set, a
 			// build whose worst category grade is below it is built + graded but
 			// NOT auto-published. Unset (default) keeps publish unconditional.
-			if blocked, worst := belowPublishGrade(reports); blocked {
+			if blocked, worst := belowPublishGrade(reports, agent.FidelityForSite(bgCtx, h.queries, siteID)); blocked {
 				result.BuildLog += "\n=== deploy ===\nskipped: worst grade " + worst + " is below ATOMICSITE_MIN_PUBLISH_GRADE; published nothing\n"
 			} else if targetID, deployURL, deployErr := h.autoDeployDefault(bgCtx, siteID, result.DistDir); deployErr != nil {
 				result.BuildLog += "\n=== deploy ===\nfailed: " + deployErr.Error() + "\n"

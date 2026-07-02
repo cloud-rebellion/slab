@@ -3,17 +3,61 @@ package eval
 import (
 	"fmt"
 	"strings"
+
+	"github.com/bright-interaction/slab/internal/agent"
 )
+
+// perfBudget holds the fidelity-dependent performance thresholds. The
+// balanced values are the historical literals, so existing sites grade
+// byte-identically; showcase trades page weight for design ambition
+// (the operator opted in via design.fidelity) while every check stays
+// visible and scored. Performance fidelity keeps the balanced budgets:
+// they already permit perfect scores, the discipline is authorial.
+type perfBudget struct {
+	pageHTMLBytes  int64   // per-page HTML size cap
+	inlineCSSBytes int     // total <style> content cap per page
+	totalHTMLBytes int64   // site-wide dist HTML cap
+	lazyRatioNum   int     // required lazy-loaded fraction (num/den) of non-first images
+	lazyRatioDen   int
+}
+
+func perfBudgetFor(f agent.DesignFidelity) perfBudget {
+	if f == agent.FidelityShowcase {
+		return perfBudget{
+			pageHTMLBytes:  400 * 1024,
+			inlineCSSBytes: 150 * 1024,
+			totalHTMLBytes: 8 * 1024 * 1024,
+			lazyRatioNum:   3, lazyRatioDen: 5,
+		}
+	}
+	return perfBudget{
+		pageHTMLBytes:  200 * 1024,
+		inlineCSSBytes: 50 * 1024,
+		totalHTMLBytes: 5 * 1024 * 1024,
+		lazyRatioNum:   4, lazyRatioDen: 5,
+	}
+}
+
+// budgetLabel annotates a check detail with the active budget so the
+// stored row states which threshold applied.
+func (b perfBudget) label(f agent.DesignFidelity) string {
+	if f == "" {
+		f = agent.FidelityBalanced
+	}
+	return string(f)
+}
 
 // RunPerformanceChecks does file-size + static-HTML based perf checks.
 // Skips runtime metrics (LCP, INP, TTFB) which need a real browser.
+// Budgets follow site.Fidelity (see perfBudgetFor).
 func RunPerformanceChecks(site *SiteContext) []CheckResult {
 	var checks []CheckResult
+	budget := perfBudgetFor(site.Fidelity)
 
 	// 1. Page weight (per-page HTML size — small approximation since we don't bundle assets)
-	checks = append(checks, perPageCheck("HTML Size < 200KB", "weight", 2, site, func(p PageContext) (bool, string) {
-		if p.FileSize > 200*1024 {
-			return false, fmt.Sprintf("%d bytes", p.FileSize)
+	checks = append(checks, perPageCheck(fmt.Sprintf("HTML Size < %dKB", budget.pageHTMLBytes/1024), "weight", 2, site, func(p PageContext) (bool, string) {
+		if p.FileSize > budget.pageHTMLBytes {
+			return false, fmt.Sprintf("%d bytes (budget %dKB, %s fidelity)", p.FileSize, budget.pageHTMLBytes/1024, budget.label(site.Fidelity))
 		}
 		return true, ""
 	}, "Reduce inline CSS/HTML; move large content to separate files."))
@@ -75,10 +119,11 @@ func RunPerformanceChecks(site *SiteContext) []CheckResult {
 				lazyCount++
 			}
 		}
-		// Expect at least all-but-the-first image to be lazy
+		// Expect at least the budgeted fraction of non-first images to
+		// be lazy (showcase relaxes for art-directed eager galleries).
 		expected := len(imgs) - 1
-		if lazyCount < expected*4/5 {
-			return false, fmt.Sprintf("%d/%d images use loading=lazy", lazyCount, len(imgs))
+		if lazyCount < expected*budget.lazyRatioNum/budget.lazyRatioDen {
+			return false, fmt.Sprintf("%d/%d images use loading=lazy (%s fidelity budget)", lazyCount, len(imgs), budget.label(site.Fidelity))
 		}
 		return true, ""
 	}, "Add loading=\"lazy\" to all below-the-fold images."))
@@ -103,11 +148,11 @@ func RunPerformanceChecks(site *SiteContext) []CheckResult {
 		for _, s := range elementsByTag(p.Doc, "style") {
 			total += len(textContent(s))
 		}
-		if total > 50*1024 {
-			return false, fmt.Sprintf("%d bytes inline CSS", total)
+		if total > budget.inlineCSSBytes {
+			return false, fmt.Sprintf("%d bytes inline CSS (budget %dKB, %s fidelity)", total, budget.inlineCSSBytes/1024, budget.label(site.Fidelity))
 		}
 		return true, ""
-	}, "Move CSS over 50KB into external files for caching."))
+	}, "Move oversized CSS into external files for caching."))
 
 	// 7. Resource hints
 	checks = append(checks, perPageCheck("Resource Hints", "hints", 1, site, func(p PageContext) (bool, string) {
@@ -131,12 +176,12 @@ func RunPerformanceChecks(site *SiteContext) []CheckResult {
 		totalSize += p.FileSize
 	}
 	if totalSize > 0 {
-		if totalSize < 5*1024*1024 {
+		if totalSize < budget.totalHTMLBytes {
 			checks = append(checks, Pass("Total HTML Size", "weight", 1,
-				fmt.Sprintf("%.1f KB across %d pages", float64(totalSize)/1024, len(site.Pages))))
+				fmt.Sprintf("%.1f KB across %d pages (%s fidelity budget)", float64(totalSize)/1024, len(site.Pages), budget.label(site.Fidelity))))
 		} else {
 			checks = append(checks, Fail("Total HTML Size", "weight", 1, SeverityWarning,
-				fmt.Sprintf("%.1f MB across %d pages", float64(totalSize)/1024/1024, len(site.Pages)),
+				fmt.Sprintf("%.1f MB across %d pages (budget %dMB, %s fidelity)", float64(totalSize)/1024/1024, len(site.Pages), budget.totalHTMLBytes/1024/1024, budget.label(site.Fidelity)),
 				"Consider splitting large pages or moving content to dynamic loading."))
 		}
 	}

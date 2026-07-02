@@ -33,6 +33,13 @@ func strictDesignLintEnabled(ctx context.Context, queries *store.Queries, siteID
 	return true
 }
 
+// siteFidelity resolves the design.fidelity dial for lint gating. Named
+// helper (rather than calling agent.FidelityForSite inline) because the
+// tool handlers shadow the agent package with their identity parameter.
+func siteFidelity(ctx context.Context, queries *store.Queries, siteID string) agent.DesignFidelity {
+	return agent.FidelityForSite(ctx, queries, siteID)
+}
+
 // runBlockLint is the in-process bridge create_block + update_block
 // use to run the synchronous design lint (gap 4 of 6, 2026-05-21).
 // Takes whatever shape json.Unmarshal handed back (map[string]any |
@@ -42,7 +49,7 @@ func strictDesignLintEnabled(ctx context.Context, queries *store.Queries, siteID
 // boundary tight (critique.LintBlockData only deals in map[string]any
 // + DesignPlaybookInfo, no MCP framework types) and lets future
 // linters fan out from a single hook.
-func runBlockLint(blockType, archetype string, raw any) []critique.LintFinding {
+func runBlockLint(blockType, archetype string, raw any, fidelity agent.DesignFidelity) []critique.LintFinding {
 	if raw == nil {
 		return nil
 	}
@@ -52,13 +59,13 @@ func runBlockLint(blockType, archetype string, raw any) []critique.LintFinding {
 		// the renderer will surface the type error on build.
 		return nil
 	}
-	return critique.LintBlockDataWithArchetype(blockType, data, archetype, agent.DefaultDesignPlaybook())
+	return critique.LintBlockDataWithArchetype(blockType, data, archetype, agent.DesignPlaybookFor(fidelity))
 }
 
 // runBlockLintFromJSON unmarshals a stored DataJson string and lints
 // the result. Used by update_block where the post-mutation state comes
 // from the DB as a JSON string rather than the just-decoded map.
-func runBlockLintFromJSON(blockType, archetype, dataJSON string) []critique.LintFinding {
+func runBlockLintFromJSON(blockType, archetype, dataJSON string, fidelity agent.DesignFidelity) []critique.LintFinding {
 	dataJSON = strings.TrimSpace(dataJSON)
 	if dataJSON == "" || dataJSON == "{}" || dataJSON == "null" {
 		return nil
@@ -67,7 +74,7 @@ func runBlockLintFromJSON(blockType, archetype, dataJSON string) []critique.Lint
 	if err := json.Unmarshal([]byte(dataJSON), &data); err != nil {
 		return nil
 	}
-	return critique.LintBlockDataWithArchetype(blockType, data, archetype, agent.DefaultDesignPlaybook())
+	return critique.LintBlockDataWithArchetype(blockType, data, archetype, agent.DesignPlaybookFor(fidelity))
 }
 
 // registerLintTools wires the standalone lint_block tool. Lets the
@@ -89,7 +96,7 @@ func (s *Server) registerLintTools() {
 			},
 			"required":["block_type","data"]
 		}`),
-		Handler: func(_ context.Context, _ *authmw.AgentIdentity, raw json.RawMessage) (string, error) {
+		Handler: func(ctx context.Context, identity *authmw.AgentIdentity, raw json.RawMessage) (string, error) {
 			var args struct {
 				BlockType string         `json:"block_type"`
 				Data      map[string]any `json:"data"`
@@ -101,12 +108,15 @@ func (s *Server) registerLintTools() {
 			if strings.TrimSpace(args.BlockType) == "" {
 				return "", errors.New("block_type required")
 			}
-			findings := critique.LintBlockDataWithArchetype(args.BlockType, args.Data, args.Archetype, agent.DefaultDesignPlaybook())
+			fidelity := siteFidelity(ctx, s.queries, identity.SiteID)
+			findings := critique.LintBlockDataWithArchetype(args.BlockType, args.Data, args.Archetype, agent.DesignPlaybookFor(fidelity))
 			return mustJSON(map[string]any{
 				"design_warnings":    findings,
 				"count":              len(findings),
+				"design_fidelity":    string(fidelity),
+				"would_block":        critique.FilterBlockingFor(findings, fidelity),
 				"design_inspiration": critique.InspirationsFor(args.BlockType),
-				"hint":               "Each finding has name, severity (warning|info), field, message, fix. Zero findings = the block clears the synchronous design lint; the Inspector still grades the rendered HTML after the next build. design_inspiration is the curated 2-3 design-corpus references for this block_type (gap 5). Pass archetype to enable the archetype_drift check (gap 6).",
+				"hint":               "Each finding has name, severity (warning|info), field, message, fix. Zero findings = the block clears the synchronous design lint; the Inspector still grades the rendered HTML after the next build (against this site's design.fidelity rubric, see design_fidelity). would_block lists the findings that would refuse a strict-mode write. design_inspiration is the curated 2-3 design-corpus references for this block_type (gap 5). Pass archetype to enable the archetype_drift check (gap 6).",
 			}), nil
 		},
 	})

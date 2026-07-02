@@ -33,10 +33,23 @@ func validateSetting(category, key, value string) error {
 		return validateAnalyticsSetting(key, value)
 	case "security":
 		return validateSecuritySetting(key, value)
+	case "design":
+		return validateDesignSetting(key, value)
 	}
 	// Unknown categories pass through; future-compat for whatever the next
 	// phase introduces. The handler-level routing already guards write
 	// access (agent_settings.go.agentWritableSettingsCategories).
+	return nil
+}
+
+func validateDesignSetting(key, value string) error {
+	switch key {
+	case "fidelity":
+		// A typo'd fidelity must never silently select a no-op profile.
+		return enumIn("design.fidelity", value, "performance", "balanced", "showcase")
+	case "strict_lint":
+		return boolValue("design.strict_lint", value)
+	}
 	return nil
 }
 

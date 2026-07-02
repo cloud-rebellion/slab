@@ -54,12 +54,12 @@ func (s *Server) registerPrompts() {
 
 	register(Prompt{
 		Name:        "build_for_perfect_eval",
-		Description: "Read the site state + pending_setup + settings_catalog + block_schemas, then build out the site to maximize the eval score. Treats the eval engine's checklist as the spec; iterates until the categories the agent can write hit at least 95%. Use this when the site is empty or near-empty and you want a full set-up pass in one shot.",
+		Description: "Read the site state + pending_setup + settings_catalog + block_schemas, then build out the site to maximize the eval score. Treats the eval engine's checklist as the spec; iterates until the categories the agent can write hit at least 95%. Use this when the site is empty or near-empty and you want a full set-up pass in one shot. Grade targets follow the site's design.fidelity dial; under showcase the performance target is C+ against showcase budgets, not A+.",
 		Render: func(ctx context.Context, agent *authmw.AgentIdentity, _ map[string]string) ([]PromptMessage, error) {
 			return []PromptMessage{
-				{Role: "user", Content: Content{Type: "text", Text: `Goal: get this site to A+ on the atomicsite eval engine without me hand-holding each step.
+				{Role: "user", Content: Content{Type: "text", Text: `Goal: get this site to its best possible eval grades without me hand-holding each step. Targets follow the design.fidelity dial: performance fidelity = A+ everywhere; balanced (default) = A+ where agent-writable; showcase = security/a11y/privacy >= A-, seo >= B, performance >= C+ (the operator traded speed for design; spend that budget on craft, read design_playbook.fidelity first).
 
-Read atomicsite://site/context first. The payload carries everything you need to plan: pending_setup (gaps), block_schemas (what each block_type expects), settings_catalog (every settable key + writable_by_agent flag), security_posture (admin-only items you can't touch), i18n (locale + hreflang strategy), endpoints (REST mirror of MCP).
+Read atomicsite://site/context first. The payload carries everything you need to plan: pending_setup (gaps), block_schemas (what each block_type expects), settings_catalog (every settable key + writable_by_agent flag, including design.fidelity), security_posture (admin-only items you can't touch), i18n (locale + hreflang strategy), endpoints (REST mirror of MCP).
 
 Then converge on the perfect-score checklist below. Treat each item as a hard requirement before claiming done.
 

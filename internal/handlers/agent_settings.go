@@ -23,11 +23,17 @@ import (
 //   - allowed-scripts: CSP whitelist additions widen XSS exposure
 //   - nginx: server config preview, internal-only
 //   - danger: site deletion, destructive
+// Keep in sync with agentWritableCategories (internal/mcp/helpers.go),
+// the bulk_upsert_settings schema enum (internal/mcp/tools.go), and
+// writableSet in internal/agent/settings_catalog.go.
 var agentWritableSettingsCategories = map[string]bool{
 	"seo":       true,
 	"analytics": true,
 	"general":   true,
 	"search":    true,
+	// design carries the fidelity dial + strict-lint toggle; taste-only,
+	// no security surface.
+	"design": true,
 }
 
 // ListSettings returns all settings rows for the agent's site (any category).

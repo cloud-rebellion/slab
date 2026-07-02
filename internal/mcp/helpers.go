@@ -22,10 +22,14 @@ func newID() string {
 // Duplicated intentionally rather than imported: settings policy is small
 // + stable, and a one-source-of-truth helper would have to live in a
 // shared package neither handlers nor mcp reaches into today.
+// Keep in sync with the REST mirror AND the bulk_upsert_settings schema
+// enum in tools.go.
 var agentWritableCategories = map[string]bool{
 	"general":   true,
 	"seo":       true,
 	"analytics": true,
+	"search":    true,
+	"design":    true,
 }
 
 func isAgentWritableCategory(category string) bool {
@@ -49,6 +53,18 @@ func validateSettingValue(category, key, value string) error {
 		return validateSEO(key, value)
 	case "analytics":
 		return validateAnalytics(key, value)
+	case "design":
+		return validateDesign(key, value)
+	}
+	return nil
+}
+
+func validateDesign(key, value string) error {
+	switch key {
+	case "fidelity":
+		return enumIn("design.fidelity", value, "performance", "balanced", "showcase")
+	case "strict_lint":
+		return boolStr("design.strict_lint", value)
 	}
 	return nil
 }

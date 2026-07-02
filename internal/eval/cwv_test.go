@@ -10,6 +10,7 @@ import (
 
 	_ "modernc.org/sqlite"
 
+	"github.com/bright-interaction/slab/internal/agent"
 	dbpkg "github.com/bright-interaction/slab/internal/db"
 	"github.com/bright-interaction/slab/internal/store"
 )
@@ -68,7 +69,7 @@ func TestRunCWVChecks_NoSamples(t *testing.T) {
 	ctx := context.Background()
 	// No site seeded, no events. Function must not crash, and every metric
 	// is Info-only (no scoring impact for a brand-new site).
-	checks := RunCWVChecks(ctx, queries, "site_no_data")
+	checks := RunCWVChecks(ctx, queries, "site_no_data", agent.FidelityBalanced)
 	if len(checks) != len(cwvMetricOrder) {
 		t.Fatalf("expected %d info checks, got %d", len(cwvMetricOrder), len(checks))
 	}
@@ -80,11 +81,11 @@ func TestRunCWVChecks_NoSamples(t *testing.T) {
 }
 
 func TestRunCWVChecks_NilQueriesIsSafe(t *testing.T) {
-	if checks := RunCWVChecks(context.Background(), nil, "any"); checks != nil {
+	if checks := RunCWVChecks(context.Background(), nil, "any", agent.FidelityBalanced); checks != nil {
 		t.Fatalf("expected nil checks for nil queries, got %d", len(checks))
 	}
 	_, queries := openTestDB(t)
-	if checks := RunCWVChecks(context.Background(), queries, ""); checks != nil {
+	if checks := RunCWVChecks(context.Background(), queries, "", agent.FidelityBalanced); checks != nil {
 		t.Fatalf("expected nil checks for empty siteID, got %d", len(checks))
 	}
 }
@@ -96,7 +97,7 @@ func TestRunCWVChecks_BelowMinSamplesIsInfo(t *testing.T) {
 
 	// 5 samples is below the floor; should produce Info, not a graded result.
 	seedCWV(t, sqlDB, siteID, "LCP", []float64{1000, 1100, 1200, 1300, 1400})
-	checks := RunCWVChecks(context.Background(), queries, siteID)
+	checks := RunCWVChecks(context.Background(), queries, siteID, agent.FidelityBalanced)
 
 	lcp := findCheck(checks, "LCP")
 	if lcp == nil {
@@ -119,7 +120,7 @@ func TestRunCWVChecks_GradesGoodLCP(t *testing.T) {
 	values := []float64{1000, 1100, 1200, 1300, 1400, 1500, 1600, 1700, 1800, 1900, 2000, 2100}
 	seedCWV(t, sqlDB, siteID, "LCP", values)
 
-	checks := RunCWVChecks(context.Background(), queries, siteID)
+	checks := RunCWVChecks(context.Background(), queries, siteID, agent.FidelityBalanced)
 	lcp := findCheck(checks, "LCP")
 	if lcp == nil || lcp.Passed == nil || !*lcp.Passed {
 		t.Fatalf("expected LCP to pass, got %+v", lcp)
@@ -139,7 +140,7 @@ func TestRunCWVChecks_GradesPoorINP(t *testing.T) {
 	values := []float64{100, 150, 200, 250, 300, 400, 500, 600, 700, 800, 900, 1000}
 	seedCWV(t, sqlDB, siteID, "INP", values)
 
-	checks := RunCWVChecks(context.Background(), queries, siteID)
+	checks := RunCWVChecks(context.Background(), queries, siteID, agent.FidelityBalanced)
 	inp := findCheck(checks, "INP")
 	if inp == nil || inp.Passed == nil || *inp.Passed {
 		t.Fatalf("expected INP to fail, got %+v", inp)
@@ -161,7 +162,7 @@ func TestRunCWVChecks_NeedsImprovementCLS(t *testing.T) {
 	values := []float64{0.01, 0.02, 0.03, 0.05, 0.07, 0.09, 0.11, 0.13, 0.15, 0.18, 0.20, 0.22}
 	seedCWV(t, sqlDB, siteID, "CLS", values)
 
-	checks := RunCWVChecks(context.Background(), queries, siteID)
+	checks := RunCWVChecks(context.Background(), queries, siteID, agent.FidelityBalanced)
 	cls := findCheck(checks, "CLS")
 	if cls == nil || cls.Passed == nil || *cls.Passed {
 		t.Fatalf("expected CLS to fail with warning, got %+v", cls)
@@ -184,7 +185,7 @@ func TestRunCWVChecks_ComputeScoreFoldsCWV(t *testing.T) {
 	seedCWV(t, sqlDB, siteID, "LCP", good)
 	seedCWV(t, sqlDB, siteID, "INP", poor)
 
-	checks := RunCWVChecks(context.Background(), queries, siteID)
+	checks := RunCWVChecks(context.Background(), queries, siteID, agent.FidelityBalanced)
 	score, max := ComputeScore(checks)
 	wantMax := cwvMetricThresholds["LCP"].weight + cwvMetricThresholds["INP"].weight
 	if max != wantMax {

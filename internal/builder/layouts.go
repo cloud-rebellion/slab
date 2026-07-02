@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/bright-interaction/slab/internal/agent"
 	"github.com/bright-interaction/slab/internal/store"
 )
 
@@ -40,9 +41,18 @@ func RenderLayouts(ctx context.Context, queries *store.Queries, siteID string, w
 	}
 
 	// Build the layout
+	showcase := agent.FidelityFromSettings(settingsMap) == agent.FidelityShowcase
 	var b strings.Builder
 	b.WriteString("---\n")
-	b.WriteString("import '../styles/global.css';\n\n")
+	b.WriteString("import '../styles/global.css';\n")
+	if showcase {
+		// Showcase fidelity ships Astro view transitions: cross-page
+		// navigation morphs instead of flashing. Astro's ClientRouter
+		// respects prefers-reduced-motion out of the box (falls back to
+		// an instant swap). Balanced/performance layouts stay JS-free.
+		b.WriteString("import { ClientRouter } from 'astro:transitions';\n")
+	}
+	b.WriteString("\n")
 	b.WriteString("interface Props {\n")
 	b.WriteString("  title: string;\n")
 	b.WriteString("  description?: string;\n")
@@ -96,6 +106,9 @@ func RenderLayouts(ctx context.Context, queries *store.Queries, siteID string, w
 	b.WriteString("<!DOCTYPE html>\n<html lang={lang}>\n<head>\n")
 	b.WriteString("  <meta charset=\"UTF-8\" />\n")
 	b.WriteString("  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\" />\n")
+	if showcase {
+		b.WriteString("  <ClientRouter />\n")
+	}
 	b.WriteString("  <title>{title}</title>\n")
 	b.WriteString("  {description && <meta name=\"description\" content={description} />}\n")
 	b.WriteString("  <meta name=\"robots\" content={robots} />\n")

@@ -21,8 +21,8 @@ func (q *Queries) CountRedirectsBySite(ctx context.Context, siteID string) (int6
 }
 
 const createEvaluation = `-- name: CreateEvaluation :exec
-INSERT INTO evaluations (id, build_id, site_id, category, score, max_score, grade, checks_json, created_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+INSERT INTO evaluations (id, build_id, site_id, category, score, max_score, grade, checks_json, profile, created_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
 `
 
 type CreateEvaluationParams struct {
@@ -34,6 +34,7 @@ type CreateEvaluationParams struct {
 	MaxScore   int64  `json:"max_score"`
 	Grade      string `json:"grade"`
 	ChecksJson string `json:"checks_json"`
+	Profile    string `json:"profile"`
 }
 
 func (q *Queries) CreateEvaluation(ctx context.Context, arg CreateEvaluationParams) error {
@@ -46,6 +47,7 @@ func (q *Queries) CreateEvaluation(ctx context.Context, arg CreateEvaluationPara
 		arg.MaxScore,
 		arg.Grade,
 		arg.ChecksJson,
+		arg.Profile,
 	)
 	return err
 }
@@ -226,7 +228,7 @@ func (q *Queries) GetRedirectByPath(ctx context.Context, arg GetRedirectByPathPa
 }
 
 const listEvaluationsByBuild = `-- name: ListEvaluationsByBuild :many
-SELECT id, build_id, site_id, category, score, max_score, grade, checks_json, created_at FROM evaluations WHERE build_id = ? ORDER BY category
+SELECT id, build_id, site_id, category, score, max_score, grade, checks_json, profile, created_at FROM evaluations WHERE build_id = ? ORDER BY category
 `
 
 // Evaluations
@@ -248,6 +250,7 @@ func (q *Queries) ListEvaluationsByBuild(ctx context.Context, buildID string) ([
 			&i.MaxScore,
 			&i.Grade,
 			&i.ChecksJson,
+			&i.Profile,
 			&i.CreatedAt,
 		); err != nil {
 			return nil, err
@@ -264,7 +267,7 @@ func (q *Queries) ListEvaluationsByBuild(ctx context.Context, buildID string) ([
 }
 
 const listEvaluationsByBuildAndSite = `-- name: ListEvaluationsByBuildAndSite :many
-SELECT id, build_id, site_id, category, score, max_score, grade, checks_json, created_at FROM evaluations WHERE build_id = ? AND site_id = ? ORDER BY category
+SELECT id, build_id, site_id, category, score, max_score, grade, checks_json, profile, created_at FROM evaluations WHERE build_id = ? AND site_id = ? ORDER BY category
 `
 
 type ListEvaluationsByBuildAndSiteParams struct {
@@ -292,6 +295,7 @@ func (q *Queries) ListEvaluationsByBuildAndSite(ctx context.Context, arg ListEva
 			&i.MaxScore,
 			&i.Grade,
 			&i.ChecksJson,
+			&i.Profile,
 			&i.CreatedAt,
 		); err != nil {
 			return nil, err
@@ -308,7 +312,7 @@ func (q *Queries) ListEvaluationsByBuildAndSite(ctx context.Context, arg ListEva
 }
 
 const listEvaluationsBySite = `-- name: ListEvaluationsBySite :many
-SELECT id, build_id, site_id, category, score, max_score, grade, checks_json, created_at FROM evaluations WHERE site_id = ? ORDER BY created_at DESC LIMIT ?
+SELECT id, build_id, site_id, category, score, max_score, grade, checks_json, profile, created_at FROM evaluations WHERE site_id = ? ORDER BY created_at DESC LIMIT ?
 `
 
 type ListEvaluationsBySiteParams struct {
@@ -334,6 +338,7 @@ func (q *Queries) ListEvaluationsBySite(ctx context.Context, arg ListEvaluations
 			&i.MaxScore,
 			&i.Grade,
 			&i.ChecksJson,
+			&i.Profile,
 			&i.CreatedAt,
 		); err != nil {
 			return nil, err

@@ -44,6 +44,26 @@
 	let hreflangStrategy = $state<'path' | 'subdomain' | 'off'>('path');
 	let strictDesignLint = $state(true);
 
+	type DesignFidelity = 'performance' | 'balanced' | 'showcase';
+	let designFidelity = $state<DesignFidelity>('balanced');
+
+	const fidelityOptions: { value: DesignFidelity; label: string; tagline: string }[] = [
+		{ value: 'performance', label: 'Performance', tagline: 'Perfect scores. Static heroes, zero perpetual motion.' },
+		{ value: 'balanced', label: 'Balanced', tagline: 'The standard rulebook and budgets. Default.' },
+		{ value: 'showcase', label: 'Showcase', tagline: 'Jaw-dropping design. Trades some speed for craft.' }
+	];
+
+	const fidelityHint = $derived.by(() => {
+		switch (designFidelity) {
+			case 'performance':
+				return 'The agent is steered to zero decorative weight: static hero graphics, logo strips instead of marquees, no canvas. Target: A+ on every category. Grading budgets are the standard ones; the discipline is in what gets authored.';
+			case 'balanced':
+				return 'Today’s behavior. The full taste rulebook applies and the Inspector grades with the standard budgets (200KB per page, one perpetual animation per viewport, canonical design tokens).';
+			case 'showcase':
+				return 'Unlocks expressive design: fx utility classes (scroll-driven reveals, parallax, ambient motion, gradient text, aurora bands), view transitions, bespoke tokens, a 4-animation motion budget, and custom blocks as a first-class path. Performance grades against showcase budgets (400KB per page, halved speed-metric weights) and every evaluation records the fidelity it was graded under. Security, privacy, accessibility, self-hosted fonts and slop lint stay at full strength.';
+		}
+	});
+
 	function toBool(v: string | undefined, fallback: boolean): boolean {
 		if (v === undefined || v === '') return fallback;
 		const s = v.toLowerCase();
@@ -76,7 +96,8 @@
 		canonicalBase: '',
 		additionalLangs: '',
 		hreflangStrategy: 'path' as 'path' | 'subdomain' | 'off',
-		strictDesignLint: true
+		strictDesignLint: true,
+		designFidelity: 'balanced' as DesignFidelity
 	});
 
 	async function load() {
@@ -105,6 +126,8 @@
 				| 'off';
 			hreflangStrategy = ['path', 'subdomain', 'off'].includes(strat) ? strat : 'path';
 			strictDesignLint = toBool(designMap.strict_lint, true);
+			const fid = (designMap.fidelity || 'balanced') as DesignFidelity;
+			designFidelity = ['performance', 'balanced', 'showcase'].includes(fid) ? fid : 'balanced';
 
 			initial = {
 				name,
@@ -115,7 +138,8 @@
 				canonicalBase,
 				additionalLangs,
 				hreflangStrategy,
-				strictDesignLint
+				strictDesignLint,
+				designFidelity
 			};
 		} catch (err) {
 			toast.error(err instanceof Error ? err.message : 'Failed to load settings.');
@@ -137,7 +161,8 @@
 			canonicalBase !== initial.canonicalBase ||
 			additionalLangs !== initial.additionalLangs ||
 			hreflangStrategy !== initial.hreflangStrategy ||
-			strictDesignLint !== initial.strictDesignLint
+			strictDesignLint !== initial.strictDesignLint ||
+			designFidelity !== initial.designFidelity
 	);
 
 	function discard() {
@@ -150,6 +175,7 @@
 		additionalLangs = initial.additionalLangs;
 		hreflangStrategy = initial.hreflangStrategy;
 		strictDesignLint = initial.strictDesignLint;
+		designFidelity = initial.designFidelity;
 	}
 
 	// Live preview of how the meta-title template renders with a sample
@@ -202,7 +228,8 @@
 				{ category: 'seo', key: 'hreflang_strategy', value: hreflangStrategy },
 				{ category: 'general', key: 'additional_langs', value: additionalLangs },
 				{ category: 'general', key: 'default_lang', value: lang },
-				{ category: 'design', key: 'strict_lint', value: strictDesignLint ? '1' : '0' }
+				{ category: 'design', key: 'strict_lint', value: strictDesignLint ? '1' : '0' },
+				{ category: 'design', key: 'fidelity', value: designFidelity }
 			];
 			await settingsApi.bulkUpsert(siteID, items);
 
@@ -215,7 +242,8 @@
 				canonicalBase,
 				additionalLangs,
 				hreflangStrategy,
-				strictDesignLint
+				strictDesignLint,
+				designFidelity
 			};
 			toast.success('General settings saved.');
 		} catch (err) {
@@ -345,6 +373,40 @@
 
 			<Card padding="md">
 				<h2 class="text-[11px] font-mono uppercase tracking-[0.2em] text-text-muted">
+					Design fidelity
+				</h2>
+				<p class="mt-2 text-[12px] text-text-muted">
+					The design-freedom dial. It adapts the playbook your AI agent reads
+					AND the rubric the Inspector grades with, so an ambitious build is
+					never punished by rules it couldn't see. Change it before
+					authoring, then rebuild; every evaluation records the fidelity it
+					was graded under. Security, privacy, accessibility and content
+					honesty are identical in all three.
+				</p>
+				<div class="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-3" role="radiogroup" aria-label="Design fidelity">
+					{#each fidelityOptions as opt (opt.value)}
+						<button
+							type="button"
+							role="radio"
+							aria-checked={designFidelity === opt.value}
+							onclick={() => (designFidelity = opt.value)}
+							class="flex flex-col gap-1 rounded-lg border px-4 py-3 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent
+								{designFidelity === opt.value
+								? 'border-accent bg-bg-elevated ring-1 ring-accent'
+								: 'border-border-light bg-bg-elevated/40 hover:border-border-strong'}"
+						>
+							<span class="text-[13px] font-medium text-text-primary">{opt.label}</span>
+							<span class="text-[11.5px] leading-snug text-text-muted">{opt.tagline}</span>
+						</button>
+					{/each}
+				</div>
+				<p class="mt-3 rounded-md border border-border-light bg-bg-elevated/50 px-3 py-2 text-[11.5px] leading-relaxed text-text-secondary">
+					{fidelityHint}
+				</p>
+			</Card>
+
+			<Card padding="md">
+				<h2 class="text-[11px] font-mono uppercase tracking-[0.2em] text-text-muted">
 					Design quality
 				</h2>
 				<p class="mt-2 text-[12px] text-text-muted">
@@ -354,8 +416,11 @@
 					numbers, and hero graphics that drift from a locked page
 					archetype. The agent gets a structured error with fix hints and
 					must revise before the block ships. Soft warnings (long headline,
-					generic hero) stay non-blocking. Turn this off only if you trust
-					the source of the copy.
+					generic hero) stay non-blocking. Independent of design fidelity:
+					fidelity changes which taste rules apply; this toggle changes
+					whether hard violations block writes (slop always blocks while it
+					is on, in every fidelity; showcase only unblocks archetype
+					drift). Turn this off only if you trust the source of the copy.
 				</p>
 				<div class="mt-4 flex items-center justify-between gap-4 rounded-lg border border-border-light bg-bg-elevated/40 px-4 py-3">
 					<div class="flex flex-col gap-0.5">

@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/bright-interaction/slab/internal/agent"
 	"github.com/bright-interaction/slab/internal/store"
 )
 
@@ -389,9 +390,20 @@ func BuildCSS(ctx context.Context, queries *store.Queries, siteID string) (strin
 	b.WriteString(".hero-graphic__hub { fill: var(--color-primary) !important; animation: heroGlobeHub 3.2s ease-in-out infinite alternate; transform-origin: 200px 200px; }\n")
 	b.WriteString("@keyframes heroGlobeHub { 0% { opacity: 0.7; transform: scale(1); } 100% { opacity: 1; transform: scale(1.35); } }\n")
 
+	// aurora: two brand-derived hue bands slowly sweeping on the hero's
+	// own background. Showcase-fidelity signature graphic (advertised in
+	// the showcase playbook), renderable in any fidelity. Layered
+	// radial-gradients on the element + ::after; transform/opacity-only
+	// drift; masked fade to the page bg at the lower edge.
+	b.WriteString(".hero-graphic--aurora { background: radial-gradient(90% 70% at 15% 20%, color-mix(in oklab, var(--color-primary) 34%, transparent), transparent 62%), radial-gradient(80% 60% at 85% 35%, color-mix(in oklab, var(--color-primary) 18%, var(--color-text) 6%), transparent 60%); mask-image: linear-gradient(to bottom, black 55%, transparent 98%); animation: heroAuroraDrift 26s ease-in-out infinite alternate; }\n")
+	b.WriteString(".hero-graphic--aurora::after { content: ''; position: absolute; inset: -10%; background: radial-gradient(55% 45% at 60% 60%, color-mix(in oklab, var(--color-primary) 22%, transparent), transparent 70%); animation: heroAuroraCounter 32s ease-in-out infinite alternate; }\n")
+	b.WriteString("@keyframes heroAuroraDrift { 0% { transform: translate3d(-2%, 0, 0) scale(1); opacity: 0.9; } 100% { transform: translate3d(3%, -2%, 0) scale(1.06); opacity: 1; } }\n")
+	b.WriteString("@keyframes heroAuroraCounter { 0% { transform: translate3d(2%, 1%, 0) scale(1); } 100% { transform: translate3d(-3%, -2%, 0) scale(1.08); } }\n")
+
 	// prefers-reduced-motion: freeze every perpetual animation.
 	b.WriteString("@media (prefers-reduced-motion: reduce) {\n")
 	b.WriteString("  .hero-graphic--mesh, .hero-graphic--pulse, .hero-graphic--gradient-orb { animation: none; }\n")
+	b.WriteString("  .hero-graphic--aurora, .hero-graphic--aurora::after { animation: none; }\n")
 	b.WriteString("  .hero-graphic__arcs path, .hero-graphic__hub { animation: none; }\n")
 	b.WriteString("}\n\n")
 
@@ -767,6 +779,15 @@ func BuildCSS(ctx context.Context, queries *store.Queries, siteID string) (strin
 	b.WriteString(".site-footer a { color: color-mix(in oklab, var(--color-text) 70%, transparent); text-decoration: none; }\n")
 	b.WriteString(".site-footer a:hover { color: var(--color-primary); }\n")
 	b.WriteString(".site-footer-copy { font-size: 0.8125rem; color: color-mix(in oklab, var(--color-text) 55%, transparent); margin: 0; }\n\n")
+
+	// Showcase-fidelity fx utility layer: scroll-driven reveals,
+	// parallax, ambient motion, gradient text, aurora bands, stagger,
+	// tilt. Emitted BEFORE the user-defined classes so tenant CSS can
+	// override any fx rule. Balanced/performance builds stay
+	// byte-identical (nothing emitted).
+	if agent.FidelityFromSettings(sm) == agent.FidelityShowcase {
+		writeShowcaseFX(&b)
+	}
 
 	// User-defined CSS classes
 	if len(classes) > 0 {

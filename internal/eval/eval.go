@@ -26,6 +26,7 @@ import (
 
 	"golang.org/x/net/html"
 
+	"github.com/bright-interaction/slab/internal/agent"
 	"github.com/bright-interaction/slab/internal/builder"
 	"github.com/bright-interaction/slab/internal/store"
 )
@@ -89,6 +90,11 @@ type SiteContext struct {
 	NginxConf     string
 	Headers       map[string]string // computed security headers
 	AllowedHosts  []string
+	// Fidelity is the site's design.fidelity dial. Performance budgets
+	// and a handful of SEO/GEO taste checks grade against it; security,
+	// privacy, and accessibility checks ignore it by construction.
+	// Zero value = balanced.
+	Fidelity agent.DesignFidelity
 }
 
 // Pass / Fail / Info constructors -- pointer-bool dance for nil = info.
@@ -125,8 +131,13 @@ func Run(ctx context.Context, queries *store.Queries, siteID, buildID, distDir s
 		return nil, fmt.Errorf("load site context: %w", err)
 	}
 
+	// The design.fidelity dial selects the performance budgets (and a
+	// few SEO/GEO taste checks). Security / privacy / accessibility
+	// never read it. Missing row = balanced = today's grading.
+	site.Fidelity = agent.FidelityForSite(ctx, queries, siteID)
+
 	perfChecks := RunPerformanceChecks(site)
-	perfChecks = append(perfChecks, RunCWVChecks(ctx, queries, siteID)...)
+	perfChecks = append(perfChecks, RunCWVChecks(ctx, queries, siteID, site.Fidelity)...)
 
 	reports := []CategoryReport{
 		{Category: "security", Checks: RunSecurityChecks(site)},
@@ -151,6 +162,7 @@ func Run(ctx context.Context, queries *store.Queries, siteID, buildID, distDir s
 			MaxScore:   int64(reports[i].MaxScore),
 			Grade:      reports[i].Grade,
 			ChecksJson: string(checksJSON),
+			Profile:    string(site.Fidelity),
 		}); err != nil {
 			slog.Error("eval: persist failed", "category", reports[i].Category, "err", err)
 		}

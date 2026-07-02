@@ -116,6 +116,18 @@ func RenderCLAUDEMD(ctx context.Context, q *store.Queries, siteID, baseURL, rawK
 	b.WriteString("- `POST /api/agent/pages/{slug}/blocks`\n")
 	b.WriteString("- `POST /api/agent/build` and `GET /api/agent/evaluation/{buildID}`\n\n")
 
+	fidelity := FidelityForSite(ctx, q, siteID)
+	b.WriteString("## Design fidelity\n")
+	b.WriteString(fmt.Sprintf("- Active dial: **%s** (settings category=design key=fidelity; agent-writable).\n", string(fidelity)))
+	switch fidelity {
+	case FidelityPerformance:
+		b.WriteString("- Contract: perfect scores. Static hero graphics, zero perpetual motion,\n  every category at A+. See design_playbook.fidelity for the full contract.\n\n")
+	case FidelityShowcase:
+		b.WriteString("- Contract: jaw-dropping design, measured speed trade. fx-* utilities,\n  scroll-driven animation, view transitions, bespoke tokens, 4-signal motion\n  budget. Targets: security/a11y/privacy >= A-, seo >= B, perf >= C+ against\n  showcase budgets. Read design_playbook.fidelity FIRST, then invoke the\n  stitch-design skill to generate the site's DESIGN.md before authoring.\n\n")
+	default:
+		b.WriteString("- Contract: the standard taste rulebook and budgets. Flip to `performance`\n  for perfect scores or `showcase` for expressive freedom (the playbook and\n  grading rubric adapt automatically; re-read them after changing it).\n\n")
+	}
+
 	b.WriteString("## Guardrails (these will reject your writes if you violate them)\n")
 	b.WriteString("- Pages: title 30-60 chars, description 120-160 chars\n")
 	b.WriteString("- Blocks: image blocks need alt + dimensions; CTAs need a label;\n  no generic anchor text (\"click here\", \"read more\"); no mixed-content\n  http:// URLs in https sites\n")

@@ -311,10 +311,11 @@ func (s *Server) registerServiceContextResources() {
 	register(Resource{
 		URI:         "atomicsite://meta/design-playbook",
 		Name:        "Design playbook (rubric the Inspector grades against)",
-		Description: "The atomicsite-wide design DNA the Inspector grades output against: principles (hierarchy, whitespace, rhythm), page archetypes (B2B SaaS home, pricing, etc.), anti-patterns (AI tells), vibe archetypes (mesh / pulse / monogram / audit), materiality, content authenticity (banned slop terms), motion budget, copy voice, font system, hero graphics catalog, one-shot recipe. Read this BEFORE authoring blocks so design decisions stay inside the rubric instead of being corrected after a failed eval.",
+		Description: "THE site's design DNA, adapted to its design.fidelity dial (performance / balanced / showcase): the fidelity contract (what is unlocked, how grading changes, what is never relaxed), principles, page archetypes, anti-patterns (AI tells), vibe archetypes, materiality, content authenticity (banned slop terms), motion budget, copy voice, font system, hero graphics catalog, one-shot recipe. The Inspector grades against THIS rubric, so read it BEFORE authoring blocks. Re-read after changing design.fidelity.",
 		MimeType:    "application/json",
-		Reader: func(_ context.Context, _ *authmw.AgentIdentity) (string, error) {
-			return mustJSON(agentpkg.DefaultDesignPlaybook()), nil
+		Reader: func(ctx context.Context, agent *authmw.AgentIdentity) (string, error) {
+			fidelity := agentpkg.FidelityForSite(ctx, s.queries, agent.SiteID)
+			return mustJSON(agentpkg.DesignPlaybookFor(fidelity)), nil
 		},
 	})
 }
@@ -378,7 +379,7 @@ func (s *Server) capabilitiesSnapshot(agent *authmw.AgentIdentity) map[string]an
 			"a_plus": ">=95%",
 			"a":      "90-95%",
 			"b":      "80-90%",
-			"hint":   "Aim for category grades A or higher across security/seo/accessibility/privacy/performance.",
+			"hint":   "Grade targets follow the site's design.fidelity dial (settings category=design key=fidelity). performance fidelity: A+ everywhere. balanced (default): A or higher across security/seo/accessibility/privacy/performance. showcase: security/a11y/privacy >= A-, seo >= B, performance >= C+ against showcase budgets. Read design_playbook.fidelity for the full contract; every evaluation row records the fidelity it was graded under.",
 		},
 		"privacy_invariants": []string{
 			"No tool reads visitor metadata, sessions, fingerprints, or identified-tier records.",

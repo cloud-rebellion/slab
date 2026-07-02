@@ -298,6 +298,7 @@ type Evaluation struct {
 	MaxScore   int64  `json:"max_score"`
 	Grade      string `json:"grade"`
 	ChecksJson string `json:"checks_json"`
+	Profile    string `json:"profile"`
 	CreatedAt  string `json:"created_at"`
 }
 

@@ -76,6 +76,16 @@
 			{#if buildCreatedAt}
 				<p class="mt-0.5 text-[12px] text-text-secondary">{formatDate(buildCreatedAt)}</p>
 			{/if}
+			{#if buildEvals[0]?.profile}
+				<p class="mt-1.5">
+					<span
+						class="rounded-full border border-border-light bg-bg-elevated/60 px-2 py-0.5 font-mono text-[10px] uppercase tracking-[0.14em] text-text-secondary"
+						title="Design fidelity this build was graded under"
+					>
+						graded as {buildEvals[0].profile}
+					</span>
+				</p>
+			{/if}
 		</div>
 		<Button variant="primary" onclick={() => goto(`/sites/${siteID}/build`)}>
 			Trigger new build

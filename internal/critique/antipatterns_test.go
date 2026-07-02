@@ -1,6 +1,7 @@
 package critique
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/bright-interaction/slab/internal/agent"
@@ -75,7 +76,8 @@ func TestAntiPatternChecks_RealPlaybookScoresMany(t *testing.T) {
 		`<section class="block block--hero"><h1>Replace your scanner today</h1></section>`,
 		"--font-heading:'space grotesk';color:#18181b;transition:transform .2s cubic-bezier(0.16,1,0.3,1);",
 		"we audit servers and migrate crm for swedish law firms",
-		[]string{"replace your scanner", "why teams switch to us"})
+		[]string{"replace your scanner", "why teams switch to us"},
+		agent.FidelityBalanced)
 
 	scored, fails := 0, 0
 	for _, c := range checks {
@@ -102,7 +104,8 @@ func TestAntiPatternChecks_SlopSiteFails(t *testing.T) {
 		`<section class="block block--hero"><h1>Elevate Your Business Today</h1><img src="bg.jpg"></section>`,
 		"--font-heading:'inter';color:#000000;background:linear-gradient(90deg,#8b5cf6,#6366f1);transition:all 0.2s ease-in-out;min-height:100vh;",
 		"lorem ipsum dolor. trusted by acme corp. quote from john doe. only $100.00 today!",
-		[]string{"Elevate Your Business Today", "Unleash Seamless Growth Now"})
+		[]string{"Elevate Your Business Today", "Unleash Seamless Growth Now"},
+		agent.FidelityBalanced)
 
 	fails := 0
 	for _, c := range checks {
@@ -113,4 +116,52 @@ func TestAntiPatternChecks_SlopSiteFails(t *testing.T) {
 	if fails < 6 {
 		t.Fatalf("slop site should trip many anti-pattern fails, got %d", fails)
 	}
+}
+
+// TestAntiPatternChecks_ShowcaseDemotesTasteKeepsAuthenticity is the
+// fidelity-dial contract: under showcase the taste detectors (gradient,
+// pure black, Inter, hero-over-image, title case, bland transitions)
+// emit advisory Info, while authenticity (slop names/numbers/companies,
+// AI cliches, lorem) and correctness (100vh) still FAIL with weight.
+func TestAntiPatternChecks_ShowcaseDemotesTasteKeepsAuthenticity(t *testing.T) {
+	pb := agent.DesignPlaybookFor(agent.FidelityShowcase)
+	checks := antiPatternChecks(pb.AntiPatterns,
+		`<section class="block block--hero"><h1>Elevate Your Business Today</h1><img src="bg.jpg"></section>`,
+		"--font-heading:'inter';color:#000000;background:linear-gradient(90deg,#8b5cf6,#6366f1);transition:all 0.2s ease-in-out;min-height:100vh;",
+		"lorem ipsum dolor. we elevate your seamless workflow. trusted by acme corp. quote from john doe. only $100.00 today!",
+		[]string{"Elevate Your Business Today", "Unleash Seamless Growth Now"},
+		agent.FidelityShowcase)
+
+	failNames := map[string]bool{}
+	for _, c := range checks {
+		if c.Passed != nil && !*c.Passed {
+			failNames[c.Name] = true
+		}
+	}
+	// Authenticity + correctness must still fail.
+	for _, want := range []string{"John Doe", "Acme Corp", "AI copywriting", "Lorem ipsum", "h-screen", "Round fake numbers"} {
+		found := false
+		for name := range failNames {
+			if containsFold(name, want) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("showcase must still fail authenticity/correctness rule containing %q; fails: %v", want, failNames)
+		}
+	}
+	// Taste must NOT fail (demoted to Info).
+	for _, banned := range []string{"AI gradient", "Pure black", "Inter font", "Title Case"} {
+		for name := range failNames {
+			if containsFold(name, banned) {
+				t.Fatalf("showcase must demote taste rule %q to advisory, but it failed", name)
+			}
+		}
+	}
+}
+
+func containsFold(haystack, needle string) bool {
+	return len(needle) <= len(haystack) &&
+		strings.Contains(strings.ToLower(haystack), strings.ToLower(needle))
 }

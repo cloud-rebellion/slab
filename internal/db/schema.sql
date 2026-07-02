@@ -749,6 +749,10 @@ CREATE TABLE IF NOT EXISTS evaluations (
     max_score   INTEGER NOT NULL,
     grade       TEXT NOT NULL,
     checks_json TEXT NOT NULL DEFAULT '[]',
+    -- design.fidelity active when this row was graded (performance |
+    -- balanced | showcase). Historical grades stay interpretable after a
+    -- fidelity switch: an A graded under showcase budgets is labeled so.
+    profile     TEXT NOT NULL DEFAULT '',
     created_at  TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS idx_evaluations_build ON evaluations(build_id);

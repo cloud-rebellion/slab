@@ -437,6 +437,12 @@ func applySchema(sqlDB *sql.DB) error {
 		// matches the EU/UK target market; operators bump to 'all' for
 		// multi-script sites or upload one file per range.
 		{"site_fonts", "subset", "TEXT NOT NULL DEFAULT 'latin'"},
+		// Design fidelity stamp (design-freedom dial, 2026-07-02).
+		// Records which design.fidelity (performance / balanced /
+		// showcase) graded each evaluation row so historical grades
+		// stay interpretable after a fidelity switch. Empty default =
+		// rows graded before the dial existed (balanced semantics).
+		{"evaluations", "profile", "TEXT NOT NULL DEFAULT ''"},
 	}
 	for _, m := range migrations {
 		if err := addColumnIfMissing(sqlDB, m.table, m.column, m.spec); err != nil {

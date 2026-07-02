@@ -1,6 +1,10 @@
 package critique
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/bright-interaction/slab/internal/agent"
+)
 
 // TestHasBlockingFindings covers the curated allowlist of finding names that
 // are tripwires in strict mode. Soft warnings stay non-blocking.
@@ -47,5 +51,32 @@ func TestFilterBlocking(t *testing.T) {
 	}
 	if got[0].Name != "slop_term" || got[1].Name != "archetype_drift" {
 		t.Errorf("blocking order changed: %+v", got)
+	}
+}
+
+// TestFilterBlockingFor_ShowcaseDropsArchetypeDriftKeepsSlop pins the
+// fidelity contract on the write gate: showcase demotes archetype_drift
+// (an off-archetype bespoke hero is the point of showcase) but slop_*
+// blocks in every fidelity.
+func TestFilterBlockingFor_ShowcaseDropsArchetypeDriftKeepsSlop(t *testing.T) {
+	input := []LintFinding{
+		{Name: "slop_term", Field: "headline"},
+		{Name: "archetype_drift", Field: "hero_graphic"},
+		{Name: "slop_number", Field: "stats"},
+	}
+	got := FilterBlockingFor(input, agent.FidelityShowcase)
+	if len(got) != 2 {
+		t.Fatalf("showcase should block exactly the 2 slop findings, got %d: %+v", len(got), got)
+	}
+	for _, f := range got {
+		if f.Name == "archetype_drift" {
+			t.Fatal("archetype_drift must not block in showcase")
+		}
+	}
+	// Balanced + performance keep all three.
+	for _, fid := range []agent.DesignFidelity{agent.FidelityBalanced, agent.FidelityPerformance} {
+		if got := FilterBlockingFor(input, fid); len(got) != 3 {
+			t.Fatalf("%s should block all 3 findings, got %d", fid, len(got))
+		}
 	}
 }

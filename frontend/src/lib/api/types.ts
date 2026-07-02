@@ -397,6 +397,10 @@ export interface Evaluation {
 	max_score: number;
 	grade: string;
 	checks_json: JsonText;
+	/** design.fidelity active when this row was graded (performance |
+	 * balanced | showcase). Empty for rows graded before the dial
+	 * existed (balanced semantics). */
+	profile?: string;
 	created_at: Timestamp;
 }
 

@@ -7,6 +7,8 @@ import (
 	"unicode/utf8"
 
 	"golang.org/x/net/html"
+
+	"github.com/bright-interaction/slab/internal/agent"
 )
 
 // CTA keywords used by Site Inspector's Meta Description Has CTA check.
@@ -220,28 +222,38 @@ func RunSEOChecks(site *SiteContext) []CheckResult {
 		return true, ""
 	}, "Shorten title to 60 characters or fewer to prevent SERP truncation."))
 
-	checks = append(checks, perPageCheck("Meta Description Has CTA", "on-page", 1, site, func(p PageContext) (bool, string) {
-		d := findMetaContent(p.Doc, "description")
-		if d == "" {
-			return true, "" // separate check covers missing description
-		}
-		if !ctaKeywords.MatchString(d) {
-			return false, "no call-to-action verbs found in description"
-		}
-		return true, ""
-	}, "Include action verbs (learn, discover, get, try, free, läs, prova, entdecken) in meta descriptions."))
+	// Copy-taste checks: scored normally, but advisory in showcase
+	// fidelity (a visual showcase landing legitimately runs sparse,
+	// brand-led copy; the operator opted into that trade).
+	if site.Fidelity == agent.FidelityShowcase {
+		checks = append(checks,
+			Info("Meta Description Has CTA", "on-page", "Advisory in showcase fidelity: CTA-verb descriptions still lift SERP click-through; unscored here."),
+			Info("Content Length 300+", "on-page", "Advisory in showcase fidelity: sparse brand-led copy is allowed; note thin pages still rank worse."),
+		)
+	} else {
+		checks = append(checks, perPageCheck("Meta Description Has CTA", "on-page", 1, site, func(p PageContext) (bool, string) {
+			d := findMetaContent(p.Doc, "description")
+			if d == "" {
+				return true, "" // separate check covers missing description
+			}
+			if !ctaKeywords.MatchString(d) {
+				return false, "no call-to-action verbs found in description"
+			}
+			return true, ""
+		}, "Include action verbs (learn, discover, get, try, free, läs, prova, entdecken) in meta descriptions."))
 
-	checks = append(checks, perPageCheck("Content Length 300+", "on-page", 1, site, func(p PageContext) (bool, string) {
-		body := firstElementByTag(p.Doc, "body")
-		if body == nil {
-			return false, "no <body>"
-		}
-		words := len(strings.Fields(textContent(body)))
-		if words < 300 {
-			return false, fmt.Sprintf("%d words (want 300+)", words)
-		}
-		return true, ""
-	}, "Pages under 300 words tend to underperform; expand the content or remove the page."))
+		checks = append(checks, perPageCheck("Content Length 300+", "on-page", 1, site, func(p PageContext) (bool, string) {
+			body := firstElementByTag(p.Doc, "body")
+			if body == nil {
+				return false, "no <body>"
+			}
+			words := len(strings.Fields(textContent(body)))
+			if words < 300 {
+				return false, fmt.Sprintf("%d words (want 300+)", words)
+			}
+			return true, ""
+		}, "Pages under 300 words tend to underperform; expand the content or remove the page."))
+	}
 
 	checks = append(checks, perPageCheck("Descriptive Alt Text", "on-page", 2, site, func(p PageContext) (bool, string) {
 		for _, img := range elementsByTag(p.Doc, "img") {

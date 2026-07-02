@@ -152,6 +152,12 @@ type MasteryInfo struct {
 // atomicsite's static-Astro reality (no React/Framer Motion, CSS
 // animations only, JSON authoring instead of utility classes).
 type DesignPlaybookInfo struct {
+	// Fidelity is the active design-freedom dial (performance |
+	// balanced | showcase) plus its contract: what it unlocks, how the
+	// Inspector grades under it, and what is never relaxed. Read this
+	// FIRST; the sections below are already adapted to it.
+	Fidelity FidelityInfo `json:"fidelity"`
+
 	Stack             string                  `json:"stack"`
 	Principles        []DesignPrinciple       `json:"principles"`
 	PageArchetypes    []PageArchetype         `json:"page_archetypes"`
@@ -871,6 +877,10 @@ type Constraints struct {
 	MaxBlocksPerPage   int      `json:"max_blocks_per_page"`
 	MaxURLDepth        int      `json:"max_url_depth"`
 	RequiredBlocks     map[string][]string `json:"required_blocks"`
+	// ActiveDesignFidelity mirrors the design.fidelity setting so the
+	// agent sees the dial at top level (the full contract lives in
+	// design_playbook.fidelity).
+	ActiveDesignFidelity string `json:"active_design_fidelity"`
 }
 
 type ArchitectureInfo struct {
@@ -1079,6 +1089,12 @@ func (b *ContextBuilder) Build(ctx context.Context, siteID string) (*SiteContext
 	}
 	personalization := b.computePersonalization(ctx, siteID)
 
+	// Design fidelity adapts the playbooks the agent reads AND the
+	// rubric the critique engine grades against (same choke point), so
+	// guidance and grading always move together.
+	fidelity := FidelityFromSettings(settingMap)
+	constraints.ActiveDesignFidelity = string(fidelity)
+
 	return &SiteContext{
 		Site: SiteInfo{
 			ID:     site.ID,
@@ -1126,8 +1142,8 @@ func (b *ContextBuilder) Build(ctx context.Context, siteID string) (*SiteContext
 		SecurityPosture:  b.computeSecurityPosture(ctx, siteID),
 		I18n:             b.computeI18n(ctx, siteID, site, pageInfos),
 		SettingsCatalog:  buildSettingsCatalog(siteID, settingMap),
-		EvalPlaybook:     defaultEvalPlaybook(siteID),
-		DesignPlaybook:   defaultDesignPlaybook(),
+		EvalPlaybook:     EvalPlaybookFor(siteID, fidelity),
+		DesignPlaybook:   DesignPlaybookFor(fidelity),
 	}, nil
 }
 
@@ -1421,7 +1437,10 @@ func defaultEndpoints() EndpointsInfo {
 // DefaultDesignPlaybook returns the platform-level design DNA every
 // agent reads. Exported so internal/critique can run the same playbook
 // rules against rendered output without duplicating the source of truth.
-func DefaultDesignPlaybook() DesignPlaybookInfo { return defaultDesignPlaybook() }
+// DefaultDesignPlaybook returns the balanced-fidelity playbook. Callers
+// that know the site should prefer DesignPlaybookFor(fidelity) so
+// guidance and grading follow the site's design.fidelity dial.
+func DefaultDesignPlaybook() DesignPlaybookInfo { return DesignPlaybookFor(FidelityBalanced) }
 
 func defaultDesignPlaybook() DesignPlaybookInfo {
 	return DesignPlaybookInfo{

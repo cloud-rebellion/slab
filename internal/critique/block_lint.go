@@ -56,11 +56,26 @@ func HasBlockingFindings(findings []LintFinding) bool {
 // write. Useful for tool responses that want to surface the blockers
 // separately from soft warnings.
 func FilterBlocking(findings []LintFinding) []LintFinding {
+	return FilterBlockingFor(findings, agent.FidelityBalanced)
+}
+
+// FilterBlockingFor is the fidelity-aware blocking filter. The four
+// slop_* findings block in EVERY fidelity: authenticity is a quality
+// defect, not a speed/expressiveness trade. archetype_drift is a taste
+// rule promoted to a blocker, and showcase fidelity is precisely the
+// mode where an off-archetype bespoke hero is the point, so drift
+// demotes to a non-blocking warning there (the finding itself still
+// comes back in design_warnings).
+func FilterBlockingFor(findings []LintFinding, f agent.DesignFidelity) []LintFinding {
 	out := make([]LintFinding, 0, len(findings))
-	for _, f := range findings {
-		if _, ok := BlockingFindingNames[f.Name]; ok {
-			out = append(out, f)
+	for _, fd := range findings {
+		if _, ok := BlockingFindingNames[fd.Name]; !ok {
+			continue
 		}
+		if f == agent.FidelityShowcase && fd.Name == "archetype_drift" {
+			continue
+		}
+		out = append(out, fd)
 	}
 	return out
 }
