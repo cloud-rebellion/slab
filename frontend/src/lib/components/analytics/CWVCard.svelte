@@ -61,7 +61,7 @@
 	// desktop/mobile split underneath for context.
 	const allDevicesByMetric = $derived(() => {
 		const out: Record<string, cwvApi.CWVMetricResult> = {};
-		if (!data) return out;
+		if (!data?.metrics) return out;
 		for (const m of data.metrics) {
 			if (m.device === '') out[m.metric] = m;
 		}
@@ -70,7 +70,7 @@
 
 	const splitByMetric = $derived(() => {
 		const out: Record<string, { desktop?: cwvApi.CWVMetricResult; mobile?: cwvApi.CWVMetricResult }> = {};
-		if (!data) return out;
+		if (!data?.metrics) return out;
 		for (const m of data.metrics) {
 			if (m.device === 'desktop') {
 				out[m.metric] = { ...(out[m.metric] ?? {}), desktop: m };
@@ -115,7 +115,7 @@
 		</div>
 	{:else if err}
 		<p class="mt-4 text-[12px] text-danger">{err}</p>
-	{:else if !data || (data.metrics.length === 0)}
+	{:else if !data || !data.metrics || data.metrics.length === 0}
 		<p class="mt-4 text-[12px] text-text-muted">
 			No CWV samples yet. Enable "Core Web Vitals collection" under Settings -> Analytics; after
 			the next build, real visitors will populate this dashboard. Samples typically appear within

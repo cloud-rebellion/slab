@@ -2,11 +2,7 @@ import { test, expect } from '../../fixtures/auth';
 import { createSite, type Site, u } from '../../fixtures/data';
 
 test.describe('Account: Danger zone', () => {
-	// KNOWN PRE-EXISTING failure (governing source byte-identical to origin/main):
-	// this danger-zone flow fails independently of the branch gate/solidification
-	// (the Get/List/Delete auth path it exercises was untouched). Pre-existing
-	// frontend-debt; flagged for a dedicated pass rather than guessed.
-	test.fixme('lists every site and gates deletion behind slug confirmation', async ({
+	test('lists every site and gates deletion behind slug confirmation', async ({
 		loggedInPage,
 		adminApi
 	}) => {
@@ -37,10 +33,12 @@ test.describe('Account: Danger zone', () => {
 		await expect(confirmBtn).toBeEnabled();
 		await confirmBtn.click();
 
-		// Site GET returns 404 once the dialog resolves.
+		// Site GET stops returning 200 once the dialog resolves. The site-access
+		// middleware refuses a now-deleted site with 403 (it will not leak whether
+		// the site ever existed) before the handler runs, so accept 403 or 404.
 		await expect(async () => {
 			const res = await adminApi.get(u(`/api/sites/${site.id}`));
-			expect(res.status()).toBe(404);
+			expect([403, 404]).toContain(res.status());
 		}).toPass({ timeout: 5_000 });
 	});
 

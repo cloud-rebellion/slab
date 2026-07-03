@@ -32,16 +32,10 @@ test.describe('Store orders admin', () => {
 		if (site) await deleteSite(adminApi, site.id);
 	});
 
-	// KNOWN PRE-EXISTING failure (store specs byte-identical to origin/main): the
-	// orders +page.svelte declares the "No orders yet" EmptyState (line 98) but it
-	// does not become visible on a fresh store, so the page is not rendering the
-	// empty state as expected (a store-orders UI rendering issue, same class as
-	// the analytics page). The /api path fix unblocked the seed and revealed this
-	// deeper layer; flagged for a dedicated store-spec pass.
-	test.fixme('empty orders list renders empty state with Mollie hint', async ({ loggedInPage }) => {
+	test('empty orders list renders empty state with Mollie hint', async ({ loggedInPage }) => {
 		await loggedInPage.goto(`/sites/${site.id}/store/orders`);
 		await expect(loggedInPage.getByText('No orders yet')).toBeVisible({ timeout: 5_000 });
-		await expect(loggedInPage.getByText(/payments.mollie_api_key/)).toBeVisible();
+		await expect(loggedInPage.getByText(/Mollie API key/i)).toBeVisible();
 	});
 
 	test('checkout creates a pending order that lands in admin', async ({

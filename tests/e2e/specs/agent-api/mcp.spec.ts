@@ -145,15 +145,7 @@ test.describe('agent-api: MCP server', () => {
 		);
 	});
 
-	// KNOWN PRE-EXISTING BUG (present on origin/main, not the gate/solidification):
-	// MCP create_page runs BOTH handlers.ValidatePageSlug (syntactic, rejects a
-	// leading slash) AND the guardrail (requires a leading slash), so no explicit
-	// slug can pass both gates; only an empty slug works. The agent REST twin
-	// (handlers/agent.go) runs the guardrail ONLY, so it accepts "/slug". Fixing
-	// this needs a slug-convention decision across the human REST (stores no
-	// leading slash), agent REST (leading slash) and MCP paths, plus a
-	// path-traversal safety check on whichever gate remains. Flagged, not guessed.
-	test.fixme('tools/call create_page round-trips to a real DB row', async ({ adminApi }) => {
+	test('tools/call create_page round-trips to a real DB row', async ({ adminApi }) => {
 		const r = await rpc(adminApi, 6, 'tools/call', {
 			name: 'create_page',
 			arguments: { title: 'MCP Test Page', slug: 'mcp-test' }

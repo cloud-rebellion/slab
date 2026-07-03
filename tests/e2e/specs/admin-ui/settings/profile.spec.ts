@@ -8,14 +8,10 @@ test.describe('Settings: Profile', () => {
 		if (site) await deleteSite(adminApi, site.id);
 	});
 
-	// KNOWN PRE-EXISTING failure (settings +page.svelte byte-identical to
-	// origin/main): the "Profile" heading the test waits for is not rendered as
-	// asserted. Pre-existing frontend/test drift, unrelated to the branch gate or
-	// solidification. Flagged for a dedicated frontend-debt pass.
-	test.fixme('fill business profile + addresses + emails, save', async ({ loggedInPage, adminApi }) => {
+	test('fill business profile + addresses + emails, save', async ({ loggedInPage, adminApi }) => {
 		site = await createSite(adminApi);
 		await loggedInPage.goto(`/sites/${site.id}/settings/profile`);
-		await expect(loggedInPage.getByRole('heading', { name: 'Profile', exact: true })).toBeVisible();
+		await expect(loggedInPage.getByRole('heading', { name: 'Business info', exact: true })).toBeVisible();
 
 		await loggedInPage.getByLabel('Business name', { exact: true }).fill(`E2E AB ${rand()}`);
 		await loggedInPage.getByLabel('Contact email', { exact: true }).fill('hej@e2e.test');

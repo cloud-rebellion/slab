@@ -271,13 +271,13 @@ func (g *GuardrailEngine) ValidatePageSlug(ctx context.Context, siteID string, s
 			Severity: "warning",
 		})
 	}
-	if !strings.HasPrefix(slug, "/") {
-		violations = append(violations, Violation{
-			Rule:     "url_convention",
-			Message:  "URLs must start with /.",
-			Severity: "error",
-		})
-	}
+	// NOTE: no "must start with /" rule. Page slugs are stored WITHOUT a
+	// leading slash (the human REST path stores "blog/post", and the builder's
+	// slugToFilePath / pageDepth strings.Trim the slug, so that is the
+	// canonical form). Requiring a leading slash here contradicted the
+	// syntactic validatePageSlug (which rejects an empty leading segment) and
+	// made MCP create_page impossible for any explicit slug. All the checks
+	// above are leading-slash-agnostic (depth uses the trimmed form).
 
 	return violations
 }
