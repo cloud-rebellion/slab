@@ -27,7 +27,7 @@ test.describe('evaluation-engine: performance category', () => {
 		const names = checkNames(perf);
 		// Names from internal/eval/performance.go.
 		for (const expected of [
-			'HTML Size < 200KB',
+			'HTML Size',
 			'No Render-Blocking Scripts',
 			'Modern Image Formats',
 			'Lazy-Loaded Images',

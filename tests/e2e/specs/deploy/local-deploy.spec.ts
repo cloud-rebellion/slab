@@ -30,7 +30,7 @@ test.describe('deploy: local kind copies dist to target path', () => {
 	});
 
 	test('build + local deploy lands dist files at the configured path', async ({ adminApi }) => {
-		const destPath = `/tmp/atomicsite-deploy-${rand()}`;
+		const destPath = `/tmp/${site.id}/atomicsite-deploy-${rand()}`;
 		const target = await seedDeployTarget(adminApi, site.id, 'local', {
 			path: destPath,
 			public_url: 'http://127.0.0.1:9999'

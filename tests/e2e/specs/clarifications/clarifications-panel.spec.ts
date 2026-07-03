@@ -25,7 +25,7 @@ test.describe('Clarifications panel', () => {
 			loggedInPage.getByText('No pending clarifications')
 		).toBeVisible({ timeout: 5_000 });
 
-		const list = await adminApi.get(u(`/sites/${site.id}/clarifications`));
+		const list = await adminApi.get(u(`/api/sites/${site.id}/clarifications`));
 		expect(list.status()).toBe(200);
 		const body = await list.json();
 		expect(Array.isArray(body.clarifications)).toBe(true);
@@ -37,7 +37,7 @@ test.describe('Clarifications panel', () => {
 		adminApi,
 		loggedInPage
 	}) => {
-		const create = await adminApi.post(u(`/sites/${site.id}/clarifications`), {
+		const create = await adminApi.post(u(`/api/sites/${site.id}/clarifications`), {
 			data: {
 				question: 'Formal or casual voice for the hero?',
 				context: 'Existing copy reads casual; brand book leans formal.',

@@ -109,6 +109,18 @@ func (s *Server) SetVerifyJobManager(m *migration.JobManager) {
 	s.verifyJobMgr = m
 }
 
+// newAdminWriteLimiter builds the per-user write rate limiter from config.
+// A capacity <= 0 returns nil, which AdminWriteRateLimit treats as a
+// pass-through (the E2E harness sets ADMIN_WRITE_RATE_CAPACITY=0 because it
+// bursts writes far past any production-sane bucket). Production keeps the
+// 20 burst / 1 per second defaults.
+func newAdminWriteLimiter(cfg *config.Config) *authmw.AdminWriteLimiter {
+	if cfg.AdminWriteRateCapacity <= 0 {
+		return nil
+	}
+	return authmw.NewAdminWriteLimiter(float64(cfg.AdminWriteRateCapacity), float64(cfg.AdminWriteRateRefill), 30*time.Minute)
+}
+
 // New creates a Server.
 func New(cfg *config.Config, db *sql.DB, queries *store.Queries, st storage.Store) *Server {
 	if cfg.BrightCRMWebhookURL != "" && cfg.BrightCRMWebhookSecret != "" {
@@ -123,7 +135,7 @@ func New(cfg *config.Config, db *sql.DB, queries *store.Queries, st storage.Stor
 		storage:       st,
 		authMW:        authmw.NewAuthMiddleware(cfg, queries),
 		agentMW:       authmw.NewAgentAuthMiddleware(queries),
-		adminWriteLim: authmw.NewAdminWriteLimiter(20, 1, 30*time.Minute),
+		adminWriteLim: newAdminWriteLimiter(cfg),
 	}
 }
 

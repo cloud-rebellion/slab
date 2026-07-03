@@ -33,7 +33,7 @@ test.describe('integrations: /t/consent payload validation', () => {
 					consent: {
 						version: 1,
 						timestamp: 1700000000,
-						method: 'gpc-auto',
+						method: 'gpc',
 						gpc: true,
 						categories: { necessary: true, analytics: true }
 					}
@@ -45,7 +45,7 @@ test.describe('integrations: /t/consent payload validation', () => {
 		}
 	});
 
-	test('payload missing consent block still returns 204 (anonymous session)', async () => {
+	test('payload missing consent block returns 400', async () => {
 		const ctx = await request.newContext({
 			extraHTTPHeaders: { 'Content-Type': 'application/json' }
 		});
@@ -53,7 +53,7 @@ test.describe('integrations: /t/consent payload validation', () => {
 			const res = await ctx.post(u('/t/consent'), {
 				data: { siteId: site.id, page: '/', sessionId: 'anon' }
 			});
-			expect(res.status()).toBe(204);
+			expect(res.status()).toBe(400);
 		} finally {
 			await ctx.dispose();
 		}

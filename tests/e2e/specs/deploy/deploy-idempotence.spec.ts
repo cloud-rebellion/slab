@@ -34,7 +34,7 @@ test.describe('deploy: idempotence (local backend)', () => {
 	});
 
 	test('two back-to-back deploys against the same target both succeed', async ({ adminApi }) => {
-		const destPath = `/tmp/atomicsite-deploy-idem-${rand()}`;
+		const destPath = `/tmp/${site.id}/atomicsite-deploy-idem-${rand()}`;
 		const target = await seedDeployTarget(adminApi, site.id, 'local', {
 			path: destPath,
 			public_url: 'http://127.0.0.1:9990'

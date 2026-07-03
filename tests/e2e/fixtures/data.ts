@@ -304,7 +304,7 @@ export async function seedDeployTarget(
 	overrides: Record<string, unknown> = {}
 ): Promise<DeployTarget> {
 	const configs: Record<typeof kind, Record<string, unknown>> = {
-		local: { path: `/tmp/atomicsite-deploy-${rand()}`, public_url: 'http://127.0.0.1:9999' },
+		local: { path: `/tmp/${siteID}/atomicsite-deploy-${rand()}`, public_url: 'http://127.0.0.1:9999' },
 		rsync: {
 			host: '127.0.0.1',
 			user: 'tester',

@@ -29,10 +29,10 @@ test.describe('Missing URLs panel', () => {
 
 		// API surface check: list_missing_urls returns empty array on a
 		// fresh site (no 404s have been logged).
-		const list = await adminApi.get(u(`/sites/${site.id}/missing-urls`));
+		const list = await adminApi.get(u(`/api/sites/${site.id}/missing-urls`));
 		expect(list.status()).toBe(200);
 		const body = await list.json();
-		expect(Array.isArray(body)).toBe(true);
-		expect(body.length).toBe(0);
+		expect(Array.isArray(body.items)).toBe(true);
+		expect(body.items.length).toBe(0);
 	});
 });

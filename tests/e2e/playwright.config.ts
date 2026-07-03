@@ -76,6 +76,11 @@ export default defineConfig({
 				BASE_URL,
 				JWT_SECRET: 'e2e-jwt-secret-not-for-production',
 				ANALYTICS_SALT: 'e2e-analytics-salt',
+				// The suite bursts createSite/deleteSite far past the production
+				// write bucket (20 burst / 1 per sec, keyed per admin user + IP),
+				// and every test shares one admin user on 127.0.0.1. Disable the
+				// limiter for E2E; no spec asserts a 429.
+				ADMIN_WRITE_RATE_CAPACITY: '0',
 				COOKIEPROOF_API_BASE: `http://127.0.0.1:${STUB_COOKIEPROOF_PORT}`,
 				COOKIEPROOF_ADMIN_TOKEN: 'e2e-cookieproof-token',
 				BRIGHTCRM_WEBHOOK_URL: `http://127.0.0.1:${STUB_CRM_PORT}/webhook`,

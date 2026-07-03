@@ -64,7 +64,10 @@ test.describe('admin-api: sites CRUD', () => {
 		const res = await adminApi.delete(u(`/api/sites/${site.id}`));
 		expect(res.ok()).toBe(true);
 		const get = await adminApi.get(u(`/api/sites/${site.id}`));
-		expect([404, 401]).toContain(get.status());
+		// A GET of a just-deleted site is refused by SiteAccessMiddleware with
+		// 403 (it will not leak whether the site ever existed) before the
+		// handler runs; accept it alongside the legacy 404/401.
+		expect([403, 404, 401]).toContain(get.status());
 	});
 
 	test('duplicate slug returns 409', async ({ adminApi }) => {

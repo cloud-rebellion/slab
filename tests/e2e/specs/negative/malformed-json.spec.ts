@@ -28,8 +28,9 @@ test.describe('negative: malformed JSON body', () => {
 			headers: { 'Content-Type': 'application/json' },
 			data: '}}}}'
 		});
-		// Either 400 (parse fail) or 404 (lookup happens first). Both safe.
-		expect([400, 404]).toContain(res.status());
+		// 400 (parse fail), 404, or 403 (site-access middleware refuses the
+		// unknown site before the body is ever parsed). All safe.
+		expect([400, 404, 403]).toContain(res.status());
 	});
 
 	test('server stays responsive after malformed payload', async ({ adminApi }) => {

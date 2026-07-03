@@ -87,6 +87,14 @@ type Config struct {
 	// engine can push a new pair without a container restart.
 	AdminReloadToken string
 
+	// AdminWriteRateCapacity + AdminWriteRateRefill tune the per-user write
+	// rate limiter on POST/PUT/PATCH/DELETE (internal/middleware/admin_writes.go).
+	// Defaults 20 burst / 1 per second. A capacity <= 0 disables the limiter
+	// (pass-through); the E2E harness sets ADMIN_WRITE_RATE_CAPACITY=0 because
+	// it bursts createSite/deleteSite far past any production-sane bucket.
+	AdminWriteRateCapacity int
+	AdminWriteRateRefill   int
+
 	// PrimaryDomain is the apex domain this Atomic Site instance serves
 	// (e.g. "example.com"). Empty for local dev or for deployments that
 	// host many unrelated tenants. When set, it surfaces in the agent
@@ -271,6 +279,8 @@ func Load() *Config {
 		BrightCRMWebhookSecret:         envOr("BRIGHTCRM_WEBHOOK_SECRET", ""),
 		BrightCRMWebhookSecretPrevious: envOr("BRIGHTCRM_WEBHOOK_SECRET_PREVIOUS", ""),
 		AdminReloadToken:               envOr("ADMIN_RELOAD_TOKEN", ""),
+		AdminWriteRateCapacity:         envInt("ADMIN_WRITE_RATE_CAPACITY", 20),
+		AdminWriteRateRefill:           envInt("ADMIN_WRITE_RATE_REFILL", 1),
 		CRMSyncMinInterval:             time.Duration(envInt("CRM_SYNC_MIN_INTERVAL_SECONDS", 60)) * time.Second,
 
 		PrimaryDomain:   envOr("ATOMICSITE_PRIMARY_DOMAIN", ""),

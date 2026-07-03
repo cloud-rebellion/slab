@@ -28,13 +28,13 @@ test.describe('build-pipeline: 3-locale multilingual', () => {
 		cleanup.push(site.id);
 
 		// Configure 3 locales.
-		await adminApi.post(u(`/sites/${site.id}/locales`), {
+		await adminApi.post(u(`/api/sites/${site.id}/locales`), {
 			data: { locale: 'en', is_default: true, sort_order: 0 }
 		});
-		await adminApi.post(u(`/sites/${site.id}/locales`), {
+		await adminApi.post(u(`/api/sites/${site.id}/locales`), {
 			data: { locale: 'sv', is_default: false, sort_order: 1 }
 		});
-		await adminApi.post(u(`/sites/${site.id}/locales`), {
+		await adminApi.post(u(`/api/sites/${site.id}/locales`), {
 			data: { locale: 'de', is_default: false, sort_order: 2 }
 		});
 
@@ -55,16 +55,16 @@ test.describe('build-pipeline: 3-locale multilingual', () => {
 		});
 
 		// Publish sv + de overlays for the page + the text block.
-		await adminApi.put(u(`/sites/${site.id}/pages/${pg.id}/locales/sv`), {
+		await adminApi.put(u(`/api/sites/${site.id}/pages/${pg.id}/locales/sv`), {
 			data: { title: 'Multi (sv)', status: 'published' }
 		});
-		await adminApi.put(u(`/sites/${site.id}/blocks/${textBlock.id}/locales/sv`), {
+		await adminApi.put(u(`/api/sites/${site.id}/blocks/${textBlock.id}/locales/sv`), {
 			data: { data_json: JSON.stringify({ text: 'Hej svenska' }), is_visible: true }
 		});
-		await adminApi.put(u(`/sites/${site.id}/pages/${pg.id}/locales/de`), {
+		await adminApi.put(u(`/api/sites/${site.id}/pages/${pg.id}/locales/de`), {
 			data: { title: 'Multi (de)', status: 'published' }
 		});
-		await adminApi.put(u(`/sites/${site.id}/blocks/${textBlock.id}/locales/de`), {
+		await adminApi.put(u(`/api/sites/${site.id}/blocks/${textBlock.id}/locales/de`), {
 			data: { data_json: JSON.stringify({ text: 'Hallo deutsch' }), is_visible: true }
 		});
 
