@@ -1,4 +1,5 @@
 import { test, expect, u } from '../../fixtures/auth';
+import { request } from '@playwright/test';
 
 // Phase 30.1: workspace CRUD + cross-workspace access enforcement.
 // The OSS bootstrap auto-creates a "default" workspace at boot;
@@ -63,31 +64,47 @@ test.describe('Phase 30.1: workspaces', () => {
 	});
 
 	test('cross-workspace read leakage is blocked for non-admin members', async ({ adminApi }) => {
-		// Admin has the global bypass (user.role='admin'), so to test
-		// the leakage block we mint two workspaces, drop a member into
-		// one, and have the member try to read the other. The member
-		// is created via the /admin/invites flow (existing tier-1
-		// invite path) which gives a new user with role='editor' so
-		// they hit the WorkspaceAccessMiddleware membership check.
-		const inviteRes = await adminApi.post(u('/api/admin/invites'), {
-			data: { email: `wsmember-${Date.now()}@example.test`, role: 'editor' }
+		// Admin has the platform-admin bypass, so to exercise the membership
+		// gate we mint two workspaces, invite a brand-new user into ONE of them
+		// via the /cloud/signup redeem flow (which creates an editor + that one
+		// workspace membership + a session), then confirm the invitee can read
+		// their own workspace (200) but is 403'd on the other.
+		const stamp = Date.now().toString(36);
+		const wsA = await adminApi.post(u('/api/workspaces'), { data: { name: `WS A ${stamp}` } });
+		expect(wsA.status()).toBe(201);
+		const wsAID = (await wsA.json()).id as string;
+		const wsB = await adminApi.post(u('/api/workspaces'), { data: { name: `WS B ${stamp}` } });
+		expect(wsB.status()).toBe(201);
+		const wsBID = (await wsB.json()).id as string;
+
+		// Invite a fresh email into WS A (admin creates the invite as its owner).
+		const email = `wsmember-${stamp}@example.test`;
+		const inv = await adminApi.post(u(`/api/workspaces/${wsAID}/invites`), {
+			data: { email, role: 'member' }
 		});
-		expect(inviteRes.ok()).toBeTruthy();
-		const invite = await inviteRes.json();
-		// Redeem invite. The token URL is /signup/{token}; the API
-		// path is POST /api/auth/redeem-invite (per existing flow).
-		const password = 'change-me-12345';
-		const redeem = await adminApi.post(u('/api/auth/redeem-invite'), {
-			data: { token: invite.token, name: 'WS Member', password }
-		});
-		if (!redeem.ok()) {
-			test.skip(true, 'invite redeem endpoint shape unknown in test harness; cross-tenant test deferred to dedicated harness');
-			return;
+		expect(inv.status()).toBe(201);
+		const token = (await inv.json()).token as string;
+		expect(token).toBeTruthy();
+
+		// Redeem as the invitee in a FRESH context (its own cookie jar). A new
+		// email creates the editor account + WS A membership and returns a
+		// session cookie stored on this context.
+		const invitee = await request.newContext();
+		try {
+			const redeem = await invitee.post(u(`/api/cloud/signup/${token}`), {
+				data: { name: 'WS Member', password: 'invitee-pw-123456' }
+			});
+			expect(redeem.status(), await redeem.text()).toBe(201);
+
+			// The invitee can read WS A (member) ...
+			const readA = await invitee.get(u(`/api/workspaces/${wsAID}`));
+			expect(readA.status(), 'invitee should read their own workspace').toBe(200);
+
+			// ... but is refused WS B (not a member, and not a platform admin).
+			const readB = await invitee.get(u(`/api/workspaces/${wsBID}`));
+			expect(readB.status(), 'invitee must NOT read a workspace they are not in').toBe(403);
+		} finally {
+			await invitee.dispose();
 		}
-		// If we got here, login as the new user and probe a workspace
-		// they're not in. Implementation detail: separate APIRequestContext
-		// since the cookie is per-context.
-		// For 30.1 the cross-workspace probe lives in cross-site-leakage.spec
-		// extension; this test stays a smoke check on the 200/400 path.
 	});
 });
