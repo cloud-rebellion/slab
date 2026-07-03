@@ -97,16 +97,16 @@ func (r *Recorder) Evaluate(ctx context.Context, sig Signal) int {
 			valueCents = sig.ValueOverrideCents
 		}
 		err := r.queries.RecordConversionEvent(ctx, store.RecordConversionEventParams{
-			ID:              newConversionID(),
-			SiteID:          sig.SiteID,
-			GoalID:          m.ID,
-			Fingerprint:     sig.Fingerprint,
-			SessionID:       sig.SessionID,
-			Path:            sig.Path,
-			Ts:              now,
-			ValueCents:      valueCents,
-			ValueCurrency:   goalRow.ValueCurrency,
-			PropertiesJson:  props,
+			ID:             newConversionID(),
+			SiteID:         sig.SiteID,
+			GoalID:         m.ID,
+			Fingerprint:    sig.Fingerprint,
+			SessionID:      sig.SessionID,
+			Path:           sig.Path,
+			Ts:             now,
+			ValueCents:     valueCents,
+			ValueCurrency:  goalRow.ValueCurrency,
+			PropertiesJson: props,
 		})
 		if err != nil {
 			slog.Warn("conversions: record event failed",

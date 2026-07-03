@@ -41,8 +41,8 @@ type simpleErr string
 
 func (e simpleErr) Error() string { return string(e) }
 
-func validDiscountKind(s string) bool   { return s == "percent" || s == "fixed" }
-func validAppliesTo(s string) bool      { return s == "all" || s == "categories" || s == "products" }
+func validDiscountKind(s string) bool { return s == "percent" || s == "fixed" }
+func validAppliesTo(s string) bool    { return s == "all" || s == "categories" || s == "products" }
 
 type DiscountCodeHandler struct {
 	cfg     *config.Config
@@ -152,18 +152,18 @@ func (h *DiscountCodeHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 	id := newID()
 	if err := h.queries.CreateDiscountCode(r.Context(), store.CreateDiscountCodeParams{
-		ID:                id,
-		SiteID:            siteID,
-		Code:              in.Code,
-		Kind:              in.Kind,
-		Value:             in.Value,
-		MinSubtotalCents:  in.MinSubtotalCents,
-		MaxUses:           in.MaxUses,
-		StartsAt:          in.StartsAt,
-		EndsAt:            in.EndsAt,
-		AppliesTo:         in.AppliesTo,
-		AppliesToIdsJson:  string(appliesToIDsJSON),
-		IsActive:          boolToInt(in.IsActive),
+		ID:               id,
+		SiteID:           siteID,
+		Code:             in.Code,
+		Kind:             in.Kind,
+		Value:            in.Value,
+		MinSubtotalCents: in.MinSubtotalCents,
+		MaxUses:          in.MaxUses,
+		StartsAt:         in.StartsAt,
+		EndsAt:           in.EndsAt,
+		AppliesTo:        in.AppliesTo,
+		AppliesToIdsJson: string(appliesToIDsJSON),
+		IsActive:         boolToInt(in.IsActive),
 	}); err != nil {
 		writeError(w, http.StatusInternalServerError, "create discount code failed: "+err.Error())
 		return
@@ -196,18 +196,18 @@ func (h *DiscountCodeHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	params := store.UpdateDiscountCodeParams{
-		Code:              existing.Code,
-		Kind:              existing.Kind,
-		Value:             existing.Value,
-		MinSubtotalCents:  existing.MinSubtotalCents,
-		MaxUses:           existing.MaxUses,
-		StartsAt:          existing.StartsAt,
-		EndsAt:            existing.EndsAt,
-		AppliesTo:         existing.AppliesTo,
-		AppliesToIdsJson:  existing.AppliesToIdsJson,
-		IsActive:          existing.IsActive,
-		ID:                id,
-		SiteID:            siteID,
+		Code:             existing.Code,
+		Kind:             existing.Kind,
+		Value:            existing.Value,
+		MinSubtotalCents: existing.MinSubtotalCents,
+		MaxUses:          existing.MaxUses,
+		StartsAt:         existing.StartsAt,
+		EndsAt:           existing.EndsAt,
+		AppliesTo:        existing.AppliesTo,
+		AppliesToIdsJson: existing.AppliesToIdsJson,
+		IsActive:         existing.IsActive,
+		ID:               id,
+		SiteID:           siteID,
 	}
 	if req.Code != nil {
 		c := strings.ToUpper(strings.TrimSpace(*req.Code))

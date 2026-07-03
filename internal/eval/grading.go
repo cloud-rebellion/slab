@@ -36,4 +36,3 @@ func ScoreToGrade(score, max int) string {
 		return "F"
 	}
 }
-

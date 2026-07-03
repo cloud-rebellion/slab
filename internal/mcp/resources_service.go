@@ -35,9 +35,9 @@ func (s *Server) registerServiceContextResources() {
 			}
 			latest := latestEvaluationsByCategory(rows)
 			return mustJSON(map[string]any{
-				"site_id":   agent.SiteID,
+				"site_id":     agent.SiteID,
 				"by_category": latest,
-				"hint":      "Each entry has score/max_score/grade and checks_json with per-check detail. Categories: security, seo, accessibility, privacy, performance, geo.",
+				"hint":        "Each entry has score/max_score/grade and checks_json with per-check detail. Categories: security, seo, accessibility, privacy, performance, geo.",
 			}), nil
 		},
 	})
@@ -80,15 +80,15 @@ func (s *Server) registerServiceContextResources() {
 			}
 			d := rows[0]
 			return mustJSON(map[string]any{
-				"status":       d.Status,
-				"deploy_url":   d.DeployUrl,
+				"status":        d.Status,
+				"deploy_url":    d.DeployUrl,
 				"deploy_target": d.DeployTarget,
-				"duration_ms":  d.DurationMs,
-				"pages_built":  d.PagesBuilt,
-				"error":        d.Error,
-				"deployed_at":  d.DeployedAt,
-				"created_at":   d.CreatedAt,
-				"completed_at": d.CompletedAt,
+				"duration_ms":   d.DurationMs,
+				"pages_built":   d.PagesBuilt,
+				"error":         d.Error,
+				"deployed_at":   d.DeployedAt,
+				"created_at":    d.CreatedAt,
+				"completed_at":  d.CompletedAt,
 			}), nil
 		},
 	})
@@ -186,10 +186,10 @@ func (s *Server) registerServiceContextResources() {
 				}
 			}
 			return mustJSON(map[string]any{
-				"site_id":                   agent.SiteID,
-				"retention_settings":        retention,
-				"sweep_status_endpoint":     "/api/admin/metrics",
-				"hint":                      "Sweep run timestamps + rows reaped live in the admin metrics endpoint, not exposed via MCP yet.",
+				"site_id":               agent.SiteID,
+				"retention_settings":    retention,
+				"sweep_status_endpoint": "/api/admin/metrics",
+				"hint":                  "Sweep run timestamps + rows reaped live in the admin metrics endpoint, not exposed via MCP yet.",
 			}), nil
 		},
 	})
@@ -215,13 +215,13 @@ func (s *Server) registerServiceContextResources() {
 			refs, _ := s.queries.ListDesignReferences(ctx, agent.SiteID)
 			targets, _ := s.queries.ListDeployTargetsBySite(ctx, agent.SiteID)
 			return mustJSON(map[string]any{
-				"ga4":             map[string]any{"enabled": has("ga4_enabled")},
-				"umami":           map[string]any{"enabled": has("umami_enabled")},
-				"cookieproof":     map[string]any{"enabled": has("cookieproof_enabled")},
-				"personalization": map[string]any{"enabled": has("personalization_enabled")},
-				"crm_webhook":     map[string]any{"configured": settingValue(settings, "analytics", "crm_webhook_url") != ""},
+				"ga4":               map[string]any{"enabled": has("ga4_enabled")},
+				"umami":             map[string]any{"enabled": has("umami_enabled")},
+				"cookieproof":       map[string]any{"enabled": has("cookieproof_enabled")},
+				"personalization":   map[string]any{"enabled": has("personalization_enabled")},
+				"crm_webhook":       map[string]any{"configured": settingValue(settings, "analytics", "crm_webhook_url") != ""},
 				"design_references": map[string]any{"count": len(refs)},
-				"deploy_targets":  map[string]any{"count": len(targets)},
+				"deploy_targets":    map[string]any{"count": len(targets)},
 			}), nil
 		},
 	})
@@ -367,13 +367,13 @@ func (s *Server) capabilitiesSnapshot(agent *authmw.AgentIdentity) map[string]an
 			"protocol_version": Protocol,
 		},
 		"surface": map[string]any{
-			"tools":              toolNames,
-			"tools_count":        len(toolNames),
-			"write_tools_count":  writeTools,
-			"resources":          resourceURIs,
-			"resources_count":    len(resourceURIs),
-			"prompts":            promptNames,
-			"prompts_count":      len(promptNames),
+			"tools":             toolNames,
+			"tools_count":       len(toolNames),
+			"write_tools_count": writeTools,
+			"resources":         resourceURIs,
+			"resources_count":   len(resourceURIs),
+			"prompts":           promptNames,
+			"prompts_count":     len(promptNames),
 		},
 		"eval_thresholds": map[string]any{
 			"a_plus": ">=95%",

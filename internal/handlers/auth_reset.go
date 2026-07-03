@@ -3,28 +3,28 @@
 // Three endpoints, all unauthenticated (the token in the URL is the
 // credential):
 //
-//   POST /api/auth/forgot-password   { email }
-//     - Mints a one-time token, stores its sha256 hash, returns 200
-//       with no leak about whether the email exists. The bare ack
-//       prevents account enumeration: an attacker who POSTs every
-//       email in a leaked dump cannot tell which ones registered.
-//     - When a MailSender is configured, a reset link is emailed.
-//       Otherwise the link is logged via slog.Info so the operator
-//       can copy-paste it from /api/admin/audit-log or the container
-//       log stream. This keeps the flow useful in air-gapped /
-//       single-admin deployments without forcing an email integration.
+//	POST /api/auth/forgot-password   { email }
+//	  - Mints a one-time token, stores its sha256 hash, returns 200
+//	    with no leak about whether the email exists. The bare ack
+//	    prevents account enumeration: an attacker who POSTs every
+//	    email in a leaked dump cannot tell which ones registered.
+//	  - When a MailSender is configured, a reset link is emailed.
+//	    Otherwise the link is logged via slog.Info so the operator
+//	    can copy-paste it from /api/admin/audit-log or the container
+//	    log stream. This keeps the flow useful in air-gapped /
+//	    single-admin deployments without forcing an email integration.
 //
-//   GET  /api/auth/reset-password/{token}
-//     - Verifies the token is valid + unused + unexpired. Returns
-//       200 with the user's email so the redemption page can
-//       prefill, or 404 to keep the rejection generic.
+//	GET  /api/auth/reset-password/{token}
+//	  - Verifies the token is valid + unused + unexpired. Returns
+//	    200 with the user's email so the redemption page can
+//	    prefill, or 404 to keep the rejection generic.
 //
-//   POST /api/auth/reset-password/{token}   { password }
-//     - Validates the token again, sets the new password (bcrypt
-//       cost 12), marks the token used, and bumps token_version on
-//       the user so every active session is invalidated. Closes
-//       the case where an attacker phished a session cookie before
-//       the user reset their password.
+//	POST /api/auth/reset-password/{token}   { password }
+//	  - Validates the token again, sets the new password (bcrypt
+//	    cost 12), marks the token used, and bumps token_version on
+//	    the user so every active session is invalidated. Closes
+//	    the case where an attacker phished a session cookie before
+//	    the user reset their password.
 package handlers
 
 import (

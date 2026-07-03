@@ -11,29 +11,15 @@ import (
 	"net/http"
 
 	"github.com/bright-interaction/slab/internal/builder"
+	"github.com/bright-interaction/slab/internal/settingspolicy"
 	"github.com/bright-interaction/slab/internal/store"
 )
 
-// agentWritableSettingsCategories enumerates settings categories an agent
-// is allowed to write. Anything not in this set is read-only via the agent
-// API (the human admin still controls them in the UI).
-//
-// We deliberately exclude:
-//   - security: HSTS, CSP, frame options change attack surface
-//   - allowed-scripts: CSP whitelist additions widen XSS exposure
-//   - nginx: server config preview, internal-only
-//   - danger: site deletion, destructive
-// Keep in sync with agentWritableCategories (internal/mcp/helpers.go),
-// the bulk_upsert_settings schema enum (internal/mcp/tools.go), and
-// writableSet in internal/agent/settings_catalog.go.
-var agentWritableSettingsCategories = map[string]bool{
-	"seo":       true,
-	"analytics": true,
-	"general":   true,
-	"search":    true,
-	// design carries the fidelity dial + strict-lint toggle; taste-only,
-	// no security surface.
-	"design": true,
+// agentWritableSettingsCategories reports whether an agent may write the
+// settings category. Policy lives in internal/settingspolicy (single
+// source of truth shared with MCP + the settings catalog).
+func agentWritableSettingsCategories(category string) bool {
+	return settingspolicy.AgentWritableCategory(category)
 }
 
 // ListSettings returns all settings rows for the agent's site (any category).
@@ -109,7 +95,7 @@ func (h *AgentHandler) BulkUpsertSettings(w http.ResponseWriter, r *http.Request
 		if s.Category == "" || s.Key == "" {
 			continue
 		}
-		if !agentWritableSettingsCategories[s.Category] {
+		if !agentWritableSettingsCategories(s.Category) {
 			continue
 		}
 		if err := validateSetting(s.Category, s.Key, s.Value); err != nil {
@@ -138,7 +124,7 @@ func (h *AgentHandler) BulkUpsertSettings(w http.ResponseWriter, r *http.Request
 			if s.Category == "" || s.Key == "" {
 				continue
 			}
-			if !agentWritableSettingsCategories[s.Category] {
+			if !agentWritableSettingsCategories(s.Category) {
 				rejected = append(rejected, s.Category+"."+s.Key)
 				continue
 			}
@@ -166,34 +152,32 @@ func (h *AgentHandler) BulkUpsertSettings(w http.ResponseWriter, r *http.Request
 			if s.Category == "" || s.Key == "" {
 				continue
 			}
-			if !agentWritableSettingsCategories[s.Category] {
+			if !agentWritableSettingsCategories(s.Category) {
 				rejected = append(rejected, s.Category+"."+s.Key)
 				continue
 			}
-			_ = h.queries.UpsertSetting(r.Context(), store.UpsertSettingParams{
+			if err := h.queries.UpsertSetting(r.Context(), store.UpsertSettingParams{
 				ID:       newID(),
 				SiteID:   a.SiteID,
 				Category: s.Category,
 				Key:      s.Key,
 				Value:    s.Value,
-			})
+			}); err != nil {
+				// Non-tx fallback cannot roll back; stop and report the
+				// partial write honestly instead of claiming success.
+				writeError(w, http.StatusInternalServerError,
+					"Failed to apply settings batch at "+s.Category+"."+s.Key+"; earlier keys in the batch were written")
+				return
+			}
 		}
 	}
 
 	rows, _ := h.queries.ListSettingsBySite(r.Context(), a.SiteID)
 	writeJSON(w, http.StatusOK, map[string]any{
-		"settings":               rows,
-		"rejected_admin_only":    rejected,
-		"writable_categories":    keysOfStringBoolMap(agentWritableSettingsCategories),
+		"settings":            rows,
+		"rejected_admin_only": rejected,
+		"writable_categories": settingspolicy.AgentWritableCategories(),
 	})
-}
-
-func keysOfStringBoolMap(m map[string]bool) []string {
-	out := make([]string, 0, len(m))
-	for k := range m {
-		out = append(out, k)
-	}
-	return out
 }
 
 // ListAllowedScripts returns the trusted-domain rows for the agent's site.

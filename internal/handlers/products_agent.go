@@ -362,18 +362,18 @@ func (h *DiscountCodeHandler) CreateForAgent(ctx context.Context, siteID string,
 	appliesToIDsJSON, _ := json.Marshal(in.AppliesToIDs)
 	id := newID()
 	if err := h.queries.CreateDiscountCode(ctx, store.CreateDiscountCodeParams{
-		ID:                id,
-		SiteID:            siteID,
-		Code:              in.Code,
-		Kind:              in.Kind,
-		Value:             in.Value,
-		MinSubtotalCents:  in.MinSubtotalCents,
-		MaxUses:           in.MaxUses,
-		StartsAt:          in.StartsAt,
-		EndsAt:            in.EndsAt,
-		AppliesTo:         in.AppliesTo,
-		AppliesToIdsJson:  string(appliesToIDsJSON),
-		IsActive:          boolToInt(in.IsActive),
+		ID:               id,
+		SiteID:           siteID,
+		Code:             in.Code,
+		Kind:             in.Kind,
+		Value:            in.Value,
+		MinSubtotalCents: in.MinSubtotalCents,
+		MaxUses:          in.MaxUses,
+		StartsAt:         in.StartsAt,
+		EndsAt:           in.EndsAt,
+		AppliesTo:        in.AppliesTo,
+		AppliesToIdsJson: string(appliesToIDsJSON),
+		IsActive:         boolToInt(in.IsActive),
 	}); err != nil {
 		return store.DiscountCode{}, fmt.Errorf("create discount code: %w", err)
 	}
@@ -401,18 +401,18 @@ func (h *DiscountCodeHandler) UpdateForAgent(ctx context.Context, siteID, id str
 		return store.DiscountCode{}, err
 	}
 	params := store.UpdateDiscountCodeParams{
-		Code:              existing.Code,
-		Kind:              existing.Kind,
-		Value:             existing.Value,
-		MinSubtotalCents:  existing.MinSubtotalCents,
-		MaxUses:           existing.MaxUses,
-		StartsAt:          existing.StartsAt,
-		EndsAt:            existing.EndsAt,
-		AppliesTo:         existing.AppliesTo,
-		AppliesToIdsJson:  existing.AppliesToIdsJson,
-		IsActive:          existing.IsActive,
-		ID:                id,
-		SiteID:            siteID,
+		Code:             existing.Code,
+		Kind:             existing.Kind,
+		Value:            existing.Value,
+		MinSubtotalCents: existing.MinSubtotalCents,
+		MaxUses:          existing.MaxUses,
+		StartsAt:         existing.StartsAt,
+		EndsAt:           existing.EndsAt,
+		AppliesTo:        existing.AppliesTo,
+		AppliesToIdsJson: existing.AppliesToIdsJson,
+		IsActive:         existing.IsActive,
+		ID:               id,
+		SiteID:           siteID,
 	}
 	if req.Code != nil {
 		c := strings.ToUpper(strings.TrimSpace(*req.Code))

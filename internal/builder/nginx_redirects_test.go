@@ -162,8 +162,8 @@ func TestBuildRedirectBlock_HostileInputsDropped(t *testing.T) {
 		{FromPath: "/d\"injected\"", ToPath: "/x", StatusCode: 301},
 		{FromPath: "/e", ToPath: "/x}return 500;{", StatusCode: 301},
 		{FromPath: "/f", ToPath: "/x\nreturn 500;", StatusCode: 301},
-		{FromPath: "/g", ToPath: "//evil.com/", StatusCode: 301},     // not / prefix once normalized
-		{FromPath: "no-slash", ToPath: "/x", StatusCode: 301},        // exact must start with /
+		{FromPath: "/g", ToPath: "//evil.com/", StatusCode: 301},       // not / prefix once normalized
+		{FromPath: "no-slash", ToPath: "/x", StatusCode: 301},          // exact must start with /
 		{FromPath: "/h", ToPath: "https://evil.com/", StatusCode: 301}, // off-site not allowed in L1
 		{FromPath: "", ToPath: "/x", StatusCode: 301},
 		{FromPath: "/i", ToPath: "", StatusCode: 301},

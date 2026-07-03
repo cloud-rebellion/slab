@@ -56,10 +56,10 @@ var identifiedKeys = map[string]bool{
 //
 // GET /t/visitor?site_id=...
 //
-//   200 - JSON visitorResponse (Anonymous always populated when row exists,
-//         Identified populated only when identity is recently confirmed)
-//   400 - missing or invalid site_id
-//   404 - unknown site_id
+//	200 - JSON visitorResponse (Anonymous always populated when row exists,
+//	      Identified populated only when identity is recently confirmed)
+//	400 - missing or invalid site_id
+//	404 - unknown site_id
 func (h *TrackHandler) Visitor(w http.ResponseWriter, r *http.Request) {
 	siteID := strings.TrimSpace(r.URL.Query().Get("site_id"))
 	if !isSafeSiteID(siteID) {

@@ -27,11 +27,13 @@ import (
 // roundtrip and for the agent to read example values when authoring
 // conditional blocks.
 //
-//   GET /api/agent/visitor-metadata?fingerprint=...
-//   GET /api/agent/visitor-metadata?visitor_id=...
+//	GET /api/agent/visitor-metadata?fingerprint=...
+//	GET /api/agent/visitor-metadata?visitor_id=...
 //
 // 200 - JSON {visitor_id, fingerprint, identified_at, identity_confirmed_at,
-//             metadata: {...}, metadata_expires_at}
+//
+//	metadata: {...}, metadata_expires_at}
+//
 // 400 - missing identifier
 // 404 - no matching row on this site
 func (h *AgentHandler) GetVisitorMetadata(w http.ResponseWriter, r *http.Request) {

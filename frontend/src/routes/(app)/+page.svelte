@@ -8,19 +8,23 @@
 	import EmptyState from '$lib/components/ui/EmptyState.svelte';
 	import GradeBadge from '$lib/components/ui/GradeBadge.svelte';
 	import Skeleton from '$lib/components/ui/Skeleton.svelte';
-
-	type Grade = 'A+' | 'A' | 'B+' | 'B' | 'C' | 'D' | 'F';
+	import ErrorState from '$lib/components/ui/ErrorState.svelte';
+	import { type Grade, asGrade, compositeGrade } from '$lib/evaluations/grade';
 
 	interface BuildEntry {
 		build_id: string;
 		site_id: string;
 		site_name: string;
-		status: string;
+		// Live status is only known for the site's NEWEST build; older
+		// rows omit it (evaluations only exist for successful builds, so
+		// stamping the site-level status onto all history rows was wrong).
+		status: string | null;
 		created_at: string;
 		grades: Evaluation[];
 	}
 
 	let loading = $state(true);
+	let loadError = $state<string | null>(null);
 	let sites = $state<Site[]>([]);
 	let recent = $state<BuildEntry[]>([]);
 	let latestGrade = $state<Grade | null>(null);
@@ -28,16 +32,8 @@
 
 	const userName = $derived(auth.value?.name ?? '');
 
-	const VALID_GRADES: Grade[] = ['A+', 'A', 'B+', 'B', 'C', 'D', 'F'];
-
-	function isGrade(g: string): g is Grade {
-		return (VALID_GRADES as string[]).includes(g);
-	}
-
-	function gradeRank(g: string): number {
-		const idx = VALID_GRADES.indexOf(g as Grade);
-		return idx === -1 ? VALID_GRADES.length : idx;
-	}
+	// Grade machinery from $lib/evaluations/grade (13-grade scale). A
+	// third local 7-grade fork here skipped minus grades entirely.
 
 	function formatTime(iso: string): string {
 		if (!iso) return '';
@@ -70,6 +66,7 @@
 
 	async function load(): Promise<void> {
 		loading = true;
+		loadError = null;
 		try {
 			const sitesResp = await api.sites.list();
 			sites = sitesResp.sites ?? [];
@@ -103,20 +100,29 @@
 					list.push(e);
 					byBuild.set(e.build_id, list);
 				}
+				const siteRows: BuildEntry[] = [];
 				for (const [build_id, group] of byBuild) {
 					const created = group.reduce(
 						(acc, ev) => (ev.created_at > acc ? ev.created_at : acc),
 						group[0]?.created_at ?? ''
 					);
-					merged.push({
+					siteRows.push({
 						build_id,
 						site_id: site.id,
 						site_name: site.name,
-						status: site.last_build_status || 'success',
+						status: null,
 						created_at: created,
 						grades: group
 					});
 				}
+				// Only the site's NEWEST build reflects the live
+				// last_build_status; older rows keep status null (they were
+				// successful by construction, evals only exist on success).
+				siteRows.sort((a, b) => (a.created_at < b.created_at ? 1 : -1));
+				if (siteRows[0]) {
+					siteRows[0].status = site.last_build_status || 'success';
+				}
+				merged.push(...siteRows);
 			}
 
 			merged.sort((a, b) => (a.created_at < b.created_at ? 1 : -1));
@@ -129,19 +135,15 @@
 				return !Number.isNaN(t) && t >= cutoff;
 			}).length;
 
-			// Latest evaluation grade across sites: take worst grade of latest build.
-			const latest = merged[0];
-			if (latest) {
-				let worst: Grade | null = null;
-				for (const ev of latest.grades) {
-					if (isGrade(ev.grade)) {
-						if (!worst || gradeRank(ev.grade) > gradeRank(worst)) worst = ev.grade;
-					}
-				}
-				latestGrade = worst;
-			} else {
-				latestGrade = null;
-			}
+			// Latest evaluation grade across sites: worst grade of latest build.
+			latestGrade = merged[0] ? compositeGrade(merged[0].grades) : null;
+		} catch (err) {
+			// Without this catch, any non-401 API failure rendered the
+			// "No sites yet" onboarding state over a real account.
+			loadError = err instanceof Error ? err.message : 'Failed to load the dashboard.';
+			sites = [];
+			recent = [];
+			latestGrade = null;
 		} finally {
 			loading = false;
 		}
@@ -171,6 +173,8 @@
 					</div>
 				{/each}
 			</section>
+		{:else if loadError}
+			<ErrorState title="Dashboard failed to load" message={loadError} onRetry={() => void load()} />
 		{:else if sites.length === 0}
 			<EmptyState
 				title="No sites yet"
@@ -245,19 +249,24 @@
 								href={`/sites/${build.site_id}/evaluations/${build.build_id}`}
 								class="group flex items-center gap-5 px-6 py-4 transition-colors hover:bg-bg-hover"
 							>
-								<span class={statusDot(build.status)} aria-hidden="true"></span>
+								{#if build.status}
+									<span class={statusDot(build.status)} aria-hidden="true"></span>
+								{:else}
+									<span class="inline-block h-2 w-2 shrink-0 rounded-full border border-border-light" aria-hidden="true"></span>
+								{/if}
 								<div class="min-w-0 flex-1">
 									<p class="truncate text-[13px] font-medium text-text-primary">
 										{build.site_name}
 									</p>
 									<p class="mt-0.5 text-[11px] text-text-muted">
-										{statusLabel(build.status)} · {formatTime(build.created_at)}
+										{build.status ? `${statusLabel(build.status)} · ` : ''}{formatTime(build.created_at)}
 									</p>
 								</div>
 								<div class="hidden items-center gap-1.5 sm:flex">
 									{#each build.grades.slice(0, 6) as ev (ev.id)}
-										{#if isGrade(ev.grade)}
-											<GradeBadge grade={ev.grade} size="sm" />
+										{@const g = asGrade(ev.grade)}
+										{#if g}
+											<GradeBadge grade={g} size="sm" />
 										{/if}
 									{/each}
 								</div>

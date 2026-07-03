@@ -49,9 +49,9 @@ type WebflowOptions struct {
 }
 
 const (
-	webflowDefaultBaseURL              = "https://api.webflow.com"
+	webflowDefaultBaseURL               = "https://api.webflow.com"
 	webflowDefaultMaxItemsPerCollection = 5000
-	webflowItemsPerPage                = 100 // Webflow CMS API v2 max
+	webflowItemsPerPage                 = 100 // Webflow CMS API v2 max
 )
 
 // ----- Webflow REST shapes -----
@@ -88,7 +88,7 @@ type webflowField struct {
 }
 
 type webflowItemResponse struct {
-	Items      []webflowItem      `json:"items"`
+	Items      []webflowItem     `json:"items"`
 	Pagination webflowPagination `json:"pagination"`
 }
 
@@ -99,14 +99,14 @@ type webflowPagination struct {
 }
 
 type webflowItem struct {
-	ID           string                 `json:"id"`
-	CMSLocaleID  string                 `json:"cmsLocaleId"`
-	IsArchived   bool                   `json:"isArchived"`
-	IsDraft      bool                   `json:"isDraft"`
-	LastUpdated  string                 `json:"lastUpdated"`
-	CreatedOn    string                 `json:"createdOn"`
-	LastPublished string                `json:"lastPublished"`
-	FieldData    map[string]interface{} `json:"fieldData"`
+	ID            string                 `json:"id"`
+	CMSLocaleID   string                 `json:"cmsLocaleId"`
+	IsArchived    bool                   `json:"isArchived"`
+	IsDraft       bool                   `json:"isDraft"`
+	LastUpdated   string                 `json:"lastUpdated"`
+	CreatedOn     string                 `json:"createdOn"`
+	LastPublished string                 `json:"lastPublished"`
+	FieldData     map[string]interface{} `json:"fieldData"`
 }
 
 type webflowPagesResponse struct {
@@ -115,19 +115,19 @@ type webflowPagesResponse struct {
 }
 
 type webflowPage struct {
-	ID          string `json:"id"`
-	Title       string `json:"title"`
-	Slug        string `json:"slug"`
-	URL         string `json:"url"` // not always populated; the static rendered page URL
-	SeoTitle    string `json:"seoTitle"`
-	SeoDescription string `json:"seoDescription"`
-	OpenGraphTitle string `json:"openGraphTitle"`
+	ID                   string `json:"id"`
+	Title                string `json:"title"`
+	Slug                 string `json:"slug"`
+	URL                  string `json:"url"` // not always populated; the static rendered page URL
+	SeoTitle             string `json:"seoTitle"`
+	SeoDescription       string `json:"seoDescription"`
+	OpenGraphTitle       string `json:"openGraphTitle"`
 	OpenGraphDescription string `json:"openGraphDescription"`
-	OpenGraphImage string `json:"openGraphImage"`
-	CreatedOn   string `json:"createdOn"`
-	LastUpdated string `json:"lastUpdated"`
-	IsDraft     bool   `json:"isDraft"`
-	IsArchived  bool   `json:"isArchived"`
+	OpenGraphImage       string `json:"openGraphImage"`
+	CreatedOn            string `json:"createdOn"`
+	LastUpdated          string `json:"lastUpdated"`
+	IsDraft              bool   `json:"isDraft"`
+	IsArchived           bool   `json:"isArchived"`
 }
 
 type webflowAPIError struct {

@@ -77,11 +77,11 @@ func TestCORS_LocalhostInDev(t *testing.T) {
 
 func TestStripScheme(t *testing.T) {
 	cases := map[string]string{
-		"https://foo.example":           "foo.example",
-		"https://foo.example:443":       "foo.example",
-		"https://foo.example/path":      "foo.example",
-		"http://foo.example:8080/path":  "foo.example",
-		"foo.example":                   "foo.example",
+		"https://foo.example":          "foo.example",
+		"https://foo.example:443":      "foo.example",
+		"https://foo.example/path":     "foo.example",
+		"http://foo.example:8080/path": "foo.example",
+		"foo.example":                  "foo.example",
 	}
 	for in, want := range cases {
 		if got := stripScheme(in); got != want {

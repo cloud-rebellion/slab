@@ -13,7 +13,7 @@ import (
 	"github.com/bright-interaction/slab/internal/store"
 )
 
-// ConsentHandler exposes admin-side reads over the consent_records table . 
+// ConsentHandler exposes admin-side reads over the consent_records table .
 // the GDPR proof-of-consent log atomicsite became system of record for after
 // the CookieProof fold-in. Reads are site-scoped and require an
 // authenticated admin (mounted behind the auth middleware in server.go).
@@ -30,19 +30,19 @@ func NewConsentHandler(cfg *config.Config, queries *store.Queries) *ConsentHandl
 // hides the IP hash to half its length (truncated for display). Server-side
 // the full hash stays available for audit lookups.
 type proofRow struct {
-	ID             string         `json:"id"`
-	CreatedAt      string         `json:"created_at"`
-	CreatedAtMs    int64          `json:"created_at_ms"`
-	Domain         string         `json:"domain"`
-	Method         string         `json:"method"`
-	Version        int64          `json:"version"`
-	Categories     map[string]any `json:"categories"`
-	Page           string         `json:"page"`
-	Referrer       string         `json:"referrer"`
-	UserAgent      string         `json:"user_agent"`
-	IPHashTrunc    string         `json:"ip_hash_trunc"`
-	GPCActive      bool           `json:"gpc_active"`
-	SessionID      string         `json:"session_id,omitempty"`
+	ID          string         `json:"id"`
+	CreatedAt   string         `json:"created_at"`
+	CreatedAtMs int64          `json:"created_at_ms"`
+	Domain      string         `json:"domain"`
+	Method      string         `json:"method"`
+	Version     int64          `json:"version"`
+	Categories  map[string]any `json:"categories"`
+	Page        string         `json:"page"`
+	Referrer    string         `json:"referrer"`
+	UserAgent   string         `json:"user_agent"`
+	IPHashTrunc string         `json:"ip_hash_trunc"`
+	GPCActive   bool           `json:"gpc_active"`
+	SessionID   string         `json:"session_id,omitempty"`
 }
 
 func toProofRow(r store.ConsentRecord) proofRow {
@@ -231,9 +231,9 @@ func (h *ConsentHandler) Stats(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	type daySplit struct {
-		Day        string           `json:"day"`
-		ByMethod   map[string]int64 `json:"by_method"`
-		Total      int64            `json:"total"`
+		Day      string           `json:"day"`
+		ByMethod map[string]int64 `json:"by_method"`
+		Total    int64            `json:"total"`
 	}
 	dayIndex := map[string]*daySplit{}
 	dayOrder := []string{}
@@ -253,16 +253,16 @@ func (h *ConsentHandler) Stats(w http.ResponseWriter, r *http.Request) {
 		series = append(series, *dayIndex[d])
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"total":           stats.Total,
-		"accepts":         nullFloatToInt64(stats.Accepts),
-		"rejects":         nullFloatToInt64(stats.Rejects),
-		"customs":         nullFloatToInt64(stats.Customs),
-		"gpcs":            nullFloatToInt64(stats.Gpcs),
-		"dns":             nullFloatToInt64(stats.DnsCount),
-		"do_not_sell":     nullFloatToInt64(stats.DoNotSellCount),
-		"daily":           series,
-		"from":            from,
-		"to":              to,
+		"total":       stats.Total,
+		"accepts":     nullFloatToInt64(stats.Accepts),
+		"rejects":     nullFloatToInt64(stats.Rejects),
+		"customs":     nullFloatToInt64(stats.Customs),
+		"gpcs":        nullFloatToInt64(stats.Gpcs),
+		"dns":         nullFloatToInt64(stats.DnsCount),
+		"do_not_sell": nullFloatToInt64(stats.DoNotSellCount),
+		"daily":       series,
+		"from":        from,
+		"to":          to,
 	})
 }
 

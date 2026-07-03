@@ -376,4 +376,3 @@ func trimCR(b []byte) []byte {
 	}
 	return b
 }
-

@@ -2,14 +2,14 @@
 // expose atomicsite's existing design surfaces to agents:
 //
 //   - search_design_corpus  : ripgrep-style search over the bundled
-//                             MIT-licensed reference repos
-//                             (astrowind, astro-paper, starlight,
-//                             shadcn-svelte, shadcn-ui sparse).
+//     MIT-licensed reference repos
+//     (astrowind, astro-paper, starlight,
+//     shadcn-svelte, shadcn-ui sparse).
 //   - design_critique       : returns the persisted "design" category
-//                             evaluations for a build, derived from
-//                             DesignPlaybook anti-patterns + slop-term
-//                             rules. Read-only; the critique itself
-//                             runs in the post-build hook.
+//     evaluations for a build, derived from
+//     DesignPlaybook anti-patterns + slop-term
+//     rules. Read-only; the critique itself
+//     runs in the post-build hook.
 //
 // Both tools are read-only, no PII, no site-state mutation. The corpus
 // is public MIT code; the critique reads only the site's own
@@ -30,7 +30,7 @@ func (s *Server) registerDesignTools() {
 	register := func(t Tool) { s.tools[t.Name] = t }
 
 	register(Tool{
-		Name: "search_design_corpus",
+		Name:        "search_design_corpus",
 		Description: "Searches the bundled MIT-licensed reference repos (astrowind, astro-paper, starlight, shadcn-svelte, shadcn-ui) for a pattern. Returns file paths plus 3-line snippets. Use this BEFORE writing a new component to see how 5 well-designed repos solve the same problem. Inputs: query (required, literal substring; prefix with 're:' for regex), kind (code|css|tokens|all, default all), repos (string[], filter to specific reference repos), max_results (1-50, default 20).",
 		InputSchema: schema(`{
 			"type":"object",
@@ -57,7 +57,7 @@ func (s *Server) registerDesignTools() {
 	})
 
 	register(Tool{
-		Name: "design_critique",
+		Name:        "design_critique",
 		Description: "Returns the design critique findings for a build, derived from DesignPlaybook anti-patterns and slop-term rules. Findings are graded (Score, MaxScore, Grade) and per-check categorised as fail / info / pass. Inputs: build_id (optional; defaults to the latest successful build for this site). Run this after a build to catch generic AI tells before shipping.",
 		InputSchema: schema(`{
 			"type":"object",

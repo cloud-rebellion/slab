@@ -55,18 +55,22 @@ ON CONFLICT(site_id) DO UPDATE SET
 -- name: ListSilosBySite :many
 SELECT * FROM site_silos WHERE site_id = ? ORDER BY sort_order;
 
+-- The by-id silo queries are site-scoped preventively: they have no
+-- callers yet, and an unscoped WHERE id = ? is exactly the shape that
+-- caused the agent-API block IDORs. Whoever wires them inherits the
+-- tenant guard for free.
 -- name: GetSiloByID :one
-SELECT * FROM site_silos WHERE id = ?;
+SELECT * FROM site_silos WHERE id = ? AND site_id = ?;
 
 -- name: CreateSilo :exec
 INSERT INTO site_silos (id, site_id, name, slug_prefix, silo_type, sort_order, created_at)
 VALUES (?, ?, ?, ?, ?, ?, datetime('now'));
 
 -- name: UpdateSilo :exec
-UPDATE site_silos SET name = ?, slug_prefix = ?, silo_type = ?, sort_order = ? WHERE id = ?;
+UPDATE site_silos SET name = ?, slug_prefix = ?, silo_type = ?, sort_order = ? WHERE id = ? AND site_id = ?;
 
 -- name: DeleteSilo :exec
-DELETE FROM site_silos WHERE id = ?;
+DELETE FROM site_silos WHERE id = ? AND site_id = ?;
 
 -- Allowed scripts
 -- name: ListAllowedScriptsBySite :many

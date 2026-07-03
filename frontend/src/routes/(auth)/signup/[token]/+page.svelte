@@ -116,7 +116,7 @@
 				autocomplete="new-password"
 				required
 				bind:value={password}
-				hint="Minimum 8 characters."
+				hint="Minimum 12 characters."
 			/>
 			<Input
 				label="Confirm password"

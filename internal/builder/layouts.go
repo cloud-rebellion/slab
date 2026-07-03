@@ -247,6 +247,30 @@ func RenderLayouts(ctx context.Context, queries *store.Queries, siteID string, w
 		if err := WriteCookieProofWidgetAsset(wsDir, cpCfg); err != nil {
 			return fmt.Errorf("write cookieproof widget asset: %w", err)
 		}
+		if showcase {
+			// Showcase ships Astro's ClientRouter: soft navigations swap
+			// the <body>, wiping the widget-injected <cookie-consent>
+			// element, and the widget bundle never re-executes (module +
+			// run-once guard), so an unconsented visitor would
+			// permanently lose the consent UI after the first internal
+			// click. Consent is a fidelity invariant: capture the live
+			// element before each swap and re-append the SAME instance
+			// after (custom-element state and the consent relay survive
+			// re-parenting). No-op everywhere the router is absent.
+			b.WriteString("  <script>\n")
+			b.WriteString("    (function () {\n")
+			b.WriteString("      var kept = null;\n")
+			b.WriteString("      document.addEventListener('astro:before-swap', function () {\n")
+			b.WriteString("        kept = document.querySelector('cookie-consent') || kept;\n")
+			b.WriteString("      });\n")
+			b.WriteString("      document.addEventListener('astro:after-swap', function () {\n")
+			b.WriteString("        if (kept && !kept.isConnected && document.body && !document.querySelector('cookie-consent')) {\n")
+			b.WriteString("          document.body.appendChild(kept);\n")
+			b.WriteString("        }\n")
+			b.WriteString("      });\n")
+			b.WriteString("    })();\n")
+			b.WriteString("  </script>\n")
+		}
 	}
 
 	// Bring-your-own consent banner. Whatever HTML/JS the user paste into
@@ -460,8 +484,9 @@ func RenderEngagementBeacon(siteID, trackPath string, consentGated bool) string 
 // (no business name), callers should skip emission in that case.
 //
 // Settings consumed:
-//   seo.same_as   newline-separated URLs (LinkedIn, GitHub, etc.)
-//   seo.logo_url  absolute URL to the org logo (falls back to og:image)
+//
+//	seo.same_as   newline-separated URLs (LinkedIn, GitHub, etc.)
+//	seo.logo_url  absolute URL to the org logo (falls back to og:image)
 func buildOrganizationJSONLD(site store.Site, profile store.SiteProfile, settings map[string]string) string {
 	name := strings.TrimSpace(profile.BusinessName)
 	if name == "" {

@@ -108,6 +108,15 @@ func main() {
 
 	queries := store.New(sqlDB)
 
+	// Boot reap: builds run in-process, so a crash/redeploy mid-build
+	// strands deployments in 'pending'/'building' forever and the UI
+	// shows a permanently-running build. Mirrors the verify-jobs reaper.
+	if n, err := queries.ReapStaleDeployments(context.Background()); err != nil {
+		slog.Warn("deployments boot reap", "err", err)
+	} else if n > 0 {
+		slog.Info("deployments boot reap: marked interrupted builds failed", "count", n)
+	}
+
 	// Seed admin user if none exists
 	seedAdminUser(cfg, queries, sqlDB)
 
@@ -459,6 +468,15 @@ func applySchema(sqlDB *sql.DB) error {
 	if err := rebuildEntityRevisionsCheckIfNeeded(sqlDB); err != nil {
 		return fmt.Errorf("entity_revisions CHECK rebuild: %w", err)
 	}
+	// Dedup any revision version collisions produced by the old
+	// two-statement SELECT MAX+1 race BEFORE the schema apply creates
+	// the unique index idx_entity_revisions_version (a leftover
+	// duplicate would fail the CREATE UNIQUE INDEX and brick boot).
+	// Duplicates keep their relative order (created_at, then id) and
+	// the whole entity's history is renumbered 1..n.
+	if err := dedupEntityRevisionVersions(sqlDB); err != nil {
+		return fmt.Errorf("entity_revisions version dedup: %w", err)
+	}
 	// Now apply the full schema. CREATE TABLE IF NOT EXISTS is a no-op for
 	// existing tables; CREATE INDEX IF NOT EXISTS now succeeds because the
 	// referenced columns exist (newly added by the migrations above on
@@ -541,6 +559,51 @@ func addColumnIfMissing(sqlDB *sql.DB, table, column, spec string) error {
 //
 // On fresh DBs (no entity_revisions table yet) this returns nil and
 // the schema apply below creates the table with the wide CHECK.
+// dedupEntityRevisionVersions renumbers any entity whose revision
+// history carries duplicate version_numbers (legacy two-statement
+// SELECT MAX+1 race). Renumbering preserves order (version_number,
+// created_at, id) and runs only for affected entities, so untouched
+// histories keep their user-visible numbering. Must run before the
+// schema apply creates idx_entity_revisions_version (unique).
+func dedupEntityRevisionVersions(sqlDB *sql.DB) error {
+	var exists int
+	err := sqlDB.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='entity_revisions'").Scan(&exists)
+	if err != nil || exists == 0 {
+		return err
+	}
+	var dupGroups int
+	err = sqlDB.QueryRow(`SELECT COUNT(*) FROM (
+		SELECT 1 FROM entity_revisions
+		GROUP BY site_id, entity_type, entity_id, version_number
+		HAVING COUNT(*) > 1
+	)`).Scan(&dupGroups)
+	if err != nil {
+		return err
+	}
+	if dupGroups == 0 {
+		return nil
+	}
+	slog.Warn("entity_revisions: renumbering histories with duplicate versions", "duplicate_groups", dupGroups)
+	_, err = sqlDB.Exec(`
+		UPDATE entity_revisions
+		SET version_number = ranked.rn
+		FROM (
+			SELECT id AS rid,
+			       ROW_NUMBER() OVER (
+			           PARTITION BY site_id, entity_type, entity_id
+			           ORDER BY version_number, created_at, id
+			       ) AS rn
+			FROM entity_revisions
+			WHERE (site_id, entity_type, entity_id) IN (
+				SELECT site_id, entity_type, entity_id FROM entity_revisions
+				GROUP BY site_id, entity_type, entity_id, version_number
+				HAVING COUNT(*) > 1
+			)
+		) AS ranked
+		WHERE entity_revisions.id = ranked.rid`)
+	return err
+}
+
 func rebuildEntityRevisionsCheckIfNeeded(sqlDB *sql.DB) error {
 	// Read the table's stored SQL definition from sqlite_master.
 	var stmt string

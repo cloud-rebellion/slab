@@ -84,10 +84,10 @@ func TestRenderCollectionFeeds_ExplicitOptInOverrides(t *testing.T) {
 	colID := "c_recipes"
 	on := true
 	settings, _ := json.Marshal(map[string]any{
-		"render_as_pages": true,
-		"schema_org_type": "Recipe",
-		"feed_enabled":    &on,
-		"feed_title":      "Cooking with Atomic",
+		"render_as_pages":  true,
+		"schema_org_type":  "Recipe",
+		"feed_enabled":     &on,
+		"feed_title":       "Cooking with Atomic",
 		"feed_description": "Weekly recipes",
 	})
 	schema, _ := json.Marshal([]map[string]any{{"name": "headline", "type": "text"}})

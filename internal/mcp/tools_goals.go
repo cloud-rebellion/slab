@@ -52,7 +52,7 @@ func (s *Server) registerGoalTools() {
 	})
 
 	register(Tool{
-		Name: "create_goal",
+		Name:        "create_goal",
 		Description: "Creates a conversion goal. match_type=url_pattern with match_value='/thank-you/*' counts every pageview matching the glob (* does not cross /). match_type=event_name with match_value='signup' counts every window.atomic.track('signup') call (or track_event MCP call). match_type=form_submit with match_value=<form_id> fires when that specific form is submitted. value_cents is optional intent-value (use 4900 for a EUR 49 lead). slug must be lowercase letters/digits/underscore/hyphen, unique per site.",
 		InputSchema: schema(`{
 			"type":"object",
@@ -70,13 +70,13 @@ func (s *Server) registerGoalTools() {
 		RequiresWrite: true,
 		Handler: func(ctx context.Context, agent *authmw.AgentIdentity, raw json.RawMessage) (string, error) {
 			var args struct {
-				Slug          string  `json:"slug"`
-				Name          string  `json:"name"`
-				MatchType     string  `json:"match_type"`
-				MatchValue    string  `json:"match_value"`
-				ValueCents    int64   `json:"value_cents"`
-				ValueCurrency string  `json:"value_currency"`
-				Active        *bool   `json:"active"`
+				Slug          string `json:"slug"`
+				Name          string `json:"name"`
+				MatchType     string `json:"match_type"`
+				MatchValue    string `json:"match_value"`
+				ValueCents    int64  `json:"value_cents"`
+				ValueCurrency string `json:"value_currency"`
+				Active        *bool  `json:"active"`
 			}
 			if err := json.Unmarshal(raw, &args); err != nil {
 				return "", err
@@ -127,7 +127,7 @@ func (s *Server) registerGoalTools() {
 	})
 
 	register(Tool{
-		Name: "update_goal",
+		Name:        "update_goal",
 		Description: "Patches a goal's name, match_type, match_value, value_cents, value_currency, or active flag. slug is immutable. Pass only the fields you want to change; omitted fields keep their current value (active is a tri-state via the active field on the request: true/false/omitted).",
 		InputSchema: schema(`{
 			"type":"object",
@@ -220,9 +220,9 @@ func (s *Server) registerGoalTools() {
 	})
 
 	register(Tool{
-		Name:        "delete_goal",
-		Description: "Removes a goal. Cascades to conversion_events: every recorded conversion for this goal is dropped along with the definition. Use with care -- there's no undo. The site's pageview / event stream stays intact.",
-		InputSchema: schema(`{"type":"object","properties":{"id":{"type":"string"}},"required":["id"]}`),
+		Name:          "delete_goal",
+		Description:   "Removes a goal. Cascades to conversion_events: every recorded conversion for this goal is dropped along with the definition. Use with care -- there's no undo. The site's pageview / event stream stays intact.",
+		InputSchema:   schema(`{"type":"object","properties":{"id":{"type":"string"}},"required":["id"]}`),
 		RequiresWrite: true,
 		Handler: func(ctx context.Context, agent *authmw.AgentIdentity, raw json.RawMessage) (string, error) {
 			var args struct {

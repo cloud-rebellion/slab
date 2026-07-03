@@ -58,7 +58,7 @@ func RunGEOChecks(site *SiteContext) []CheckResult {
 		return false, "no BreadcrumbList JSON-LD"
 	}, "Emit a BreadcrumbList schema with itemListElement so AI search can render breadcrumb context."))
 
-	checks = append(checks, checkOrganizationSchemaComplete(site))
+	checks = append(checks, checkOrganizationSchemaComplete(site)...)
 
 	checks = append(checks, perPageCheck("Content Freshness Signal", "geo", 2, site, func(p PageContext) (bool, string) {
 		if !isArticlePage(p.Doc) {
@@ -84,7 +84,7 @@ func RunGEOChecks(site *SiteContext) []CheckResult {
 		return true, ""
 	}, "Add dateModified to Article schema or article:modified_time meta so AI search can reason about freshness."))
 
-	checks = append(checks, checkNoindexNotInSitemap(site))
+	checks = append(checks, checkNoindexNotInSitemap(site)...)
 
 	// Structure-taste check: advisory in showcase fidelity (free-form
 	// showcase layouts legitimately skip the list/table pattern).
@@ -196,22 +196,26 @@ func hasAIFormatSignal(doc *html.Node) bool {
 // checkOrganizationSchemaComplete is a site-wide check: at least one page must
 // emit a complete Organization schema. Layout typically embeds it on every
 // page, so we sample any.
-func checkOrganizationSchemaComplete(site *SiteContext) CheckResult {
+//
+// Partial credit is an honest SPLIT (Pass at the earned weight PLUS a
+// Fail at the remaining weight) so the denominator keeps the full
+// weight. The old shape (Passed=true with a reduced weight) scored
+// partial as 1/1 instead of 1/2, silently inflating the grade.
+func checkOrganizationSchemaComplete(site *SiteContext) []CheckResult {
 	for _, p := range site.Pages {
 		ok, partial, missing := organizationSchemaStatus(p.Doc)
 		if ok {
-			return Pass("Organization Schema Completeness", "geo", 2,
-				"Organization schema has name, url, logo, sameAs, and founder/address/contactPoint")
+			return []CheckResult{Pass("Organization Schema Completeness", "geo", 2,
+				"Organization schema has name, url, logo, sameAs, and founder/address/contactPoint")}
 		}
 		if partial {
-			r := Fail("Organization Schema Completeness", "geo", 2, SeverityWarning,
-				"Has name, url, logo, sameAs but missing founder/address/contactPoint",
-				"Add founder, address, or contactPoint to Organization schema for stronger entity signal.")
-			// PARTIAL: half credit
-			r.Weight = 1
-			t := true
-			r.Passed = &t
-			return r
+			return []CheckResult{
+				Pass("Organization Schema Completeness (core)", "geo", 1,
+					"Organization schema has name, url, logo, sameAs"),
+				Fail("Organization Schema Completeness (entity depth)", "geo", 1, SeverityWarning,
+					"Missing founder/address/contactPoint",
+					"Add founder, address, or contactPoint to Organization schema for stronger entity signal."),
+			}
 		}
 		if len(missing) > 0 {
 			// Continue to scan further pages; first page might lack schema if
@@ -219,9 +223,9 @@ func checkOrganizationSchemaComplete(site *SiteContext) CheckResult {
 			_ = missing
 		}
 	}
-	return Fail("Organization Schema Completeness", "geo", 2, SeverityError,
+	return []CheckResult{Fail("Organization Schema Completeness", "geo", 2, SeverityError,
 		"No complete Organization (or LocalBusiness) JSON-LD found",
-		"Emit Organization schema with name, url, logo, sameAs(>=1), and address/founder/contactPoint to anchor your entity in AI knowledge graphs.")
+		"Emit Organization schema with name, url, logo, sameAs(>=1), and address/founder/contactPoint to anchor your entity in AI knowledge graphs.")}
 }
 
 // organizationSchemaStatus returns (fullyComplete, partiallyComplete, missingFields).
@@ -278,9 +282,11 @@ func organizationSchemaStatus(doc *html.Node) (full bool, partial bool, missing 
 
 // checkNoindexNotInSitemap is a site-wide check: any page with a noindex meta
 // must not appear in sitemap.xml. Crawl-budget hygiene for AI/search engines.
-func checkNoindexNotInSitemap(site *SiteContext) CheckResult {
+//
+// Partial credit is an honest split (see checkOrganizationSchemaComplete).
+func checkNoindexNotInSitemap(site *SiteContext) []CheckResult {
 	if site.SitemapXML == "" {
-		return Info("Noindex Pages Excluded From Sitemap", "geo", "no sitemap to cross-reference")
+		return []CheckResult{Info("Noindex Pages Excluded From Sitemap", "geo", "no sitemap to cross-reference")}
 	}
 	var leaks []string
 	for _, p := range site.Pages {
@@ -301,21 +307,20 @@ func checkNoindexNotInSitemap(site *SiteContext) CheckResult {
 		}
 	}
 	if len(leaks) == 0 {
-		return Pass("Noindex Pages Excluded From Sitemap", "geo", 3, "no noindex pages found in sitemap")
+		return []CheckResult{Pass("Noindex Pages Excluded From Sitemap", "geo", 3, "no noindex pages found in sitemap")}
 	}
 	if len(leaks) <= 2 {
-		// PARTIAL
-		r := Fail("Noindex Pages Excluded From Sitemap", "geo", 3, SeverityWarning,
-			fmt.Sprintf("%d noindex page(s) appear in sitemap: %s", len(leaks), strings.Join(leaks, ", ")),
-			"Filter noindex routes out of the sitemap; they waste crawl budget and confuse AI engines.")
-		r.Weight = 1
-		t := true
-		r.Passed = &t
-		return r
+		return []CheckResult{
+			Pass("Noindex Pages Excluded From Sitemap (mostly clean)", "geo", 1,
+				fmt.Sprintf("only %d noindex page(s) leak into the sitemap", len(leaks))),
+			Fail("Noindex Pages Excluded From Sitemap (leaks)", "geo", 2, SeverityWarning,
+				fmt.Sprintf("%d noindex page(s) appear in sitemap: %s", len(leaks), strings.Join(leaks, ", ")),
+				"Filter noindex routes out of the sitemap; they waste crawl budget and confuse AI engines."),
+		}
 	}
-	return Fail("Noindex Pages Excluded From Sitemap", "geo", 3, SeverityError,
+	return []CheckResult{Fail("Noindex Pages Excluded From Sitemap", "geo", 3, SeverityError,
 		fmt.Sprintf("%d noindex page(s) appear in sitemap: %s", len(leaks), strings.Join(leaks[:3], ", ")+"..."),
-		"Filter noindex routes out of the sitemap; they waste crawl budget and confuse AI engines.")
+		"Filter noindex routes out of the sitemap; they waste crawl budget and confuse AI engines.")}
 }
 
 // walkJSONLD finds every <script type="application/ld+json"> block on the page,
@@ -396,4 +401,3 @@ func parseFreshness(s string) (time.Time, error) {
 	}
 	return time.Time{}, fmt.Errorf("no matching format")
 }
-

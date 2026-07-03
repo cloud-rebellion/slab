@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -85,6 +86,69 @@ type CompileResult struct {
 	Error      string
 }
 
+// killWaitDelay bounds how long Wait blocks on lingering output pipes
+// after the process (group) was killed. Without it, an orphaned
+// grandchild (vite/esbuild worker) holding the pipe would block the
+// build goroutine forever and permanently pin its global build slot.
+const killWaitDelay = 10 * time.Second
+
+// cappedBuffer keeps the first max bytes and silently drains the rest,
+// so the log cap actually bounds build memory (CombinedOutput used to
+// buffer the entire output before capping) while the subprocess never
+// blocks on a full pipe.
+type cappedBuffer struct {
+	buf       bytes.Buffer
+	max       int
+	truncated bool
+}
+
+func (c *cappedBuffer) Write(p []byte) (int, error) {
+	if remaining := c.max - c.buf.Len(); remaining > 0 {
+		if len(p) > remaining {
+			c.buf.Write(p[:remaining])
+			c.truncated = true
+		} else {
+			c.buf.Write(p)
+		}
+	} else if len(p) > 0 {
+		c.truncated = true
+	}
+	return len(p), nil
+}
+
+func (c *cappedBuffer) bytes() []byte {
+	if c.truncated {
+		return append(c.buf.Bytes(), []byte("\n...[truncated]\n")...)
+	}
+	return c.buf.Bytes()
+}
+
+// runBuildCmd runs a toolchain command with the safety rails every
+// build subprocess needs: its own process GROUP (bun spawns astro
+// spawns vite/esbuild workers; killing only the direct child leaves
+// grandchildren holding the output pipes), a group-wide SIGKILL on ctx
+// cancel, a WaitDelay so Wait cannot hang on a leaked pipe, and
+// size-capped output.
+func runBuildCmd(ctx context.Context, dir string, name string, args ...string) ([]byte, error) {
+	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.Dir = dir
+	cmd.Env = buildEnv()
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Cancel = func() error {
+		if cmd.Process == nil {
+			return nil
+		}
+		// Negative pid = the whole process group.
+		return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+	}
+	cmd.WaitDelay = killWaitDelay
+	out := &cappedBuffer{max: MaxBuildLogBytes}
+	cmd.Stdout = out
+	cmd.Stderr = out
+	err := cmd.Run()
+	return out.bytes(), err
+}
+
 // Compile runs bun install + bun run build in the workspace directory.
 // The supplied ctx bounds the operation: cancel ctx and the bun child
 // processes get killed via exec.CommandContext. If ctx has no deadline
@@ -106,20 +170,14 @@ func Compile(ctx context.Context, wsDir string) *CompileResult {
 	// Step 1: bun install. Try frozen-lockfile first; fall back without
 	// when the workspace has no bun.lock yet (first build of a site).
 	slog.Info("build: installing dependencies", "workspace", wsDir)
-	installCmd := exec.CommandContext(ctx, "bun", "install", "--frozen-lockfile")
-	installCmd.Dir = wsDir
-	installCmd.Env = buildEnv()
-	installOut, err := installCmd.CombinedOutput()
+	installOut, err := runBuildCmd(ctx, wsDir, "bun", "install", "--frozen-lockfile")
 	appendLogSection(&logBuf, "bun install", installOut)
 
 	if err != nil {
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return failureResult(&logBuf, start, fmt.Sprintf("bun install timed out or cancelled: %v", ctxErr))
 		}
-		installCmd = exec.CommandContext(ctx, "bun", "install")
-		installCmd.Dir = wsDir
-		installCmd.Env = buildEnv()
-		installOut, err = installCmd.CombinedOutput()
+		installOut, err = runBuildCmd(ctx, wsDir, "bun", "install")
 		appendLogSection(&logBuf, "bun install (no lockfile)", installOut)
 		if err != nil {
 			if ctxErr := ctx.Err(); ctxErr != nil {
@@ -131,10 +189,7 @@ func Compile(ctx context.Context, wsDir string) *CompileResult {
 
 	// Step 2: bun run build. Honour the same deadline.
 	slog.Info("build: compiling astro project", "workspace", wsDir)
-	buildCmd := exec.CommandContext(ctx, "bun", "run", "build")
-	buildCmd.Dir = wsDir
-	buildCmd.Env = buildEnv()
-	buildOut, err := buildCmd.CombinedOutput()
+	buildOut, err := runBuildCmd(ctx, wsDir, "bun", "run", "build")
 	appendLogSection(&logBuf, "bun run build", buildOut)
 
 	if err != nil {
@@ -229,9 +284,7 @@ func RunPagefind(ctx context.Context, wsDir string) (string, error) {
 		defer cancel()
 	}
 	slog.Info("build: running pagefind index", "workspace", wsDir)
-	cmd := exec.CommandContext(ctx, "bunx", "pagefind", "--site", "dist", "--quiet")
-	cmd.Dir = wsDir
-	out, err := cmd.CombinedOutput()
+	out, err := runBuildCmd(ctx, wsDir, "bunx", "pagefind", "--site", "dist", "--quiet")
 	if err != nil {
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return string(out), fmt.Errorf("pagefind timed out or cancelled: %w", ctxErr)

@@ -1,8 +1,9 @@
 package handlers
 
 import (
-	"database/sql"
 	"context"
+	"database/sql"
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -240,26 +241,39 @@ func (h *SiteHandler) Create(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Seed defaults for the new site
-	_ = agent.SeedDefaultGuardrailsWith(r.Context(), h.queries, id)
-	_ = agent.SeedDefaultKnowledgebaseWith(r.Context(), h.queries, id)
-	_ = h.queries.EnsureMediaFolder(r.Context(), store.EnsureMediaFolderParams{
+	// Seed defaults for the new site. Best-effort by design (the site is
+	// usable without them), but each failure is logged: a site silently
+	// missing its guardrails or security defaults looks identical to a
+	// healthy one until an audit finds it.
+	if err := agent.SeedDefaultGuardrailsWith(r.Context(), h.queries, id); err != nil {
+		slog.Warn("create site: guardrail seeding failed", "site_id", id, "err", err)
+	}
+	if err := agent.SeedDefaultKnowledgebaseWith(r.Context(), h.queries, id); err != nil {
+		slog.Warn("create site: knowledgebase seeding failed", "site_id", id, "err", err)
+	}
+	if err := h.queries.EnsureMediaFolder(r.Context(), store.EnsureMediaFolderParams{
 		SiteID:   id,
 		Name:     "brand",
 		IsSystem: 1,
-	})
+	}); err != nil {
+		slog.Warn("create site: brand media folder seeding failed", "site_id", id, "err", err)
+	}
 
 	// Create default architecture
-	_ = h.queries.UpsertSiteArchitecture(r.Context(), store.UpsertSiteArchitectureParams{
+	if err := h.queries.UpsertSiteArchitecture(r.Context(), store.UpsertSiteArchitectureParams{
 		ID:            newID(),
 		SiteID:        id,
 		StructureType: "soft-silo",
 		MaxDepth:      3,
-	})
+	}); err != nil {
+		slog.Warn("create site: architecture seeding failed", "site_id", id, "err", err)
+	}
 
 	// Seed default security + server settings (best-practice defaults).
 	// All toggles can be flipped via PATCH /api/sites/{id}/settings.
-	_ = applyDefaultSiteSettings(r.Context(), h.queries, id)
+	if err := applyDefaultSiteSettings(r.Context(), h.queries, id); err != nil {
+		slog.Warn("create site: default settings seeding failed", "site_id", id, "err", err)
+	}
 
 	site, _ := h.queries.GetSiteByID(r.Context(), id)
 	writeJSON(w, http.StatusCreated, site)
@@ -584,30 +598,30 @@ func (h *SiteHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		Name            *string `json:"name"`
-		Slug            *string `json:"slug"`
-		Domain          *string `json:"domain"`
-		Status          *string `json:"status"`
-		PrimaryColor    *string `json:"primary_color"`
-		SecondaryColor  *string `json:"secondary_color"`
-		BgColor         *string `json:"bg_color"`
-		TextColor       *string `json:"text_color"`
-		SurfaceColor    *string `json:"surface_color"`
-		BorderColor     *string `json:"border_color"`
-		MutedColor      *string `json:"muted_color"`
-		AccentColor     *string `json:"accent_color"`
-		OnPrimaryColor  *string `json:"on_primary_color"`
-		FontHeading     *string `json:"font_heading"`
-		FontBody        *string `json:"font_body"`
-		MetaTitle       *string `json:"meta_title"`
-		MetaDescription *string `json:"meta_description"`
-		OgImageID       *string `json:"og_image_id"`
-		FaviconID       *string `json:"favicon_id"`
-		Ga4ID           *string `json:"ga4_id"`
-		UmamiID         *string `json:"umami_id"`
-		UmamiURL        *string `json:"umami_url"`
+		Name              *string `json:"name"`
+		Slug              *string `json:"slug"`
+		Domain            *string `json:"domain"`
+		Status            *string `json:"status"`
+		PrimaryColor      *string `json:"primary_color"`
+		SecondaryColor    *string `json:"secondary_color"`
+		BgColor           *string `json:"bg_color"`
+		TextColor         *string `json:"text_color"`
+		SurfaceColor      *string `json:"surface_color"`
+		BorderColor       *string `json:"border_color"`
+		MutedColor        *string `json:"muted_color"`
+		AccentColor       *string `json:"accent_color"`
+		OnPrimaryColor    *string `json:"on_primary_color"`
+		FontHeading       *string `json:"font_heading"`
+		FontBody          *string `json:"font_body"`
+		MetaTitle         *string `json:"meta_title"`
+		MetaDescription   *string `json:"meta_description"`
+		OgImageID         *string `json:"og_image_id"`
+		FaviconID         *string `json:"favicon_id"`
+		Ga4ID             *string `json:"ga4_id"`
+		UmamiID           *string `json:"umami_id"`
+		UmamiURL          *string `json:"umami_url"`
 		CookieproofDomain *string `json:"cookieproof_domain"`
-		Lang            *string `json:"lang"`
+		Lang              *string `json:"lang"`
 	}
 	if err := parseJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "Invalid request body")
@@ -615,31 +629,31 @@ func (h *SiteHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 
 	params := store.UpdateSiteParams{
-		Name:            existing.Name,
-		Slug:            existing.Slug,
-		Domain:          existing.Domain,
-		Status:          existing.Status,
-		PrimaryColor:    existing.PrimaryColor,
-		SecondaryColor:  existing.SecondaryColor,
-		BgColor:         existing.BgColor,
-		TextColor:       existing.TextColor,
-		SurfaceColor:    existing.SurfaceColor,
-		BorderColor:     existing.BorderColor,
-		MutedColor:      existing.MutedColor,
-		AccentColor:     existing.AccentColor,
-		OnPrimaryColor:  existing.OnPrimaryColor,
-		FontHeading:     existing.FontHeading,
-		FontBody:        existing.FontBody,
-		MetaTitle:       existing.MetaTitle,
-		MetaDescription: existing.MetaDescription,
-		OgImageID:       existing.OgImageID,
-		FaviconID:       existing.FaviconID,
-		Ga4ID:           existing.Ga4ID,
-		UmamiID:         existing.UmamiID,
-		UmamiUrl:        existing.UmamiUrl,
+		Name:              existing.Name,
+		Slug:              existing.Slug,
+		Domain:            existing.Domain,
+		Status:            existing.Status,
+		PrimaryColor:      existing.PrimaryColor,
+		SecondaryColor:    existing.SecondaryColor,
+		BgColor:           existing.BgColor,
+		TextColor:         existing.TextColor,
+		SurfaceColor:      existing.SurfaceColor,
+		BorderColor:       existing.BorderColor,
+		MutedColor:        existing.MutedColor,
+		AccentColor:       existing.AccentColor,
+		OnPrimaryColor:    existing.OnPrimaryColor,
+		FontHeading:       existing.FontHeading,
+		FontBody:          existing.FontBody,
+		MetaTitle:         existing.MetaTitle,
+		MetaDescription:   existing.MetaDescription,
+		OgImageID:         existing.OgImageID,
+		FaviconID:         existing.FaviconID,
+		Ga4ID:             existing.Ga4ID,
+		UmamiID:           existing.UmamiID,
+		UmamiUrl:          existing.UmamiUrl,
 		CookieproofDomain: existing.CookieproofDomain,
-		Lang:            existing.Lang,
-		ID:              siteID,
+		Lang:              existing.Lang,
+		ID:                siteID,
 	}
 
 	if req.Name != nil {
@@ -729,8 +743,68 @@ func (h *SiteHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Local deploy targets freeze the slug inside their config path at
+	// creation. After a rename, LocalDeployer.Validate rejects the
+	// old-slug path and every subsequent build's auto-deploy fails, so
+	// rewrite the slug path segment in step with the rename.
+	if params.Slug != existing.Slug {
+		h.syncLocalDeployTargetSlugs(r.Context(), siteID, existing.Slug, params.Slug)
+	}
+
 	site, _ := h.queries.GetSiteByID(r.Context(), siteID)
 	writeJSON(w, http.StatusOK, site)
+}
+
+// syncLocalDeployTargetSlugs rewrites the /<oldSlug>/ path segment in
+// every local deploy target's config to the new slug. Best-effort with
+// loud logging: a stale target fails closed at deploy time (Validate),
+// never cross-tenant.
+func (h *SiteHandler) syncLocalDeployTargetSlugs(ctx context.Context, siteID, oldSlug, newSlug string) {
+	if oldSlug == "" || newSlug == "" || oldSlug == newSlug {
+		return
+	}
+	targets, err := h.queries.ListDeployTargetsBySite(ctx, siteID)
+	if err != nil {
+		slog.Warn("site rename: listing deploy targets for slug sync failed", "site_id", siteID, "err", err)
+		return
+	}
+	for _, t := range targets {
+		if t.Kind != "local" {
+			continue
+		}
+		cfg := map[string]any{}
+		if strings.TrimSpace(t.ConfigJson) != "" {
+			if err := json.Unmarshal([]byte(t.ConfigJson), &cfg); err != nil {
+				continue
+			}
+		}
+		path, _ := cfg["path"].(string)
+		if path == "" || !strings.Contains(path, "/"+oldSlug+"/") && !strings.HasSuffix(path, "/"+oldSlug) {
+			continue
+		}
+		updated := strings.ReplaceAll(path, "/"+oldSlug+"/", "/"+newSlug+"/")
+		if strings.HasSuffix(updated, "/"+oldSlug) {
+			updated = strings.TrimSuffix(updated, "/"+oldSlug) + "/" + newSlug
+		}
+		if updated == path {
+			continue
+		}
+		cfg["path"] = updated
+		configJSON, err := json.Marshal(cfg)
+		if err != nil {
+			continue
+		}
+		if err := h.queries.UpdateDeployTarget(ctx, store.UpdateDeployTargetParams{
+			ID:         t.ID,
+			Name:       t.Name,
+			Kind:       t.Kind,
+			ConfigJson: string(configJSON),
+		}); err != nil {
+			slog.Warn("site rename: deploy target slug sync failed", "target_id", t.ID, "err", err)
+			continue
+		}
+		slog.Info("site rename: local deploy target path updated", "target_id", t.ID, "old", path, "new", updated)
+	}
 }
 
 // ListStarterKits returns the catalog of registered starter kits for the
@@ -873,4 +947,3 @@ func (h *SiteHandler) checkSiteQuota(r *http.Request, workspaceID string) error 
 	}
 	return nil
 }
-

@@ -69,7 +69,7 @@ type reloadRequest struct {
 var atomicsiteReloadAllowlist = map[string]struct{}{
 	"BRIGHTCRM_WEBHOOK_SECRET":          {},
 	"BRIGHTCRM_WEBHOOK_SECRET_PREVIOUS": {},
-	"ATOMICSITE_SHIELD_KEY":              {},
+	"ATOMICSITE_SHIELD_KEY":             {},
 }
 
 func (h *AdminReloadHandler) ReloadSecrets(w http.ResponseWriter, r *http.Request) {

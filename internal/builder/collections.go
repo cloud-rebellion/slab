@@ -32,12 +32,12 @@ import (
 // collectionSettings is the shape stored in collections.settings_json.
 // All fields optional; zero values mean "use defaults".
 type collectionSettings struct {
-	RenderAsPages       bool   `json:"render_as_pages"`
-	SchemaOrgType       string `json:"schema_org_type"`
-	ListPageTemplate    string `json:"list_page_template"`
-	DetailPageTemplate  string `json:"detail_page_template"`
-	ItemsPerIndexPage   int    `json:"items_per_index_page"`
-	RequiresMemberRole  string `json:"requires_member_role"` // Sprint 5 hook
+	RenderAsPages      bool   `json:"render_as_pages"`
+	SchemaOrgType      string `json:"schema_org_type"`
+	ListPageTemplate   string `json:"list_page_template"`
+	DetailPageTemplate string `json:"detail_page_template"`
+	ItemsPerIndexPage  int    `json:"items_per_index_page"`
+	RequiresMemberRole string `json:"requires_member_role"` // Sprint 5 hook
 }
 
 // RenderCollectionPages walks every Collection for the site whose

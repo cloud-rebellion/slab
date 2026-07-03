@@ -34,9 +34,11 @@ const rsyncTimeout = 5 * time.Minute
 
 // RsyncDeployer pushes a built site to a remote server over SSH using rsync.
 //
-// TODO(secrets-vault): once the secrets vault lands, fetch private_key_pem
-// through the vault instead of trusting the plaintext value sitting inside
-// targets.config_json.
+// private_key_pem is encrypted at rest inside targets.config_json via
+// internal/atrest (AES-256-GCM under ATOMICSITE_SHIELD_KEY, enc:v1:
+// prefix); the handlers decrypt it before constructing the Target this
+// deployer receives, so this package always sees a real PEM. Legacy
+// plaintext rows keep working and upgrade on their next save.
 type RsyncDeployer struct{}
 
 // NewRsyncDeployer returns a configured RsyncDeployer. Reserved as a
@@ -281,10 +283,10 @@ func (d *RsyncDeployer) Deploy(ctx context.Context, distDir string, target Targe
 	}
 
 	return Result{
-		URL:         cfg.PublicURL,
-		DeployedAt:  time.Now(),
-		SizeBytes:   size,
-		FileCount:   count,
+		URL:        cfg.PublicURL,
+		DeployedAt: time.Now(),
+		SizeBytes:  size,
+		FileCount:  count,
 	}, nil
 }
 

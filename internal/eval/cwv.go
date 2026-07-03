@@ -91,8 +91,14 @@ func RunCWVChecks(ctx context.Context, queries *store.Queries, siteID string, fi
 				fmt.Sprintf("%d samples (need %d for grading)", len(rows), cwvMinSamples)))
 			continue
 		}
-		// Rows come back ORDER BY value ASC; p75 is nearest-rank.
-		idx := int(math.Floor(0.75 * float64(len(rows))))
+		// Rows come back ORDER BY value ASC; p75 is nearest-rank:
+		// ceil(0.75*n) as a 1-based rank, so index ceil(0.75*n)-1.
+		// floor(0.75*n) picked one rank too high whenever 0.75*n was an
+		// integer (n=4,8,12...), grading one sample worse than p75.
+		idx := int(math.Ceil(0.75*float64(len(rows)))) - 1
+		if idx < 0 {
+			idx = 0
+		}
 		if idx >= len(rows) {
 			idx = len(rows) - 1
 		}

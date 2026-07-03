@@ -20,8 +20,9 @@ import (
 // built static site.
 //
 // Disk layout transformation:
-//   src: {dataDir}/media/{siteID}/{mediaID}/{variant}.{ext}
-//   dst: {wsDir}/public/media/{mediaID}/{variant}.{ext}
+//
+//	src: {dataDir}/media/{siteID}/{mediaID}/{variant}.{ext}
+//	dst: {wsDir}/public/media/{mediaID}/{variant}.{ext}
 //
 // The siteID segment is dropped because the workspace is always single-site.
 func CopyMedia(ctx context.Context, queries *store.Queries, siteID, dataDir, wsDir string) error {

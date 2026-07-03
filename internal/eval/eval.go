@@ -70,26 +70,26 @@ type CategoryReport struct {
 
 // PageContext is everything a check needs about one page in dist/.
 type PageContext struct {
-	URL      string         // path relative to dist root, e.g. "/about/index.html"
-	Slug     string         // logical slug, e.g. "/about"
-	HTML     string         // raw html
-	Doc      *html.Node     // parsed
+	URL      string            // path relative to dist root, e.g. "/about/index.html"
+	Slug     string            // logical slug, e.g. "/about"
+	HTML     string            // raw html
+	Doc      *html.Node        // parsed
 	Headers  map[string]string // synthesized from build settings
 	FileSize int64
 }
 
 // SiteContext is the site-wide static state.
 type SiteContext struct {
-	DistDir       string
-	Pages         []PageContext
-	RobotsTxt     string
-	SitemapXML    string
-	LLMsTxt       string
-	SecurityTxt   string
-	HeadersFile   string // _headers content
-	NginxConf     string
-	Headers       map[string]string // computed security headers
-	AllowedHosts  []string
+	DistDir      string
+	Pages        []PageContext
+	RobotsTxt    string
+	SitemapXML   string
+	LLMsTxt      string
+	SecurityTxt  string
+	HeadersFile  string // _headers content
+	NginxConf    string
+	Headers      map[string]string // computed security headers
+	AllowedHosts []string
 	// Fidelity is the site's design.fidelity dial. Performance budgets
 	// and a handful of SEO/GEO taste checks grade against it; security,
 	// privacy, and accessibility checks ignore it by construction.

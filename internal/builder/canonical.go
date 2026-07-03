@@ -10,10 +10,10 @@ import (
 // CanonicalHostname returns the live canonical hostname for a site.
 // Preference order:
 //
-//	1. site.Domain (the legacy admin "Domain" field, set explicitly)
-//	2. The site_domains row marked is_canonical=1 with status='live'
-//	3. The first site_domains row at status='live'
-//	4. Empty string (caller falls back to a deployment default)
+//  1. site.Domain (the legacy admin "Domain" field, set explicitly)
+//  2. The site_domains row marked is_canonical=1 with status='live'
+//  3. The first site_domains row at status='live'
+//  4. Empty string (caller falls back to a deployment default)
 //
 // Used by every build step that emits a canonical URL: astro.config
 // site, sitemap base, hreflang alternates, OG URLs, robots.txt, llms.txt,

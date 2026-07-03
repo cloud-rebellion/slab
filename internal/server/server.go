@@ -40,13 +40,13 @@ var FrontendFS fs.FS
 
 // Server holds all dependencies.
 type Server struct {
-	cfg            *config.Config
-	db             *sql.DB
-	queries        *store.Queries
-	storage        storage.Store
-	authMW         *authmw.AuthMiddleware
-	agentMW        *authmw.AgentAuthMiddleware
-	adminWriteLim  *authmw.AdminWriteLimiter
+	cfg           *config.Config
+	db            *sql.DB
+	queries       *store.Queries
+	storage       storage.Store
+	authMW        *authmw.AuthMiddleware
+	agentMW       *authmw.AgentAuthMiddleware
+	adminWriteLim *authmw.AdminWriteLimiter
 	// AnalyticsDB is the read-only DuckDB ATTACH on the SQLite file.
 	// Optional: nil when DuckDB couldn't open at boot. Handlers that
 	// depend on it return 503 in that case rather than crashing.
@@ -322,6 +322,12 @@ func (s *Server) Router() http.Handler {
 	invH := handlers.NewInvitesHandler(s.cfg, s.queries)
 	r.Get("/api/auth/signup/{token}", invH.PublicInfo)
 	r.Post("/api/auth/signup/{token}", invH.Redeem)
+
+	// Public workspace-invite redemption: the /cloud/signup/{token} URLs
+	// CreateInvite hands out. Same token-in-path posture as above.
+	wsSignupH := handlers.NewWorkspaceHandler(s.cfg, s.queries)
+	r.Get("/api/cloud/signup/{token}", wsSignupH.SignupInfo)
+	r.Post("/api/cloud/signup/{token}", wsSignupH.SignupRedeem)
 
 	// Sites handler (used by both public and authenticated routes).
 	sh := handlers.NewSiteHandler(s.cfg, s.queries, s.db)
@@ -1355,7 +1361,6 @@ func stripScheme(origin string) string {
 	}
 	return host
 }
-
 
 // jsonBodySizeMiddleware caps r.Body to maxBytes before any handler
 // reads it. Without this, a malicious client can POST gigabytes of

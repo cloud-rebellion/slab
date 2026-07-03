@@ -21,22 +21,29 @@ import (
 // XXSSProtection, COEP/COOP/CORP) were added 2026-05-01 after a Site
 // Inspector audit flagged them missing.
 type SecurityHeaders struct {
-	CSP                            string
-	HSTS                           string
-	XFrameOptions                  string
-	XContentTypeOptions            string
-	ReferrerPolicy                 string
-	PermissionsPolicy              string
-	COOP                           string
-	CORP                           string
-	COEP                           string
-	XPermittedCrossDomainPolicies  string
-	XXSSProtection                 string
+	CSP                           string
+	HSTS                          string
+	XFrameOptions                 string
+	XContentTypeOptions           string
+	ReferrerPolicy                string
+	PermissionsPolicy             string
+	COOP                          string
+	CORP                          string
+	COEP                          string
+	XPermittedCrossDomainPolicies string
+	XXSSProtection                string
 }
 
 // BuildSecurityHeaders assembles all security headers from settings + allowed scripts.
 func BuildSecurityHeaders(ctx context.Context, queries *store.Queries, siteID string) (SecurityHeaders, error) {
-	settings, _ := queries.ListSettingsBySite(ctx, siteID)
+	settings, err := queries.ListSettingsBySite(ctx, siteID)
+	if err != nil {
+		// A transient read failure must not silently produce headers
+		// missing the tenant's CSP/HSTS choices: the build would ship a
+		// weaker posture than configured and the eval would grade the
+		// weaker config as if intended.
+		return SecurityHeaders{}, fmt.Errorf("security headers: load settings: %w", err)
+	}
 	sm := make(map[string]string)
 	for _, s := range settings {
 		// Defence-in-depth: strip CR/LF/control chars from every settings
@@ -49,7 +56,10 @@ func BuildSecurityHeaders(ctx context.Context, queries *store.Queries, siteID st
 
 	// Group active trusted domains by kind so each kind feeds the right CSP
 	// directive. 'all' is fanned out into every list.
-	rows, _ := queries.ListAllowedScriptsBySite(ctx, siteID)
+	rows, err := queries.ListAllowedScriptsBySite(ctx, siteID)
+	if err != nil {
+		return SecurityHeaders{}, fmt.Errorf("security headers: load allowed scripts: %w", err)
+	}
 	allow := AllowedDomains{}
 	for _, s := range rows {
 		if s.IsActive != 1 {
@@ -149,11 +159,11 @@ func CSPForMeta(full string) string {
 		return ""
 	}
 	drop := map[string]bool{
-		"frame-ancestors":            true,
-		"sandbox":                    true,
-		"report-uri":                 true,
-		"report-to":                  true,
-		"upgrade-insecure-requests":  true,
+		"frame-ancestors":           true,
+		"sandbox":                   true,
+		"report-uri":                true,
+		"report-to":                 true,
+		"upgrade-insecure-requests": true,
 	}
 	parts := strings.Split(full, ";")
 	out := make([]string, 0, len(parts))

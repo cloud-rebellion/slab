@@ -11,6 +11,8 @@ import (
 	"github.com/bright-interaction/slab/internal/critique"
 	"github.com/bright-interaction/slab/internal/handlers"
 	authmw "github.com/bright-interaction/slab/internal/middleware"
+	"github.com/bright-interaction/slab/internal/revisions"
+	"github.com/bright-interaction/slab/internal/settingspolicy"
 	"github.com/bright-interaction/slab/internal/store"
 )
 
@@ -233,6 +235,7 @@ func (s *Server) registerTools() {
 			if args.HideGlobalBlocks != nil {
 				params.HideGlobalBlocks = *args.HideGlobalBlocks
 			}
+			s.recordAgentRevision(ctx, agent.SiteID, revisions.EntityTypePage, page.ID, page, "agent update via MCP", agent.KeyID)
 			if err := s.queries.UpdatePage(ctx, params); err != nil {
 				return "", err
 			}
@@ -242,9 +245,9 @@ func (s *Server) registerTools() {
 	})
 
 	register(Tool{
-		Name:        "delete_page",
-		Description: "Deletes a page by slug. Cascades to its blocks. Irreversible. Confirm with the user before calling.",
-		InputSchema: schema(`{"type":"object","properties":{"slug":{"type":"string"}},"required":["slug"]}`),
+		Name:          "delete_page",
+		Description:   "Deletes a page by slug. Cascades to its blocks. Irreversible. Confirm with the user before calling.",
+		InputSchema:   schema(`{"type":"object","properties":{"slug":{"type":"string"}},"required":["slug"]}`),
 		RequiresWrite: true,
 		Handler: func(ctx context.Context, agent *authmw.AgentIdentity, raw json.RawMessage) (string, error) {
 			var args struct {
@@ -260,6 +263,7 @@ func (s *Server) registerTools() {
 			if err != nil {
 				return "", fmt.Errorf("page not found: %s", args.Slug)
 			}
+			s.recordAgentRevision(ctx, agent.SiteID, revisions.EntityTypePage, page.ID, page, "pre-delete snapshot (MCP)", agent.KeyID)
 			if err := s.queries.DeletePage(ctx, page.ID); err != nil {
 				return "", err
 			}
@@ -292,6 +296,7 @@ func (s *Server) registerTools() {
 				return "", errors.New("too many ids (max 200 per call)")
 			}
 			toDelete := make([]string, 0, len(args.IDs))
+			pagesByID := make(map[string]store.Page, len(args.IDs))
 			for _, id := range args.IDs {
 				page, err := s.queries.GetPageByID(ctx, id)
 				if err != nil {
@@ -301,9 +306,11 @@ func (s *Server) registerTools() {
 					return "", fmt.Errorf("id %s belongs to another site", id)
 				}
 				toDelete = append(toDelete, id)
+				pagesByID[id] = page
 			}
 			deleted := 0
 			for _, id := range toDelete {
+				s.recordAgentRevision(ctx, agent.SiteID, revisions.EntityTypePage, id, pagesByID[id], "pre-delete snapshot (MCP bulk)", agent.KeyID)
 				if err := s.queries.DeletePage(ctx, id); err != nil {
 					return "", err
 				}
@@ -513,6 +520,7 @@ func (s *Server) registerTools() {
 			if args.SortOrder != nil {
 				so = *args.SortOrder
 			}
+			s.recordAgentRevision(ctx, agent.SiteID, revisions.EntityTypeBlock, args.BlockID, existing, "agent update via MCP", agent.KeyID)
 			if err := s.queries.UpdateBlock(ctx, store.UpdateBlockParams{
 				ID: args.BlockID, BlockType: bt, SortOrder: so, DataJson: data, StyleJson: style, IsVisible: vis,
 			}); err != nil {
@@ -554,6 +562,7 @@ func (s *Server) registerTools() {
 			if gv, bad := s.guardrailRequiredBlocks(ctx, agent.SiteID, page.Slug, page.ID, args.BlockID); bad {
 				return mustJSON(map[string]any{"error": "guardrail_violations", "violations": gv}), nil
 			}
+			s.recordAgentRevision(ctx, agent.SiteID, revisions.EntityTypeBlock, args.BlockID, existing, "pre-delete snapshot (MCP)", agent.KeyID)
 			if err := s.queries.DeleteBlock(ctx, args.BlockID); err != nil {
 				return "", err
 			}
@@ -841,9 +850,13 @@ func (s *Server) registerTools() {
 		},
 	})
 
+	// The category enum is generated from settingspolicy so the tool
+	// schema can never advertise a different write policy than the
+	// gates enforce (they drifted when this was a hardcoded list).
+	writableEnum, _ := json.Marshal(settingspolicy.AgentWritableCategories())
 	register(Tool{
-		Name: "bulk_upsert_settings",
-		Description: "Writes one or more settings rows. Writable categories: general / seo / analytics / search / design (design carries the fidelity dial + strict-lint toggle); security / allowed-scripts stay admin-only (pass them and they're rejected with a clean error). Each item validated against the catalog (enum guards, range checks, format checks). Read get_settings_catalog first so you write the right shape.",
+		Name:        "bulk_upsert_settings",
+		Description: "Writes one or more settings rows. Writable categories: " + strings.Join(settingspolicy.AgentWritableCategories(), " / ") + " (design carries the fidelity dial + strict-lint toggle); security / allowed-scripts stay admin-only (pass them and they're rejected with a clean error). Each item validated against the catalog (enum guards, range checks, format checks). Read get_settings_catalog first so you write the right shape.",
 		InputSchema: schema(`{
 			"type":"object",
 			"properties":{
@@ -852,7 +865,7 @@ func (s *Server) registerTools() {
 					"items":{
 						"type":"object",
 						"properties":{
-							"category":{"type":"string","enum":["general","seo","analytics","search","design"]},
+							"category":{"type":"string","enum":` + string(writableEnum) + `},
 							"key":{"type":"string"},
 							"value":{"type":"string"}
 						},
@@ -888,19 +901,24 @@ func (s *Server) registerTools() {
 					return "", err
 				}
 			}
-			for _, it := range args.Items {
+			for i, it := range args.Items {
 				if !isAgentWritableCategory(it.Category) {
 					continue
 				}
-				_ = s.queries.UpsertSetting(ctx, store.UpsertSettingParams{
+				if err := s.queries.UpsertSetting(ctx, store.UpsertSettingParams{
 					ID: newID(), SiteID: agent.SiteID, Category: it.Category, Key: it.Key, Value: it.Value,
-				})
+				}); err != nil {
+					// Pre-validated, so this is infrastructure-level. Tell
+					// the agent exactly what landed instead of claiming a
+					// full success over a partial write.
+					return "", fmt.Errorf("settings batch failed at %s.%s (item %d): items before it were written, items after were not; re-check with list_settings and retry the remainder", it.Category, it.Key, i)
+				}
 			}
 			rows, _ := s.queries.ListSettingsBySite(ctx, agent.SiteID)
 			return mustJSON(map[string]any{
-				"settings":              s.maskSecretSettings(rows),
-				"rejected_admin_only":   rejected,
-				"writable_categories":   []string{"analytics", "general", "seo"},
+				"settings":            s.maskSecretSettings(rows),
+				"rejected_admin_only": rejected,
+				"writable_categories": settingspolicy.AgentWritableCategories(),
 			}), nil
 		},
 	})

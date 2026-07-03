@@ -28,16 +28,16 @@ const (
 // optionally edits, then migration_apply (Layer 3d) walks Pages/Collections/
 // Media to commit and emits the corresponding redirect rows.
 type MigrationManifest struct {
-	SourceURL    string                 `json:"source_url"`
-	SourceType   SourceType             `json:"source_type"`
-	SourceDomain string                 `json:"source_domain"`
-	FetchedAt    time.Time              `json:"fetched_at"`
-	Pages        []MigrationPage        `json:"pages"`
-	Collections  []MigrationCollection  `json:"collections,omitempty"`
-	Media        []MigrationMediaRef    `json:"media,omitempty"`
-	Links        []MigrationLink        `json:"links,omitempty"`
-	Stats        MigrationStats         `json:"stats"`
-	Warnings     []string               `json:"warnings,omitempty"`
+	SourceURL    string                `json:"source_url"`
+	SourceType   SourceType            `json:"source_type"`
+	SourceDomain string                `json:"source_domain"`
+	FetchedAt    time.Time             `json:"fetched_at"`
+	Pages        []MigrationPage       `json:"pages"`
+	Collections  []MigrationCollection `json:"collections,omitempty"`
+	Media        []MigrationMediaRef   `json:"media,omitempty"`
+	Links        []MigrationLink       `json:"links,omitempty"`
+	Stats        MigrationStats        `json:"stats"`
+	Warnings     []string              `json:"warnings,omitempty"`
 }
 
 // MigrationPage is one extracted page from the source. Slug is the source-side
@@ -51,9 +51,9 @@ type MigrationPage struct {
 	CanonicalURL    string    `json:"canonical_url,omitempty"`
 	OGImageURL      string    `json:"og_image_url,omitempty"`
 	H1              string    `json:"h1,omitempty"`
-	HTML            string    `json:"html,omitempty"`         // raw <body> innerHTML or full doc snippet
-	JSONLD          []string  `json:"jsonld,omitempty"`       // raw JSON-LD blocks (preserve as-is)
-	ImageURLs       []string  `json:"image_urls,omitempty"`   // src URLs found inside HTML
+	HTML            string    `json:"html,omitempty"`       // raw <body> innerHTML or full doc snippet
+	JSONLD          []string  `json:"jsonld,omitempty"`     // raw JSON-LD blocks (preserve as-is)
+	ImageURLs       []string  `json:"image_urls,omitempty"` // src URLs found inside HTML
 	InternalLinks   []string  `json:"internal_links,omitempty"`
 	PublishedAt     time.Time `json:"published_at,omitempty"` // best-effort, only set if found in metadata
 	Lang            string    `json:"lang,omitempty"`
@@ -64,8 +64,8 @@ type MigrationPage struct {
 // case studies). Native importers (WP/Webflow/Ghost) populate this; the
 // universal sitemap crawler does not - it cannot infer collection structure.
 type MigrationCollection struct {
-	Slug   string                    `json:"slug"`
-	Name   string                    `json:"name"`
+	Slug   string                     `json:"slug"`
+	Name   string                     `json:"name"`
 	Schema []MigrationCollectionField `json:"schema"`
 	Items  []MigrationCollectionItem  `json:"items"`
 }
@@ -82,12 +82,12 @@ type MigrationCollectionField struct {
 // MigrationCollectionItem is one row in a collection. Data is field-name to
 // value, matching how collection_items.data_json works in atomicsite.
 type MigrationCollectionItem struct {
-	SourceURL   string                 `json:"source_url,omitempty"`
-	Slug        string                 `json:"slug"`
-	Title       string                 `json:"title"`
-	Data        map[string]any         `json:"data"`
-	PublishedAt time.Time              `json:"published_at,omitempty"`
-	Locale      string                 `json:"locale,omitempty"`
+	SourceURL   string         `json:"source_url,omitempty"`
+	Slug        string         `json:"slug"`
+	Title       string         `json:"title"`
+	Data        map[string]any `json:"data"`
+	PublishedAt time.Time      `json:"published_at,omitempty"`
+	Locale      string         `json:"locale,omitempty"`
 }
 
 // MigrationMediaRef points at a downloadable asset (image, video, doc) the

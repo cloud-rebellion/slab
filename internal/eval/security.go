@@ -1,7 +1,9 @@
 package eval
 
 import (
+	"fmt"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -175,7 +177,40 @@ func RunSecurityChecks(site *SiteContext) []CheckResult {
 		}
 	}
 
+	checks = append(checks, checkHeadersArtifactParity(site))
+
 	return checks
+}
+
+// checkHeadersArtifactParity asserts the computed headers actually
+// appear in the EMITTED deploy artifacts (_headers, nginx.conf). The
+// category used to grade only the recomputed build config: a bug (or a
+// host that ignores _headers) could ship a site serving nothing while
+// eval still said A+. Info when no artifact file was emitted (nothing
+// to cross-check on this deploy shape).
+func checkHeadersArtifactParity(site *SiteContext) CheckResult {
+	artifacts := site.HeadersFile + "\n" + site.NginxConf
+	if strings.TrimSpace(artifacts) == "" {
+		return Info("Headers In Deploy Artifacts", "headers",
+			"No _headers or nginx.conf artifact emitted for this build; header intent could not be cross-checked against an artifact.")
+	}
+	var missing []string
+	for name, value := range site.Headers {
+		if value == "" {
+			continue
+		}
+		if !strings.Contains(artifacts, name) {
+			missing = append(missing, name)
+		}
+	}
+	if len(missing) > 0 {
+		sort.Strings(missing)
+		return Fail("Headers In Deploy Artifacts", "headers", 2, SeverityError,
+			fmt.Sprintf("computed security headers missing from the emitted _headers/nginx.conf: %s", strings.Join(missing, ", ")),
+			"The build config promises these headers but the deploy artifact does not carry them; rebuild, and if it persists this is a builder bug worth reporting.")
+	}
+	return Pass("Headers In Deploy Artifacts", "headers", 2,
+		"every computed security header appears in the emitted deploy artifacts")
 }
 
 // analyzeCSP returns "strong", "moderate", or "weak" plus list of issues.

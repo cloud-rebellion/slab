@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/bright-interaction/slab/internal/agent"
 	"github.com/bright-interaction/slab/internal/builder"
@@ -39,6 +40,13 @@ type BuildHandler struct {
 
 	mu     sync.Mutex
 	builds map[string]*buildState // deploymentID -> state
+	// latestBySite tracks the newest tracked build per site so finalize
+	// can evict the previous terminal state: without eviction every
+	// build leaked a buildState (up to 1MB of log) for the process
+	// lifetime. Keeping exactly the latest terminal state per site
+	// preserves the Deploy handler's dist_dir lookup for the build an
+	// operator would actually deploy.
+	latestBySite map[string]string
 	// cancels maps deployment_id -> context cancel func for the
 	// in-flight goroutine. CancelBuild looks up here and calls
 	// the func to interrupt bun / eval / deploy. Entries are
@@ -78,13 +86,76 @@ func NewBuildHandler(cfg *config.Config, queries *store.Queries, quota *QuotaHan
 		}
 	}
 	return &BuildHandler{
-		cfg:      cfg,
-		queries:  queries,
-		quota:    quota,
-		builds:   make(map[string]*buildState),
-		cancels:  make(map[string]context.CancelFunc),
-		siteLock: make(map[string]*sync.Mutex),
-		buildSem: make(chan struct{}, maxConc),
+		cfg:          cfg,
+		queries:      queries,
+		quota:        quota,
+		builds:       make(map[string]*buildState),
+		latestBySite: make(map[string]string),
+		cancels:      make(map[string]context.CancelFunc),
+		siteLock:     make(map[string]*sync.Mutex),
+		buildSem:     make(chan struct{}, maxConc),
+	}
+}
+
+// finalizeBuild writes the terminal in-memory + DB state for a build.
+// Shared by all three build goroutines so the rules live once:
+//   - a CancelBuild-set "cancelled" status wins over the unwinding
+//     goroutine's "failed" (both in memory and in the DB row), so the
+//     operator sees what actually happened;
+//   - the previous terminal buildState for the site is evicted
+//     (bounded memory, see latestBySite);
+//   - DB writes use their own bounded context, never the build ctx:
+//     on timeout/cancel the build ctx is already dead, and writing the
+//     terminal status through it silently failed, stranding the row in
+//     'pending' (the exact zombie the boot reaper cleans up).
+func (h *BuildHandler) finalizeBuild(deployID, siteID string, result *builder.BuildResult) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	status := "success"
+	if !result.Success {
+		status = "failed"
+	}
+
+	h.mu.Lock()
+	st := h.builds[deployID]
+	if st != nil {
+		if st.Status == "cancelled" {
+			status = "cancelled"
+			if result.Error == "" {
+				result.Error = st.Error
+			}
+		}
+		st.BuildLog = result.BuildLog
+		st.PagesBuilt = result.PagesBuilt
+		st.DurationMs = result.DurationMs
+		st.DistDir = result.DistDir
+		st.Status = status
+		if status != "success" {
+			st.Error = result.Error
+		}
+	}
+	if prev := h.latestBySite[siteID]; prev != "" && prev != deployID {
+		delete(h.builds, prev)
+	}
+	h.latestBySite[siteID] = deployID
+	h.mu.Unlock()
+
+	if err := h.queries.UpdateDeploymentStatus(ctx, store.UpdateDeploymentStatusParams{
+		ID:         deployID,
+		Status:     status,
+		BuildLog:   result.BuildLog,
+		PagesBuilt: int64(result.PagesBuilt),
+		DurationMs: result.DurationMs,
+		Error:      result.Error,
+	}); err != nil {
+		slog.Warn("build: persist deployment status failed", "deploy_id", deployID, "err", err)
+	}
+	if err := h.queries.UpdateSiteBuildStatus(ctx, store.UpdateSiteBuildStatusParams{
+		ID:              siteID,
+		LastBuildStatus: status,
+		LastBuildError:  result.Error,
+	}); err != nil {
+		slog.Warn("build: persist site build status failed", "site_id", siteID, "err", err)
 	}
 }
 
@@ -266,31 +337,30 @@ func (h *BuildHandler) TriggerBuild(w http.ResponseWriter, r *http.Request) {
 	// Run build async (use background context -- request context cancels when client disconnects)
 	siteID := a.SiteID
 	go func() {
+		// Audit H4: cap the entire build pipeline at BuildTimeout via
+		// the goroutine's own derived context. Registered BEFORE the
+		// per-site lock so a build queued behind a long sibling can be
+		// cancelled too (the mutex wait itself is not ctx-aware, but the
+		// pipeline fails fast on a dead ctx right after acquiring).
+		bgCtx, cancel := context.WithTimeout(context.Background(), builder.BuildTimeout)
+		defer cancel()
+		h.registerCancel(deployID, cancel)
+		defer h.clearCancel(deployID)
 		// Audit C4: serialize per site_id so two simultaneous builds for
 		// the same site don't fight over the workspace directory. Other
 		// sites build in parallel without contention.
 		lock := h.lockForSite(siteID)
 		lock.Lock()
 		defer lock.Unlock()
-		// Audit H4: cap the entire build pipeline at BuildTimeout via
-		// the goroutine's own derived context. The bun child processes
-		// inside Compile honour ctx via exec.CommandContext.
-		bgCtx, cancel := context.WithTimeout(context.Background(), builder.BuildTimeout)
-		defer cancel()
-		// Register the cancel func so the admin Cancel endpoint can
-		// interrupt the goroutine before BuildTimeout elapses.
-		h.registerCancel(deployID, cancel)
-		defer h.clearCancel(deployID)
 		// Global concurrency cap (after the per-site lock so a queued build
 		// never holds a slot): bound total simultaneous bun/astro processes.
 		release, ok := h.acquireBuildSlot(bgCtx)
 		if !ok {
-			h.mu.Lock()
-			if st := h.builds[deployID]; st != nil {
-				st.Status = "failed"
-				st.Error = "cancelled while waiting for a build slot"
-			}
-			h.mu.Unlock()
+			// Finalize through the shared path so the DB row reaches a
+			// terminal state too (it used to stay 'pending' forever).
+			h.finalizeBuild(deployID, siteID, &builder.BuildResult{
+				Error: "cancelled while waiting for a build slot",
+			})
 			return
 		}
 		defer release()
@@ -311,43 +381,7 @@ func (h *BuildHandler) TriggerBuild(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		h.mu.Lock()
-		state := h.builds[deployID]
-		state.BuildLog = result.BuildLog
-		state.PagesBuilt = result.PagesBuilt
-		state.DurationMs = result.DurationMs
-		state.DistDir = result.DistDir
-		if result.Success {
-			state.Status = "success"
-		} else {
-			state.Status = "failed"
-			state.Error = result.Error
-		}
-		h.mu.Unlock()
-
-		// Update DB record
-		status := "success"
-		if !result.Success {
-			status = "failed"
-		}
-		if err := h.queries.UpdateDeploymentStatus(bgCtx, store.UpdateDeploymentStatusParams{
-			ID:         deployID,
-			Status:     status,
-			BuildLog:   result.BuildLog,
-			PagesBuilt: int64(result.PagesBuilt),
-			DurationMs: result.DurationMs,
-			Error:      result.Error,
-		}); err != nil {
-			slog.Warn("build: persist deployment status failed", "deploy_id", deployID, "err", err)
-		}
-
-		if err := h.queries.UpdateSiteBuildStatus(bgCtx, store.UpdateSiteBuildStatusParams{
-			ID:              siteID,
-			LastBuildStatus: status,
-			LastBuildError:  result.Error,
-		}); err != nil {
-			slog.Warn("build: persist site build status failed", "site_id", siteID, "err", err)
-		}
+		h.finalizeBuild(deployID, siteID, result)
 	}()
 
 	writeJSON(w, http.StatusAccepted, map[string]string{
@@ -378,23 +412,24 @@ func (h *BuildHandler) StartBuild(ctx context.Context, siteID string) (string, e
 	h.mu.Unlock()
 
 	go func() {
+		bgCtx, cancel := context.WithTimeout(context.Background(), builder.BuildTimeout)
+		defer cancel()
+		// Registered before the per-site lock so queued builds are
+		// cancellable too.
+		h.registerCancel(deployID, cancel)
+		defer h.clearCancel(deployID)
 		lock := h.lockForSite(siteID)
 		lock.Lock()
 		defer lock.Unlock()
-		bgCtx, cancel := context.WithTimeout(context.Background(), builder.BuildTimeout)
-		defer cancel()
-		h.registerCancel(deployID, cancel)
-		defer h.clearCancel(deployID)
 		// Global concurrency cap (after the per-site lock so a queued build
 		// never holds a slot): bound total simultaneous bun/astro processes.
 		release, ok := h.acquireBuildSlot(bgCtx)
 		if !ok {
-			h.mu.Lock()
-			if st := h.builds[deployID]; st != nil {
-				st.Status = "failed"
-				st.Error = "cancelled while waiting for a build slot"
-			}
-			h.mu.Unlock()
+			// Finalize through the shared path so the DB row reaches a
+			// terminal state too (it used to stay 'pending' forever).
+			h.finalizeBuild(deployID, siteID, &builder.BuildResult{
+				Error: "cancelled while waiting for a build slot",
+			})
 			return
 		}
 		defer release()
@@ -410,7 +445,13 @@ func (h *BuildHandler) StartBuild(ctx context.Context, siteID string) (string, e
 			// Opt-in publish gate: when ATOMICSITE_MIN_PUBLISH_GRADE is set, a
 			// build whose worst category grade is below it is built + graded but
 			// NOT auto-published. Unset (default) keeps publish unconditional.
-			if blocked, worst := belowPublishGrade(reports, agent.FidelityForSite(bgCtx, h.queries, siteID)); blocked {
+			// The gate fails CLOSED on a missing grade: if eval errored (reports
+			// nil/empty) while the gate is configured, an ungraded build must
+			// not slip past the operator's threshold.
+			gateConfigured := strings.TrimSpace(os.Getenv("ATOMICSITE_MIN_PUBLISH_GRADE")) != ""
+			if gateConfigured && (evalErr != nil || len(reports) == 0) {
+				result.BuildLog += "\n=== deploy ===\nskipped: eval produced no grades while ATOMICSITE_MIN_PUBLISH_GRADE is set; refusing to publish ungraded\n"
+			} else if blocked, worst := belowPublishGrade(reports, agent.FidelityForSite(bgCtx, h.queries, siteID)); blocked {
 				result.BuildLog += "\n=== deploy ===\nskipped: worst grade " + worst + " is below ATOMICSITE_MIN_PUBLISH_GRADE; published nothing\n"
 			} else if targetID, deployURL, deployErr := h.autoDeployDefault(bgCtx, siteID, result.DistDir); deployErr != nil {
 				result.BuildLog += "\n=== deploy ===\nfailed: " + deployErr.Error() + "\n"
@@ -423,35 +464,7 @@ func (h *BuildHandler) StartBuild(ctx context.Context, siteID string) (string, e
 				}
 			}
 		}
-		h.mu.Lock()
-		st := h.builds[deployID]
-		st.BuildLog = result.BuildLog
-		st.PagesBuilt = result.PagesBuilt
-		st.DurationMs = result.DurationMs
-		st.DistDir = result.DistDir
-		if result.Success {
-			st.Status = "success"
-		} else {
-			st.Status = "failed"
-			st.Error = result.Error
-		}
-		h.mu.Unlock()
-
-		status := "success"
-		if !result.Success {
-			status = "failed"
-		}
-		if err := h.queries.UpdateDeploymentStatus(bgCtx, store.UpdateDeploymentStatusParams{
-			ID: deployID, Status: status, BuildLog: result.BuildLog,
-			PagesBuilt: int64(result.PagesBuilt), DurationMs: result.DurationMs, Error: result.Error,
-		}); err != nil {
-			slog.Warn("build: persist deployment status failed", "deploy_id", deployID, "err", err)
-		}
-		if err := h.queries.UpdateSiteBuildStatus(bgCtx, store.UpdateSiteBuildStatusParams{
-			ID: siteID, LastBuildStatus: status, LastBuildError: result.Error,
-		}); err != nil {
-			slog.Warn("build: persist site build status failed", "site_id", siteID, "err", err)
-		}
+		h.finalizeBuild(deployID, siteID, result)
 	}()
 
 	return deployID, nil
@@ -474,6 +487,7 @@ func (h *BuildHandler) autoDeployDefault(ctx context.Context, siteID, distDir st
 	if strings.TrimSpace(t.ConfigJson) != "" {
 		_ = json.Unmarshal([]byte(t.ConfigJson), &cfg)
 	}
+	decryptDeployConfigSecrets(deployConfigCipher(h.cfg), cfg)
 	// Slug lets the local deployer accept a /srv/atomicsite/{slug}/dist path
 	// (the wildcard serving convention) under the cross-tenant path guard.
 	var slug string
@@ -513,16 +527,20 @@ func (h *BuildHandler) GetBuildState(ctx context.Context, buildID, siteID string
 	}
 	h.mu.Lock()
 	st, ok := h.builds[buildID]
+	var snapshot buildState
+	if ok {
+		snapshot = *st
+	}
 	h.mu.Unlock()
 	if ok {
 		return map[string]any{
 			"build_id":    buildID,
-			"status":      st.Status,
-			"build_log":   st.BuildLog,
-			"pages_built": st.PagesBuilt,
-			"duration_ms": st.DurationMs,
-			"error":       st.Error,
-			"dist_dir":    st.DistDir,
+			"status":      snapshot.Status,
+			"build_log":   snapshot.BuildLog,
+			"pages_built": snapshot.PagesBuilt,
+			"duration_ms": snapshot.DurationMs,
+			"error":       snapshot.Error,
+			"dist_dir":    snapshot.DistDir,
 			"created_at":  deploy.CreatedAt,
 		}, nil
 	}
@@ -547,20 +565,28 @@ func (h *BuildHandler) BuildStatus(w http.ResponseWriter, r *http.Request) {
 
 	buildID := urlParam(r, "buildID")
 
-	// Check in-memory state first (for active builds)
-	h.mu.Lock()
-	state, ok := h.builds[buildID]
-	h.mu.Unlock()
-
-	if ok {
-		writeJSON(w, http.StatusOK, state)
+	// Tenant scope FIRST: the deployment must belong to the agent's
+	// site. This endpoint used to serve any tenant's build state by id
+	// (its siblings GetBuildState/BuildStatusAdmin already checked).
+	deploy, err := h.queries.GetDeploymentByID(r.Context(), buildID)
+	if err != nil || deploy.SiteID != a.SiteID {
+		writeError(w, http.StatusNotFound, "Build not found")
 		return
 	}
 
-	// Fall back to DB
-	deploy, err := h.queries.GetDeploymentByID(r.Context(), buildID)
-	if err != nil {
-		writeError(w, http.StatusNotFound, "Build not found")
+	// Prefer in-memory state for active builds. Copy under the mutex:
+	// the build goroutine mutates the same struct concurrently, and
+	// marshalling the shared pointer outside h.mu was a data race.
+	h.mu.Lock()
+	state, ok := h.builds[buildID]
+	var snapshot buildState
+	if ok {
+		snapshot = *state
+	}
+	h.mu.Unlock()
+
+	if ok {
+		writeJSON(w, http.StatusOK, snapshot)
 		return
 	}
 
@@ -599,19 +625,25 @@ func (h *BuildHandler) BuildStatusAdmin(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	// Prefer in-memory state for active builds (has dist_dir + live build_log).
+	// Prefer in-memory state for active builds (has dist_dir + live
+	// build_log). Copy under the mutex; the build goroutine writes the
+	// same struct concurrently.
 	h.mu.Lock()
 	state, ok := h.builds[buildID]
+	var snapshot buildState
+	if ok {
+		snapshot = *state
+	}
 	h.mu.Unlock()
 
 	if ok {
 		writeJSON(w, http.StatusOK, map[string]any{
-			"status":      state.Status,
-			"build_log":   state.BuildLog,
-			"pages_built": state.PagesBuilt,
-			"duration_ms": state.DurationMs,
-			"error":       state.Error,
-			"dist_dir":    state.DistDir,
+			"status":      snapshot.Status,
+			"build_log":   snapshot.BuildLog,
+			"pages_built": snapshot.PagesBuilt,
+			"duration_ms": snapshot.DurationMs,
+			"error":       snapshot.Error,
+			"dist_dir":    snapshot.DistDir,
 			"created_at":  deploy.CreatedAt,
 		})
 		return
@@ -685,11 +717,16 @@ func (h *BuildHandler) Deploy(w http.ResponseWriter, r *http.Request) {
 
 	// Pull the build's dist_dir from the in-memory build state. We deliberately
 	// do not persist dist paths to DB (they're ephemeral workspace artifacts),
-	// so a deploy after server restart will fail loudly here.
+	// so a deploy after server restart will fail loudly here. Copy under
+	// the mutex; the build goroutine mutates the same struct.
 	h.mu.Lock()
-	state, ok := h.builds[req.BuildID]
+	statePtr, ok := h.builds[req.BuildID]
+	var state buildState
+	if ok && statePtr != nil {
+		state = *statePtr
+	}
 	h.mu.Unlock()
-	if !ok || state == nil || state.DistDir == "" {
+	if !ok || state.DistDir == "" {
 		writeError(w, http.StatusBadRequest, "Build dist_dir not available; trigger a fresh build before deploying")
 		return
 	}
@@ -698,10 +735,18 @@ func (h *BuildHandler) Deploy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Hold the per-site build lock for the copy: all builds of a site
+	// share one workspace dist path, so deploying without the lock can
+	// ship a half-written dist while a concurrent build rewrites it.
+	buildLock := h.lockForSite(siteID)
+	buildLock.Lock()
+	defer buildLock.Unlock()
+
 	cfg := map[string]any{}
 	if strings.TrimSpace(targetRow.ConfigJson) != "" {
 		_ = json.Unmarshal([]byte(targetRow.ConfigJson), &cfg)
 	}
+	decryptDeployConfigSecrets(deployConfigCipher(h.cfg), cfg)
 	target := deploy.Target{
 		ID:     targetRow.ID,
 		SiteID: targetRow.SiteID,
@@ -781,11 +826,28 @@ func (h *BuildHandler) TriggerBuildAdmin(w http.ResponseWriter, r *http.Request)
 
 	adminSiteID := siteID
 	go func() {
+		bgCtx, cancel := context.WithTimeout(context.Background(), builder.BuildTimeout)
+		defer cancel()
+		// Same discipline as the agent paths: cancellable via the admin
+		// Cancel endpoint (registered before the per-site lock so queued
+		// builds are cancellable too) and bounded by the global build
+		// semaphore (admin builds used to bypass both, so they could
+		// neither be cancelled nor counted against the host's cap).
+		h.registerCancel(deployID, cancel)
+		defer h.clearCancel(deployID)
 		lock := h.lockForSite(adminSiteID)
 		lock.Lock()
 		defer lock.Unlock()
-		bgCtx, cancel := context.WithTimeout(context.Background(), builder.BuildTimeout)
-		defer cancel()
+		release, ok := h.acquireBuildSlot(bgCtx)
+		if !ok {
+			// Finalize through the shared path so the DB row reaches a
+			// terminal state too (it used to stay 'pending' forever).
+			h.finalizeBuild(deployID, siteID, &builder.BuildResult{
+				Error: "cancelled while waiting for a build slot",
+			})
+			return
+		}
+		defer release()
 		result := builder.Build(bgCtx, h.queries, adminSiteID, h.cfg.DataDir)
 		if result.Success && result.DistDir != "" {
 			if _, err := eval.Run(bgCtx, h.queries, adminSiteID, deployID, result.DistDir); err != nil {
@@ -795,42 +857,7 @@ func (h *BuildHandler) TriggerBuildAdmin(w http.ResponseWriter, r *http.Request)
 				result.BuildLog += "\n=== critique ===\nfailed: " + err.Error() + "\n"
 			}
 		}
-
-		h.mu.Lock()
-		state := h.builds[deployID]
-		state.BuildLog = result.BuildLog
-		state.PagesBuilt = result.PagesBuilt
-		state.DurationMs = result.DurationMs
-		state.DistDir = result.DistDir
-		if result.Success {
-			state.Status = "success"
-		} else {
-			state.Status = "failed"
-			state.Error = result.Error
-		}
-		h.mu.Unlock()
-
-		status := "success"
-		if !result.Success {
-			status = "failed"
-		}
-		if err := h.queries.UpdateDeploymentStatus(bgCtx, store.UpdateDeploymentStatusParams{
-			ID:         deployID,
-			Status:     status,
-			BuildLog:   result.BuildLog,
-			PagesBuilt: int64(result.PagesBuilt),
-			DurationMs: result.DurationMs,
-			Error:      result.Error,
-		}); err != nil {
-			slog.Warn("build: persist deployment status failed", "deploy_id", deployID, "err", err)
-		}
-		if err := h.queries.UpdateSiteBuildStatus(bgCtx, store.UpdateSiteBuildStatusParams{
-			ID:              adminSiteID,
-			LastBuildStatus: status,
-			LastBuildError:  result.Error,
-		}); err != nil {
-			slog.Warn("build: persist site build status failed", "site_id", adminSiteID, "err", err)
-		}
+		h.finalizeBuild(deployID, adminSiteID, result)
 	}()
 
 	writeJSON(w, http.StatusAccepted, map[string]string{

@@ -66,7 +66,7 @@ func (h *LocalesHandler) recordPageLocaleSnapshot(ctx context.Context, siteID, p
 		// update will snapshot the just-created row.
 		return
 	}
-	_ = h.recorder.Record(ctx, revisions.RecordParams{
+	recordRevision(h.recorder, ctx, revisions.RecordParams{
 		SiteID:        siteID,
 		EntityType:    revisions.EntityTypePageLocale,
 		EntityID:      pageID + ":" + locale,
@@ -83,7 +83,7 @@ func (h *LocalesHandler) recordBlockLocaleSnapshot(ctx context.Context, siteID, 
 	if err != nil {
 		return
 	}
-	_ = h.recorder.Record(ctx, revisions.RecordParams{
+	recordRevision(h.recorder, ctx, revisions.RecordParams{
 		SiteID:        siteID,
 		EntityType:    revisions.EntityTypeBlockLocale,
 		EntityID:      blockID + ":" + locale,
@@ -472,12 +472,12 @@ func (h *LocalesHandler) DeleteBlockLocale(w http.ResponseWriter, r *http.Reques
 // then calls translate_entity again with the translations parameter
 // to write everything back atomically.
 type TranslationContext struct {
-	Page          map[string]any   `json:"page"`
-	PageLocale    *pageLocaleOut   `json:"page_locale,omitempty"`
-	Blocks        []map[string]any `json:"blocks"`
-	BlockLocales  []blockLocaleOut `json:"block_locales"`
-	TargetLocale  string           `json:"target_locale"`
-	IsDefault     bool             `json:"is_default_locale"`
+	Page         map[string]any   `json:"page"`
+	PageLocale   *pageLocaleOut   `json:"page_locale,omitempty"`
+	Blocks       []map[string]any `json:"blocks"`
+	BlockLocales []blockLocaleOut `json:"block_locales"`
+	TargetLocale string           `json:"target_locale"`
+	IsDefault    bool             `json:"is_default_locale"`
 }
 
 // PageTranslationOverlay describes the translated page_locales row to

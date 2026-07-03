@@ -1491,15 +1491,15 @@ func renderCalculatorBlock(data map[string]any) string {
 	// data attribute (rather than a separate <script> tag) so the CSP path
 	// stays clean.
 	configBytes, _ := json.Marshal(map[string]any{
-		"services":            data["services"],
-		"currency_symbol":     dataString(data, "currency_symbol"),
-		"currency_rate":       data["currency_rate"],
-		"team_size_min":       data["team_size_min"],
-		"team_size_max":       data["team_size_max"],
-		"team_size_default":   data["team_size_default"],
-		"hardware_monthly":    data["hardware_monthly"],
-		"maintenance_yearly":  data["maintenance_yearly"],
-		"labels":              data["labels"],
+		"services":           data["services"],
+		"currency_symbol":    dataString(data, "currency_symbol"),
+		"currency_rate":      data["currency_rate"],
+		"team_size_min":      data["team_size_min"],
+		"team_size_max":      data["team_size_max"],
+		"team_size_default":  data["team_size_default"],
+		"hardware_monthly":   data["hardware_monthly"],
+		"maintenance_yearly": data["maintenance_yearly"],
+		"labels":             data["labels"],
 	})
 
 	b.WriteString(fmt.Sprintf("    <div class=\"calculator-root\" data-config='%s'>\n",
@@ -1640,9 +1640,10 @@ func renderCustomBlock(data map[string]any) string {
 // brightinteraction.com's hero exactly).
 //
 // Data:
-//   code:  full Astro markup string. Wrapped in a <section> only when
-//          the supplied code doesn't already start with one.
-//   class: optional class added to the auto-generated <section>.
+//
+//	code:  full Astro markup string. Wrapped in a <section> only when
+//	       the supplied code doesn't already start with one.
+//	class: optional class added to the auto-generated <section>.
 //
 // Trade-off: NO renderer-side validation, NO auto-section-id, NO
 // alternating-bg, NO eyebrow CSS, NO accent-span helper. Author owns
@@ -1732,7 +1733,9 @@ func renderProcessStepsBlock(data map[string]any) string {
 // you want a personal photo paired with narrative.
 //
 // Data: {eyebrow, heading, paragraphs[], image_id, image_alt, image_position,
-//        stats: [{value, label}], cta_text, cta_url}.
+//
+//	stats: [{value, label}], cta_text, cta_url}.
+//
 // image_position: "right" (default) or "left".
 func renderAboutSplitBlock(data map[string]any, mediaByID map[string]store.Medium) string {
 	var b strings.Builder

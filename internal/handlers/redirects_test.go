@@ -321,14 +321,14 @@ func TestRedirects_VerifyBucketsCorrectly(t *testing.T) {
 
 	rr := postJSONRedir(withRedirectParams(siteID, "", h.Verify), map[string]any{
 		"urls": []string{
-			"https://old-site.com/about",       // -> 200 (page exists)
-			"https://old-site.com/about/",      // -> 200 (trailing slash normalized)
-			"https://old-site.com/old-blog",    // -> 301 (exact match)
-			"https://old-site.com/dead",        // -> 410
+			"https://old-site.com/about",          // -> 200 (page exists)
+			"https://old-site.com/about/",         // -> 200 (trailing slash normalized)
+			"https://old-site.com/old-blog",       // -> 301 (exact match)
+			"https://old-site.com/dead",           // -> 410
 			"https://old-site.com/archive/2020/x", // -> 301 (regex)
-			"/lonely-orphan",                   // -> 404
-			"https://old-site.com/about?ref=x", // -> 200 (query stripped)
-			"",                                 // -> malformed
+			"/lonely-orphan",                      // -> 404
+			"https://old-site.com/about?ref=x",    // -> 200 (query stripped)
+			"",                                    // -> malformed
 		},
 	})
 	if rr.Code != http.StatusOK {

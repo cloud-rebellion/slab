@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"sort"
 	"sync"
@@ -18,6 +19,7 @@ import (
 	"github.com/bright-interaction/slab/internal/handlers"
 	authmw "github.com/bright-interaction/slab/internal/middleware"
 	"github.com/bright-interaction/slab/internal/migration"
+	"github.com/bright-interaction/slab/internal/revisions"
 	"github.com/bright-interaction/slab/internal/shield"
 	"github.com/bright-interaction/slab/internal/store"
 )
@@ -50,7 +52,11 @@ type Server struct {
 	queries    *store.Queries
 	context    *agent.ContextBuilder
 	guardrails *agent.GuardrailEngine
-	builds     BuildTrigger
+	// recorder snapshots pages/blocks BEFORE MCP mutations so the admin
+	// history + restore surface covers agent edits (parity with the
+	// admin + agent-REST write paths).
+	recorder *revisions.Recorder
+	builds   BuildTrigger
 
 	// fontsDir is the on-disk root the upload_font tool writes woff2
 	// files to, mirroring the FontsHandler's storage path. Optional;
@@ -424,6 +430,28 @@ func (s *Server) guardrailRequiredBlocks(ctx context.Context, siteID, pageSlug, 
 	return v, agent.HasErrors(v)
 }
 
+// recordAgentRevision snapshots a page/block BEFORE an MCP mutation so
+// the admin history + restore surface covers agent edits. Best-effort
+// (undo must never block a write) but loud on failure: a silently
+// skipped snapshot before a destructive op breaks the advertised
+// history contract.
+func (s *Server) recordAgentRevision(ctx context.Context, siteID, entityType, entityID string, snapshot any, summary, keyID string) {
+	if s.recorder == nil {
+		return
+	}
+	if err := s.recorder.Record(ctx, revisions.RecordParams{
+		SiteID:        siteID,
+		EntityType:    entityType,
+		EntityID:      entityID,
+		Snapshot:      snapshot,
+		ChangeSummary: summary,
+		CreatedBy:     "agent:" + keyID,
+	}); err != nil {
+		slog.Warn("mcp: revision snapshot failed; proceeding without an undo point",
+			"entity_type", entityType, "entity_id", entityID, "site_id", siteID, "err", err)
+	}
+}
+
 // maxComponentsPerSite is a runaway-loop backstop for the agent (MCP) write
 // path. There is no human in the loop, so an agent bug or hostile key could
 // otherwise drive unbounded INSERTs + build cost. Components have no billing
@@ -453,6 +481,7 @@ func NewServer(queries *store.Queries, builds BuildTrigger) *Server {
 		queries:    queries,
 		context:    agent.NewContextBuilder(queries),
 		guardrails: agent.NewGuardrailEngine(queries),
+		recorder:   revisions.New(queries),
 		builds:     builds,
 		tools:      map[string]Tool{},
 		resources:  map[string]Resource{},
@@ -849,7 +878,3 @@ func writeJSONRPCError(w http.ResponseWriter, id any, code int, msg string, data
 	}
 	writeJSON(w, http.StatusOK, resp)
 }
-
-// errMustBeString is used when a JSON arg expected a string but got
-// something else; centralised so errors stay consistent.
-var errMustBeString = errors.New("argument must be a string")

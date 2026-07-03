@@ -12,10 +12,10 @@ import (
 func TestBlockLint_HeroQualityFires(t *testing.T) {
 	playbook := agent.DefaultDesignPlaybook()
 	findings := LintBlockData("hero", map[string]any{
-		"headline":    "Stop renting your business",
-		"subheading":  "Own it",
-		"cta_text":    "Calculate",
-		"cta_url":     "/calc",
+		"headline":   "Stop renting your business",
+		"subheading": "Own it",
+		"cta_text":   "Calculate",
+		"cta_url":    "/calc",
 	}, playbook)
 	if !hasFinding(findings, "hero_quality") {
 		t.Fatalf("expected hero_quality finding; got %s", debugLint(findings))

@@ -20,12 +20,12 @@ const userAgent = "AtomicSite-Migrator/1.0 (+https://github.com/bright-interacti
 // FetchOptions controls the SSRF-guarded HTTP fetch. Defaults via Default*
 // constants are sized for HTML pages, which is what every importer needs.
 type FetchOptions struct {
-	MaxBytes      int64
-	MaxRedirects  int
-	Timeout       time.Duration
-	AllowPrivate  bool   // true ONLY in tests against httptest.Server
-	AcceptHeader  string // "*/*" if empty
-	ExtraHeaders  http.Header
+	MaxBytes     int64
+	MaxRedirects int
+	Timeout      time.Duration
+	AllowPrivate bool   // true ONLY in tests against httptest.Server
+	AcceptHeader string // "*/*" if empty
+	ExtraHeaders http.Header
 }
 
 const (
@@ -45,11 +45,11 @@ type FetchResult struct {
 }
 
 // SafeFetch performs an SSRF-guarded HTTP GET. The check runs:
-//   1. URL parses to http(s)
-//   2. DNS resolves the host; every returned IP must be public
-//   3. On every redirect (max MaxRedirects) the new host gets the same DNS
-//      check - protects against DNS rebinding
-//   4. Body is read through io.LimitReader(MaxBytes+1) and rejected if larger
+//  1. URL parses to http(s)
+//  2. DNS resolves the host; every returned IP must be public
+//  3. On every redirect (max MaxRedirects) the new host gets the same DNS
+//     check - protects against DNS rebinding
+//  4. Body is read through io.LimitReader(MaxBytes+1) and rejected if larger
 //
 // Returns the final URL after redirects so callers know which host actually
 // served the response (matters for cross-origin asset attribution).

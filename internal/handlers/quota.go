@@ -421,16 +421,16 @@ func (h *QuotaHandler) AdminQuotaSummary(ctx context.Context) ([]map[string]any,
 		usedBytes := asInt64(stoBytes)
 		usedMinutes := asInt64(minMs) / 60000
 		out = append(out, map[string]any{
-			"site_id":            s.ID,
-			"name":               s.Name,
-			"slug":               s.Slug,
-			"storage_used_bytes": usedBytes,
+			"site_id":             s.ID,
+			"name":                s.Name,
+			"slug":                s.Slug,
+			"storage_used_bytes":  usedBytes,
 			"storage_quota_bytes": s.StorageQuotaBytes,
-			"storage_pct":        pctOf(usedBytes, s.StorageQuotaBytes),
-			"build_minutes_used": usedMinutes,
+			"storage_pct":         pctOf(usedBytes, s.StorageQuotaBytes),
+			"build_minutes_used":  usedMinutes,
 			"build_minutes_quota": s.BuildMinutesQuota,
-			"build_minutes_pct":  pctOf(usedMinutes, s.BuildMinutesQuota),
-			"blocked_on_overage": s.QuotaOverageBlocked != 0,
+			"build_minutes_pct":   pctOf(usedMinutes, s.BuildMinutesQuota),
+			"blocked_on_overage":  s.QuotaOverageBlocked != 0,
 		})
 	}
 	// Top-50 by max(storage_pct, build_minutes_pct).

@@ -173,4 +173,3 @@ func TestClarifications_OptionsSerialisedAsJSONArray(t *testing.T) {
 		t.Errorf("expected 3 options; got %d (%v)", len(arr), arr)
 	}
 }
-

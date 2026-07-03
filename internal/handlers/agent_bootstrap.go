@@ -28,17 +28,17 @@ import (
 // endpoint. The raw key is only present here; we do not echo it back from
 // the agent-side endpoint because the caller already has it.
 type agentBootstrapResponse struct {
-	KeyID       string `json:"key_id"`
-	Key         string `json:"key"`
-	KeyName     string `json:"key_name"`
-	BaseURL     string `json:"base_url"`
-	SiteID      string `json:"site_id"`
-	SiteName    string `json:"site_name"`
-	SiteDomain  string `json:"site_domain"`
-	ClaudeMD    string `json:"claude_md"`
-	EnvFile     string `json:"env_file"`
-	SmokeTest   string `json:"smoke_test"`
-	Note        string `json:"note"`
+	KeyID      string `json:"key_id"`
+	Key        string `json:"key"`
+	KeyName    string `json:"key_name"`
+	BaseURL    string `json:"base_url"`
+	SiteID     string `json:"site_id"`
+	SiteName   string `json:"site_name"`
+	SiteDomain string `json:"site_domain"`
+	ClaudeMD   string `json:"claude_md"`
+	EnvFile    string `json:"env_file"`
+	SmokeTest  string `json:"smoke_test"`
+	Note       string `json:"note"`
 }
 
 // AgentBootstrap (admin) issues a fresh key for a site and returns a

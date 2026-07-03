@@ -29,6 +29,8 @@ export interface WizardInfo {
 	country: string;
 }
 
+export type WizardDesignFidelity = 'performance' | 'balanced' | 'showcase';
+
 export interface WizardState {
 	step: WizardStep;
 	type: SiteType | null;
@@ -37,6 +39,11 @@ export interface WizardState {
 	structure: SeedSiteStructure;
 	silos: SeedSiteSilo[];
 	branding: SeedSiteBranding;
+	// The design-freedom dial (design.fidelity). Chosen on the confirm
+	// step; written as a settings row right after the seed call so a
+	// non-developer tenant never has to find Settings -> General to
+	// launch a showcase site.
+	designFidelity: WizardDesignFidelity;
 }
 
 const STORAGE_KEY = 'atomicsite_wizard_state';
@@ -67,7 +74,8 @@ function defaultState(): WizardState {
 			text_color: '#18181b',
 			font_heading: 'Geist',
 			font_body: 'Inter'
-		}
+		},
+		designFidelity: 'balanced'
 	};
 }
 
@@ -88,7 +96,12 @@ function readInitial(): WizardState {
 			info: { ...base.info, ...(parsed.info ?? {}) },
 			structure: { ...base.structure, ...(parsed.structure ?? {}) },
 			silos: Array.isArray(parsed.silos) ? parsed.silos : base.silos,
-			branding: { ...base.branding, ...(parsed.branding ?? {}) }
+			branding: { ...base.branding, ...(parsed.branding ?? {}) },
+			designFidelity: ['performance', 'balanced', 'showcase'].includes(
+				parsed.designFidelity as string
+			)
+				? (parsed.designFidelity as WizardDesignFidelity)
+				: base.designFidelity
 		};
 	} catch {
 		return defaultState();
@@ -149,6 +162,11 @@ export function updateSilos(silos: SeedSiteSilo[]): void {
 
 export function updateBranding(partial: Partial<SeedSiteBranding>): void {
 	Object.assign(current.branding, partial);
+	persist();
+}
+
+export function setDesignFidelity(fidelity: WizardDesignFidelity): void {
+	current.designFidelity = fidelity;
 	persist();
 }
 

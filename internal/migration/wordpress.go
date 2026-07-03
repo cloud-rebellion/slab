@@ -132,15 +132,15 @@ type wpAuthor struct {
 }
 
 type wpMedia struct {
-	ID         int64      `json:"id"`
-	SourceURL  string     `json:"source_url"`
-	AltText    string     `json:"alt_text"`
-	MediaType  string     `json:"media_type"`
-	MimeType   string     `json:"mime_type"`
-	Title      wpRendered `json:"title"`
-	Caption    wpRendered `json:"caption"`
-	Link       string     `json:"link"`
-	Date       string     `json:"date_gmt"`
+	ID        int64      `json:"id"`
+	SourceURL string     `json:"source_url"`
+	AltText   string     `json:"alt_text"`
+	MediaType string     `json:"media_type"`
+	MimeType  string     `json:"mime_type"`
+	Title     wpRendered `json:"title"`
+	Caption   wpRendered `json:"caption"`
+	Link      string     `json:"link"`
+	Date      string     `json:"date_gmt"`
 }
 
 type wpTerm struct {

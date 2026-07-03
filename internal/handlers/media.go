@@ -43,9 +43,9 @@ func NewMediaHandler(cfg *config.Config, queries *store.Queries, st storage.Stor
 var dangerousExts = map[string]bool{
 	".html": true, ".xhtml": true, ".htm": true,
 	".js": true, ".mjs": true, ".php": true, ".phtml": true,
-	".svg":  true, // XSS risk without sanitization
-	".exe":  true, ".dll": true, ".sh": true, ".bat": true,
-	".jsp":  true, ".asp": true, ".aspx": true,
+	".svg": true, // XSS risk without sanitization
+	".exe": true, ".dll": true, ".sh": true, ".bat": true,
+	".jsp": true, ".asp": true, ".aspx": true,
 }
 
 // Folder name validator. Lowercase letters, digits, and hyphens. Reserved
@@ -54,8 +54,8 @@ var dangerousExts = map[string]bool{
 var folderNameRE = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,31}$`)
 
 const (
-	systemFolderBrand = "brand"
-	folderFilterAll   = ""
+	systemFolderBrand   = "brand"
+	folderFilterAll     = ""
 	folderFilterUnfiled = "__unfiled"
 )
 
@@ -212,7 +212,7 @@ func (h *MediaHandler) CreateFolder(w http.ResponseWriter, r *http.Request) {
 }
 
 // DeleteFolder removes a user folder. System folders are protected. Items
-// in the folder are moved back to unfiled (folder = '').
+// in the folder are moved back to unfiled (folder = ”).
 func (h *MediaHandler) DeleteFolder(w http.ResponseWriter, r *http.Request) {
 	siteID := urlParam(r, "siteID")
 	name := urlParam(r, "folderName")

@@ -123,13 +123,13 @@ func (h *DesignReferencesHandler) Create(w http.ResponseWriter, r *http.Request)
 
 	id := newRefID()
 	if err := h.queries.CreateDesignReference(r.Context(), store.CreateDesignReferenceParams{
-		ID:           id,
-		SiteID:       siteID,
-		Url:          fmt.Sprintf("https://github.com/%s/%s", owner, repo),
-		Label:        strings.TrimSpace(req.Label),
-		RefType:      req.RefType,
-		FetchedJson:  string(bundleBytes),
-		FetchedAt:    now,
+		ID:          id,
+		SiteID:      siteID,
+		Url:         fmt.Sprintf("https://github.com/%s/%s", owner, repo),
+		Label:       strings.TrimSpace(req.Label),
+		RefType:     req.RefType,
+		FetchedJson: string(bundleBytes),
+		FetchedAt:   now,
 	}); err != nil {
 		if strings.Contains(err.Error(), "UNIQUE") {
 			writeError(w, http.StatusConflict, "This repo is already a design reference for the site")
@@ -206,10 +206,12 @@ func (h *DesignReferencesHandler) Delete(w http.ResponseWriter, r *http.Request)
 }
 
 // parseGitHubURL accepts:
-//   https://github.com/owner/repo
-//   https://github.com/owner/repo/
-//   https://github.com/owner/repo.git
-//   https://github.com/owner/repo/tree/<branch>
+//
+//	https://github.com/owner/repo
+//	https://github.com/owner/repo/
+//	https://github.com/owner/repo.git
+//	https://github.com/owner/repo/tree/<branch>
+//
 // and returns owner, repo, branch (default "main"), ok.
 func parseGitHubURL(rawURL string) (owner, repo, branch string, ok bool) {
 	u, err := url.Parse(strings.TrimSpace(rawURL))

@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/bright-interaction/slab/internal/atrest"
 	"github.com/bright-interaction/slab/internal/config"
 	"github.com/bright-interaction/slab/internal/deploy"
 	authmw "github.com/bright-interaction/slab/internal/middleware"
@@ -25,6 +26,49 @@ func NewDeployHandler(cfg *config.Config, queries *store.Queries, db *sql.DB) *D
 	return &DeployHandler{cfg: cfg, queries: queries, db: db}
 }
 
+// deployConfigCipher builds the at-rest cipher for deploy-target
+// secrets (rsync private_key_pem), same key + pattern as the TOTP and
+// app-install ciphers. Passthrough when ATOMICSITE_SHIELD_KEY is unset.
+func deployConfigCipher(cfg *config.Config) *atrest.Cipher {
+	if cfg == nil {
+		return atrest.New(nil)
+	}
+	return atrest.New([]byte(cfg.ShieldKey))
+}
+
+// encryptDeployConfigSecrets encrypts secret-valued config keys in
+// place before the map is marshalled into targets.config_json. The
+// rsync SSH private key used to sit in the DB as plaintext (the
+// TODO(secrets-vault) in deploy/rsync.go). Skips values that are
+// already ciphertext so a round-tripped UI save never double-encrypts.
+func encryptDeployConfigSecrets(cipher *atrest.Cipher, cfg map[string]any) {
+	raw, _ := cfg["private_key_pem"].(string)
+	if raw == "" || atrest.IsEncrypted(raw) {
+		return
+	}
+	if enc, err := cipher.Encrypt(raw); err == nil {
+		cfg["private_key_pem"] = enc
+	} else {
+		slog.Error("deploy: encrypting private_key_pem failed; storing refused", "err", err)
+		delete(cfg, "private_key_pem")
+	}
+}
+
+// decryptDeployConfigSecrets is the read-side mirror, applied wherever
+// config_json is unpacked into a deploy.Target. Legacy plaintext rows
+// pass through verbatim (atrest contract) and upgrade on next save.
+func decryptDeployConfigSecrets(cipher *atrest.Cipher, cfg map[string]any) {
+	raw, _ := cfg["private_key_pem"].(string)
+	if raw == "" || !atrest.IsEncrypted(raw) {
+		return
+	}
+	if plain, err := cipher.Decrypt(raw); err == nil {
+		cfg["private_key_pem"] = plain
+	} else {
+		slog.Error("deploy: decrypting private_key_pem failed (key rotated or removed?)", "err", err)
+	}
+}
+
 // allowed kinds, lifted from the schema CHECK constraint so a bad request
 // fails before it ever hits SQLite.
 var allowedDeployKinds = map[string]bool{
@@ -37,14 +81,14 @@ var allowedDeployKinds = map[string]bool{
 // row but decodes config_json into a structured field so the frontend doesn't
 // have to.
 type deployTargetView struct {
-	ID         string         `json:"id"`
-	SiteID     string         `json:"site_id"`
-	Name       string         `json:"name"`
-	Kind       string         `json:"kind"`
-	Config     map[string]any `json:"config"`
-	IsDefault  bool           `json:"is_default"`
-	CreatedAt  string         `json:"created_at"`
-	UpdatedAt  string         `json:"updated_at"`
+	ID        string         `json:"id"`
+	SiteID    string         `json:"site_id"`
+	Name      string         `json:"name"`
+	Kind      string         `json:"kind"`
+	Config    map[string]any `json:"config"`
+	IsDefault bool           `json:"is_default"`
+	CreatedAt string         `json:"created_at"`
+	UpdatedAt string         `json:"updated_at"`
 }
 
 func toView(t store.DeployTarget) deployTargetView {
@@ -155,6 +199,7 @@ func (h *DeployHandler) CreateTarget(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	encryptDeployConfigSecrets(deployConfigCipher(h.cfg), req.Config)
 	configJSON, err := json.Marshal(req.Config)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "Invalid config")
@@ -307,6 +352,10 @@ func (h *DeployHandler) UpdateTarget(w http.ResponseWriter, r *http.Request) {
 	if site, err := h.queries.GetSiteByID(r.Context(), siteID); err == nil {
 		siteSlug = site.Slug
 	}
+	// A round-tripped UI save may echo the stored ciphertext back;
+	// decrypt first so Validate sees a real PEM, then re-encrypt for
+	// persistence.
+	decryptDeployConfigSecrets(deployConfigCipher(h.cfg), config)
 	if err := deployer.Validate(deploy.Target{
 		ID:     existing.ID,
 		SiteID: siteID,
@@ -319,6 +368,7 @@ func (h *DeployHandler) UpdateTarget(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	encryptDeployConfigSecrets(deployConfigCipher(h.cfg), config)
 	configJSON, err := json.Marshal(config)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "Invalid config")
@@ -425,4 +475,3 @@ func (h *DeployHandler) SetDefault(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, toView(t))
 }
-

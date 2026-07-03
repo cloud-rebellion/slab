@@ -121,10 +121,10 @@ func (h *CookieAnalyticsHandler) Funnel(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"site_id":      siteID,
-		"from":         tr.FromISO,
-		"to":           tr.ToISO,
-		"kpis":         kpis,
+		"site_id": siteID,
+		"from":    tr.FromISO,
+		"to":      tr.ToISO,
+		"kpis":    kpis,
 	})
 }
 

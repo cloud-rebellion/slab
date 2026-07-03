@@ -259,13 +259,15 @@ func applyShowcaseFidelity(pb *DesignPlaybookInfo) {
 	pb.HeroGraphics = append(pb.HeroGraphics, HeroGraphic{
 		Name:        "aurora",
 		BestFor:     []string{"Cinematic Aurora vibe", "Launches", "Dark showcase heroes", "Sites where motion is the identity"},
-		Description: "Full-bleed drifting aurora gradient behind the hero: two brand-derived hue bands slowly sweeping on a near-black base. Showcase-fidelity renderer emission; balanced/performance sites render a static tint fallback.",
-		Materiality: "Pure CSS (layered radial-gradients on ::before/::after, hue-drift keyframes ~26s). Masked fade to bg at the lower edge. Reduced-motion: static gradient.",
+		Description: "Full-bleed drifting aurora gradient behind the hero: two brand-derived hue bands slowly sweeping on a near-black base. Renders (animated) in ANY fidelity; it is advertised here because it belongs to the showcase motion budget, and in balanced fidelity it spends the page's single perpetual-motion slot.",
+		Materiality: "Pure CSS (layered radial-gradients on the element and ::after, drift keyframes ~26s). Masked fade to bg at the lower edge. prefers-reduced-motion: static gradient.",
 		Performance: "~2kb CSS, transform+opacity only. Content paints over it on first frame; LCP unaffected.",
 	})
 
 	// Design workflow: stitch-design leads the showcase authoring loop.
-	pb.DesignWorkflow.WhenToInvoke = "SHOWCASE FIDELITY: FIRST invoke the stitch-design skill to generate the site's DESIGN.md (taste dials: density/variance/motion, calibrated palette, motion philosophy) and treat it as the source of truth for every subsequent authoring decision. Then, " + lowerFirst(pb.DesignWorkflow.WhenToInvoke)
+	// No case surgery on the original sentence: it starts with the
+	// all-caps word BEFORE, which lowercasing garbled into bEFORE.
+	pb.DesignWorkflow.WhenToInvoke = "SHOWCASE FIDELITY: FIRST invoke the stitch-design skill to generate the site's DESIGN.md (taste dials: density/variance/motion, calibrated palette, motion philosophy) and treat it as the source of truth for every subsequent authoring decision. After that, the standard rule applies: " + pb.DesignWorkflow.WhenToInvoke
 	pb.DesignWorkflow.SkillsByVibe = append([]SkillVibeMapping{{
 		Vibe:        "ALL vibes (showcase fidelity)",
 		Skill:       "stitch-design",
@@ -301,11 +303,4 @@ func replaceAuditItem(pb *DesignPlaybookInfo, marker string, item AuditItem) {
 			return
 		}
 	}
-}
-
-func lowerFirst(s string) string {
-	if s == "" {
-		return s
-	}
-	return strings.ToLower(s[:1]) + s[1:]
 }

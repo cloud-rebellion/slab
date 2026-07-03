@@ -43,10 +43,10 @@ import (
 type SearchKind string
 
 const (
-	SearchKindPage       SearchKind = "page"
-	SearchKindItem       SearchKind = "collection_item"
-	SearchKindKB         SearchKind = "knowledgebase"
-	SearchKindSite       SearchKind = "site"
+	SearchKindPage SearchKind = "page"
+	SearchKindItem SearchKind = "collection_item"
+	SearchKindKB   SearchKind = "knowledgebase"
+	SearchKindSite SearchKind = "site"
 )
 
 // validSearchKinds is the closed set the handler will accept on the

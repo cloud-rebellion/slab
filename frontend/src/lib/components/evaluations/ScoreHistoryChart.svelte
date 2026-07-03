@@ -10,6 +10,7 @@
 
 <script lang="ts">
 	import { pctTone, toneCSSColor } from '$lib/evaluations/grade';
+	import { CATEGORIES, CATEGORY_LABEL, type CategoryKey } from '$lib/evaluations/categories';
 
 	let {
 		builds
@@ -19,22 +20,6 @@
 		// small-multiples layout, which sizes itself to its rows.
 		height?: number;
 	} = $props();
-
-	type CategoryKey = 'security' | 'seo' | 'performance' | 'accessibility' | 'privacy';
-	const CATEGORIES: CategoryKey[] = [
-		'security',
-		'seo',
-		'performance',
-		'accessibility',
-		'privacy'
-	];
-	const CATEGORY_LABEL: Record<CategoryKey, string> = {
-		security: 'Security',
-		seo: 'SEO',
-		performance: 'Performance',
-		accessibility: 'Accessibility',
-		privacy: 'Privacy'
-	};
 
 	// Sparkline canvas. One per row. Stays compact so the whole panel
 	// fits 5 rows in roughly the same vertical space the old chart used.

@@ -13,7 +13,7 @@
 	const siteID = $derived(data.site.id);
 	const buildID = $derived($page.params.buildID ?? '');
 
-	const CATEGORIES = ['security', 'seo', 'performance', 'accessibility', 'privacy'] as const;
+	import { CATEGORIES } from '$lib/evaluations/categories';
 
 	let loading = $state(true);
 	let loadError = $state<string | null>(null);

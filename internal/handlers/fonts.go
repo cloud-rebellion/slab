@@ -85,10 +85,11 @@ func (h *FontsHandler) List(w http.ResponseWriter, r *http.Request) {
 }
 
 // Upload accepts a multipart/form-data with fields:
-//   file:        the woff2 binary
-//   family_name: human-readable family ("Acme Sans")
-//   weight:      100..900 (default 400)
-//   style:       "normal" | "italic" (default "normal")
+//
+//	file:        the woff2 binary
+//	family_name: human-readable family ("Acme Sans")
+//	weight:      100..900 (default 400)
+//	style:       "normal" | "italic" (default "normal")
 //
 // POST /api/sites/{siteID}/fonts
 func (h *FontsHandler) Upload(w http.ResponseWriter, r *http.Request) {

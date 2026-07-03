@@ -252,10 +252,11 @@ func (p *Porter) ApplyWithOptions(ctx context.Context, siteID string, manifest *
 		createdPages = append(createdPages, pageID)
 		res.PagesCreated++
 
-		// Apply meta + canonical via UpdatePage. We re-fetch first to
-		// get the existing values for fields we don't touch (matches
-		// the agent.go pattern at handlers/agent.go:200+).
-		_ = p.queries.UpdatePage(ctx, store.UpdatePageParams{
+		// Apply meta + canonical via UpdatePage. This write sets
+		// status=published: swallowing its error left imported pages
+		// stranded in draft with no meta while apply reported success,
+		// so it rolls back like every sibling write.
+		if err := p.queries.UpdatePage(ctx, store.UpdatePageParams{
 			ID:               pageID,
 			Title:            pp.Title,
 			Slug:             slug,
@@ -270,7 +271,10 @@ func (p *Porter) ApplyWithOptions(ctx context.Context, siteID string, manifest *
 			NoIndex:          noIndex,
 			CanonicalUrl:     mp.CanonicalURL,
 			HideGlobalBlocks: 0,
-		})
+		}); err != nil {
+			p.rollback(ctx, createdRedirects, createdPages, createdItems, createdColls)
+			return nil, fmt.Errorf("publish page %q: %w", pp.NewSlug, err)
+		}
 	}
 
 	// 4. Redirects.
@@ -485,4 +489,3 @@ func newPorterID() string {
 	_, _ = rand.Read(b[:])
 	return hex.EncodeToString(b[:])
 }
-

@@ -2,8 +2,8 @@ package builder
 
 import (
 	"crypto/sha256"
-	"encoding/hex"
 	_ "embed"
+	"encoding/hex"
 )
 
 // CookieProofWidget is the inline-config widget bundle, sourced from the
@@ -59,4 +59,3 @@ func CookieProofWidgetFilename(prefix []byte) string {
 //
 //go:embed assets/circuit-bg.js
 var CircuitBgScript []byte
-

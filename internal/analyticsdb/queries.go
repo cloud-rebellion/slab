@@ -50,14 +50,14 @@ func NewTimeRange(from, to time.Time) TimeRange {
 // dashboard top-of-page cards. All counts are over the requested
 // (site_id, time-window).
 //
-//   UniqueVisitors         distinct fingerprints with any visit_event
-//   ConsentingVisitors     distinct fingerprints with any consent_record
-//   AcceptAllVisitors      distinct fingerprints with method=accept-all
-//   RejectAllVisitors      distinct fingerprints with method=reject-all
-//   CustomVisitors         distinct fingerprints with method=custom
-//   GPCVisitors            distinct fingerprints with method=gpc
-//   IdentifiedVisitors     distinct fingerprints from visit_sessions where identified_at != ''
-//   AbandonedBannerVisitors visitors who saw the banner (had visit_events) but never made a consent decision
+//	UniqueVisitors         distinct fingerprints with any visit_event
+//	ConsentingVisitors     distinct fingerprints with any consent_record
+//	AcceptAllVisitors      distinct fingerprints with method=accept-all
+//	RejectAllVisitors      distinct fingerprints with method=reject-all
+//	CustomVisitors         distinct fingerprints with method=custom
+//	GPCVisitors            distinct fingerprints with method=gpc
+//	IdentifiedVisitors     distinct fingerprints from visit_sessions where identified_at != ''
+//	AbandonedBannerVisitors visitors who saw the banner (had visit_events) but never made a consent decision
 type FunnelKPIs struct {
 	UniqueVisitors          int64 `json:"unique_visitors"`
 	ConsentingVisitors      int64 `json:"consenting_visitors"`
@@ -183,9 +183,9 @@ FROM ev
 // pageview and their consent decision, in seconds. P50 = median; P90 =
 // 90th percentile (slow accepters). Lower = banner is doing its job.
 type TimeToConsent struct {
-	SampleSize int64   `json:"sample_size"`
-	P50Seconds float64 `json:"p50_seconds"`
-	P90Seconds float64 `json:"p90_seconds"`
+	SampleSize  int64   `json:"sample_size"`
+	P50Seconds  float64 `json:"p50_seconds"`
+	P90Seconds  float64 `json:"p90_seconds"`
 	MeanSeconds float64 `json:"mean_seconds"`
 }
 
@@ -236,12 +236,12 @@ FROM deltas
 // visitors accept more . useful for tenants weighing how much to invest
 // in landing-page quality.
 type EngagedAcceptRate struct {
-	EngagedVisitors          int64   `json:"engaged_visitors"`
-	EngagedAcceptedVisitors  int64   `json:"engaged_accepted"`
-	EngagedAcceptRatePct     float64 `json:"engaged_accept_rate_pct"`
-	NotEngagedVisitors       int64   `json:"not_engaged_visitors"`
-	NotEngagedAcceptedCount  int64   `json:"not_engaged_accepted"`
-	NotEngagedAcceptRatePct  float64 `json:"not_engaged_accept_rate_pct"`
+	EngagedVisitors         int64   `json:"engaged_visitors"`
+	EngagedAcceptedVisitors int64   `json:"engaged_accepted"`
+	EngagedAcceptRatePct    float64 `json:"engaged_accept_rate_pct"`
+	NotEngagedVisitors      int64   `json:"not_engaged_visitors"`
+	NotEngagedAcceptedCount int64   `json:"not_engaged_accepted"`
+	NotEngagedAcceptRatePct float64 `json:"not_engaged_accept_rate_pct"`
 }
 
 func (m *Manager) EngagedAcceptRate(ctx context.Context, siteID string, tr TimeRange) (EngagedAcceptRate, error) {
@@ -307,10 +307,10 @@ FROM (
 // window. Limited to paths with at least 10 visitors so a single
 // tester clicking accept on /test doesn't dominate.
 type AcceptingPage struct {
-	Path           string  `json:"path"`
-	Visitors       int64   `json:"visitors"`
-	Accepted       int64   `json:"accepted"`
-	AcceptRatePct  float64 `json:"accept_rate_pct"`
+	Path          string  `json:"path"`
+	Visitors      int64   `json:"visitors"`
+	Accepted      int64   `json:"accepted"`
+	AcceptRatePct float64 `json:"accept_rate_pct"`
 }
 
 func (m *Manager) TopAcceptingPages(ctx context.Context, siteID string, tr TimeRange, limit int) ([]AcceptingPage, error) {
@@ -373,13 +373,13 @@ LIMIT ?
 // shape as the existing /consent/stats endpoint but resolved through
 // DuckDB so it's fast even at millions of rows.
 type ConsentDayRow struct {
-	Day        string `json:"day"`
-	AcceptAll  int64  `json:"accept_all"`
-	RejectAll  int64  `json:"reject_all"`
-	Custom     int64  `json:"custom"`
-	GPC        int64  `json:"gpc"`
-	DNS        int64  `json:"dns"`
-	DoNotSell  int64  `json:"do_not_sell"`
+	Day       string `json:"day"`
+	AcceptAll int64  `json:"accept_all"`
+	RejectAll int64  `json:"reject_all"`
+	Custom    int64  `json:"custom"`
+	GPC       int64  `json:"gpc"`
+	DNS       int64  `json:"dns"`
+	DoNotSell int64  `json:"do_not_sell"`
 }
 
 func (m *Manager) ConsentDailySplit(ctx context.Context, siteID string, tr TimeRange) ([]ConsentDayRow, error) {
@@ -418,7 +418,7 @@ GROUP BY day ORDER BY day
 // into one timeline.
 type VisitorJourneyStep struct {
 	TimestampMs int64  `json:"ts_ms"`
-	Kind        string `json:"kind"`     // "pageview" | "engagement" | "consent" | "identified"
+	Kind        string `json:"kind"` // "pageview" | "engagement" | "consent" | "identified"
 	Path        string `json:"path,omitempty"`
 	Method      string `json:"method,omitempty"`
 	Categories  string `json:"categories,omitempty"`

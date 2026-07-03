@@ -46,6 +46,21 @@ func NewRevisionsHandler(cfg *config.Config, queries *store.Queries, recorder *r
 	return &RevisionsHandler{cfg: cfg, queries: queries, recorder: recorder}
 }
 
+// recordRevision writes a pre-mutation snapshot and logs loudly when it
+// fails. The mutation proceeds either way (undo must never block an
+// edit), but a silently skipped snapshot before a destructive op
+// violates the history contract the restore UI advertises, so every
+// failure is visible in the logs. Shared by every handler that records.
+func recordRevision(rec *revisions.Recorder, ctx context.Context, p revisions.RecordParams) {
+	if rec == nil {
+		return
+	}
+	if err := rec.Record(ctx, p); err != nil {
+		slog.Warn("revisions: snapshot failed; proceeding without an undo point",
+			"entity_type", p.EntityType, "entity_id", p.EntityID, "site_id", p.SiteID, "err", err)
+	}
+}
+
 // RevisionOut is the wire shape every endpoint returns. Mirrors
 // store.EntityRevision but flattens timestamps to plain strings the
 // frontend renders directly without re-parsing.
@@ -254,7 +269,7 @@ func (h *RevisionsHandler) restorePage(w http.ResponseWriter, r *http.Request, s
 	}
 
 	if h.recorder != nil {
-		_ = h.recorder.Record(r.Context(), revisions.RecordParams{
+		recordRevision(h.recorder, r.Context(), revisions.RecordParams{
 			SiteID:        siteID,
 			EntityType:    revisions.EntityTypePage,
 			EntityID:      pageID,
@@ -320,7 +335,7 @@ func (h *RevisionsHandler) restoreBlock(w http.ResponseWriter, r *http.Request, 
 	}
 
 	if h.recorder != nil {
-		_ = h.recorder.Record(r.Context(), revisions.RecordParams{
+		recordRevision(h.recorder, r.Context(), revisions.RecordParams{
 			SiteID:        siteID,
 			EntityType:    revisions.EntityTypeBlock,
 			EntityID:      blockID,
@@ -443,7 +458,7 @@ func (h *RevisionsHandler) RestoreForAgent(ctx context.Context, siteID, entityTy
 			return nil, errEntityNotFound
 		}
 		if h.recorder != nil {
-			_ = h.recorder.Record(ctx, revisions.RecordParams{
+			recordRevision(h.recorder, ctx, revisions.RecordParams{
 				SiteID:        siteID,
 				EntityType:    revisions.EntityTypePage,
 				EntityID:      entityID,
@@ -474,6 +489,15 @@ func (h *RevisionsHandler) RestoreForAgent(ctx context.Context, siteID, entityTy
 		}); err != nil {
 			return nil, err
 		}
+		// UpdatePage does not carry the archetype column (separate
+		// setter); restore it too or the vibe-archetype lock desyncs
+		// after an MCP restore (the REST restore path already does this).
+		if err := h.queries.SetPageArchetype(ctx, store.SetPageArchetypeParams{
+			Archetype: snap.Archetype,
+			ID:        entityID,
+		}); err != nil {
+			slog.Warn("restore: failed to restore page archetype", "page_id", entityID, "err", err)
+		}
 		updated, _ := h.queries.GetPageByID(ctx, entityID)
 		return map[string]any{
 			"entity_type":    revisions.EntityTypePage,
@@ -487,7 +511,7 @@ func (h *RevisionsHandler) RestoreForAgent(ctx context.Context, siteID, entityTy
 			return nil, errEntityNotFound
 		}
 		if h.recorder != nil {
-			_ = h.recorder.Record(ctx, revisions.RecordParams{
+			recordRevision(h.recorder, ctx, revisions.RecordParams{
 				SiteID:        siteID,
 				EntityType:    revisions.EntityTypeBlock,
 				EntityID:      entityID,

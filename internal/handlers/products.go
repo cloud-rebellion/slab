@@ -484,10 +484,10 @@ func (h *ProductHandler) SetInventory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		NewCount *int64  `json:"new_count"`
-		Delta    *int64  `json:"delta"`
-		Reason   string  `json:"reason"`
-		Note     string  `json:"note"`
+		NewCount *int64 `json:"new_count"`
+		Delta    *int64 `json:"delta"`
+		Reason   string `json:"reason"`
+		Note     string `json:"note"`
 	}
 	if err := parseJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "Invalid JSON body")
@@ -567,4 +567,3 @@ func (h *ProductHandler) ListInventoryAdjustments(w http.ResponseWriter, r *http
 		"count":       len(rows),
 	})
 }
-

@@ -219,9 +219,9 @@ func TestRenderPage_Wrapping(t *testing.T) {
 // auto-noindex flow surfaces in the rendered Astro.
 func TestRenderPage_NoIndexEmitsRobots(t *testing.T) {
 	page := store.Page{
-		ID:    "pg-2",
-		Slug:  "draft",
-		Title: "Draft",
+		ID:      "pg-2",
+		Slug:    "draft",
+		Title:   "Draft",
 		NoIndex: 1,
 	}
 	out := renderPage(page, []store.Block{}, map[string]string{})

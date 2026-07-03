@@ -95,7 +95,12 @@ type Querier interface {
 	CreateDesignReference(ctx context.Context, arg CreateDesignReferenceParams) error
 	CreateDiscountCode(ctx context.Context, arg CreateDiscountCodeParams) error
 	CreateDomain(ctx context.Context, arg CreateDomainParams) error
-	CreateEntityRevision(ctx context.Context, arg CreateEntityRevisionParams) error
+	// version_number is computed inside the INSERT so read and write are one
+	// atomic statement under SQLite's writer lock: two concurrent Record
+	// calls can no longer race SELECT MAX+1 into duplicate versions (which
+	// broke GetEntityRevisionByVersion :one and therefore restore). The
+	// unique index idx_entity_revisions_version is the schema backstop.
+	CreateEntityRevision(ctx context.Context, arg CreateEntityRevisionParams) (int64, error)
 	CreateEvaluation(ctx context.Context, arg CreateEvaluationParams) error
 	CreateForm(ctx context.Context, arg CreateFormParams) error
 	CreateFormSubmission(ctx context.Context, arg CreateFormSubmissionParams) error
@@ -182,7 +187,7 @@ type Querier interface {
 	DeleteSetting(ctx context.Context, id string) error
 	DeleteSettingsByCategory(ctx context.Context, arg DeleteSettingsByCategoryParams) error
 	DeleteShieldSession(ctx context.Context, id string) error
-	DeleteSilo(ctx context.Context, id string) error
+	DeleteSilo(ctx context.Context, arg DeleteSiloParams) error
 	DeleteSite(ctx context.Context, id string) error
 	DeleteSiteAppInstall(ctx context.Context, arg DeleteSiteAppInstallParams) error
 	DeleteSiteFont(ctx context.Context, arg DeleteSiteFontParams) error
@@ -273,7 +278,11 @@ type Querier interface {
 	GetSetting(ctx context.Context, arg GetSettingParams) (SiteSetting, error)
 	GetShieldSession(ctx context.Context, id string) (ShieldSession, error)
 	GetShieldToken(ctx context.Context, arg GetShieldTokenParams) (ShieldToken, error)
-	GetSiloByID(ctx context.Context, id string) (SiteSilo, error)
+	// The by-id silo queries are site-scoped preventively: they have no
+	// callers yet, and an unscoped WHERE id = ? is exactly the shape that
+	// caused the agent-API block IDORs. Whoever wires them inherits the
+	// tenant guard for free.
+	GetSiloByID(ctx context.Context, arg GetSiloByIDParams) (SiteSilo, error)
 	GetSiteAppInstall(ctx context.Context, arg GetSiteAppInstallParams) (SiteAppInstall, error)
 	// Site architecture
 	GetSiteArchitecture(ctx context.Context, siteID string) (SiteArchitecture, error)
@@ -473,7 +482,6 @@ type Querier interface {
 	MarkWebhookDeliveryRetrying(ctx context.Context, arg MarkWebhookDeliveryRetryingParams) error
 	MarkWebhookDeliverySucceeded(ctx context.Context, arg MarkWebhookDeliverySucceededParams) error
 	MarkWorkspaceInviteUsed(ctx context.Context, id string) error
-	NextEntityRevisionVersion(ctx context.Context, arg NextEntityRevisionVersionParams) (int64, error)
 	// Pageviews per UTC day for the requested window. Returned as ISO-date
 	// buckets so the frontend can render a sparkline / bar chart directly.
 	PageviewsTimeSeriesDaily(ctx context.Context, arg PageviewsTimeSeriesDailyParams) ([]PageviewsTimeSeriesDailyRow, error)
@@ -485,6 +493,10 @@ type Querier interface {
 	// than the cutoff are dropped. Unprocessed events stay forever so the
 	// operator can investigate.
 	PurgeOldBillingEvents(ctx context.Context, processedAt string) error
+	// Boot-time reaper: builds run in-process, so a crash or redeploy
+	// mid-build strands rows in 'pending'/'building' forever (the UI then
+	// shows a permanently-running build). Mirrors ReapStaleVerifyJobs.
+	ReapStaleDeployments(ctx context.Context) (int64, error)
 	ReapStaleVerifyJobs(ctx context.Context) error
 	// UNIQUE(provider, external_event_id) makes duplicate inserts no-op
 	// via INSERT OR IGNORE. Idempotency at the schema layer means handlers

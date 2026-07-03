@@ -38,3 +38,20 @@ func TestRenderSearchBoxBlock_ShowEmptyToggle(t *testing.T) {
 		t.Errorf("zero-results copy should not render when show_empty_state=false; got:\n%s", out)
 	}
 }
+
+// TestRenderSearchBoxBlock_ViewTransitionSafeInit pins the script
+// lifecycle contract: init must be idempotent (mount marker guard) and
+// re-run on astro:page-load, or search dies after the first soft
+// navigation on showcase (ClientRouter) sites.
+func TestRenderSearchBoxBlock_ViewTransitionSafeInit(t *testing.T) {
+	out := renderSearchBoxBlock(map[string]any{})
+	for _, want := range []string{
+		`astro:page-load`,
+		`data-pagefind-init`,
+		`document.readyState`,
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("expected %q in init script (view-transition safety); got:\n%s", want, out)
+		}
+	}
+}

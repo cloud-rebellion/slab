@@ -13,6 +13,7 @@
 	import Skeleton from '$lib/components/ui/Skeleton.svelte';
 	import EmptyState from '$lib/components/ui/EmptyState.svelte';
 	import ErrorState from '$lib/components/ui/ErrorState.svelte';
+	import { asGrade } from '$lib/evaluations/grade';
 	import type { Site, Evaluation } from '$lib/api/types';
 
 	let { data }: { data: { site: Site } } = $props();
@@ -31,11 +32,8 @@
 
 	const siteID = $derived(data.site.id);
 
-	type Grade = 'A+' | 'A' | 'B+' | 'B' | 'C' | 'D' | 'F';
-	const validGrades: Grade[] = ['A+', 'A', 'B+', 'B', 'C', 'D', 'F'];
-	function asGrade(value: string): Grade | null {
-		return (validGrades as string[]).includes(value) ? (value as Grade) : null;
-	}
+	// 13-grade helpers from the shared module: a local 7-grade fork here
+	// rendered 'None' whenever the latest eval carried a minus grade.
 
 	async function safeCount<T>(p: Promise<T>, count: (v: T) => number): Promise<number> {
 		try {

@@ -11,9 +11,9 @@ import (
 // vanish on restart.
 type MemoryStore struct {
 	mu       sync.Mutex
-	sessions map[string]time.Time            // id -> expiresAt
-	tokens   map[string]memoryToken          // token -> row
-	bySess   map[string]map[string]struct{}  // sessionID -> set of tokens
+	sessions map[string]time.Time           // id -> expiresAt
+	tokens   map[string]memoryToken         // token -> row
+	bySess   map[string]map[string]struct{} // sessionID -> set of tokens
 }
 
 type memoryToken struct {

@@ -1266,6 +1266,12 @@ CREATE TABLE IF NOT EXISTS entity_revisions (
 );
 CREATE INDEX IF NOT EXISTS idx_entity_revisions_lookup
     ON entity_revisions(site_id, entity_type, entity_id, version_number DESC);
+-- Backstop for the atomic version compute in CreateEntityRevision:
+-- duplicate versions per entity are a data corruption (restore breaks),
+-- refuse them at the schema level. main.go dedups pre-existing
+-- duplicates before this index is applied to older databases.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_entity_revisions_version
+    ON entity_revisions(site_id, entity_type, entity_id, version_number);
 CREATE INDEX IF NOT EXISTS idx_entity_revisions_site_created
     ON entity_revisions(site_id, created_at DESC);
 

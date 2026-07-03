@@ -23,7 +23,6 @@ package handlers
 import (
 	"crypto/rand"
 	"encoding/hex"
-	"errors"
 	"net/http"
 	"regexp"
 	"strings"
@@ -47,36 +46,36 @@ func NewWorkspaceHandler(cfg *config.Config, queries *store.Queries) *WorkspaceH
 }
 
 type workspaceView struct {
-	ID                  string `json:"id"`
-	Name                string `json:"name"`
-	Slug                string `json:"slug"`
-	Plan                string `json:"plan"`
-	Region              string `json:"region"`
-	BillingEmail        string `json:"billing_email"`
-	Status              string `json:"status"`
-	TrialEndsAt         string `json:"trial_ends_at"`
-	StripeCustomerID    string `json:"stripe_customer_id,omitempty"`
-	StripeSubscription  string `json:"stripe_subscription_id,omitempty"`
-	CreatedAt           string `json:"created_at"`
-	UpdatedAt           string `json:"updated_at"`
-	Role                string `json:"role,omitempty"`
+	ID                 string `json:"id"`
+	Name               string `json:"name"`
+	Slug               string `json:"slug"`
+	Plan               string `json:"plan"`
+	Region             string `json:"region"`
+	BillingEmail       string `json:"billing_email"`
+	Status             string `json:"status"`
+	TrialEndsAt        string `json:"trial_ends_at"`
+	StripeCustomerID   string `json:"stripe_customer_id,omitempty"`
+	StripeSubscription string `json:"stripe_subscription_id,omitempty"`
+	CreatedAt          string `json:"created_at"`
+	UpdatedAt          string `json:"updated_at"`
+	Role               string `json:"role,omitempty"`
 }
 
 func workspaceToView(w store.Workspace, role string) workspaceView {
 	return workspaceView{
-		ID:                  w.ID,
-		Name:                w.Name,
-		Slug:                w.Slug,
-		Plan:                w.Plan,
-		Region:              w.Region,
-		BillingEmail:        w.BillingEmail,
-		Status:              w.Status,
-		TrialEndsAt:         w.TrialEndsAt,
-		StripeCustomerID:    w.StripeCustomerID,
-		StripeSubscription:  w.StripeSubscriptionID,
-		CreatedAt:           w.CreatedAt,
-		UpdatedAt:           w.UpdatedAt,
-		Role:                role,
+		ID:                 w.ID,
+		Name:               w.Name,
+		Slug:               w.Slug,
+		Plan:               w.Plan,
+		Region:             w.Region,
+		BillingEmail:       w.BillingEmail,
+		Status:             w.Status,
+		TrialEndsAt:        w.TrialEndsAt,
+		StripeCustomerID:   w.StripeCustomerID,
+		StripeSubscription: w.StripeSubscriptionID,
+		CreatedAt:          w.CreatedAt,
+		UpdatedAt:          w.UpdatedAt,
+		Role:               role,
 	}
 }
 
@@ -131,19 +130,19 @@ func (h *WorkspaceHandler) ListMine(w http.ResponseWriter, r *http.Request) {
 	out := make([]workspaceView, 0, len(rows))
 	for _, row := range rows {
 		out = append(out, workspaceView{
-			ID:                  row.ID,
-			Name:                row.Name,
-			Slug:                row.Slug,
-			Plan:                row.Plan,
-			Region:              row.Region,
-			BillingEmail:        row.BillingEmail,
-			Status:              row.Status,
-			TrialEndsAt:         row.TrialEndsAt,
-			StripeCustomerID:    row.StripeCustomerID,
-			StripeSubscription:  row.StripeSubscriptionID,
-			CreatedAt:           row.CreatedAt,
-			UpdatedAt:           row.UpdatedAt,
-			Role:                row.Role,
+			ID:                 row.ID,
+			Name:               row.Name,
+			Slug:               row.Slug,
+			Plan:               row.Plan,
+			Region:             row.Region,
+			BillingEmail:       row.BillingEmail,
+			Status:             row.Status,
+			TrialEndsAt:        row.TrialEndsAt,
+			StripeCustomerID:   row.StripeCustomerID,
+			StripeSubscription: row.StripeSubscriptionID,
+			CreatedAt:          row.CreatedAt,
+			UpdatedAt:          row.UpdatedAt,
+			Role:               row.Role,
 		})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"workspaces": out})
@@ -434,12 +433,12 @@ func (h *WorkspaceHandler) CreateInvite(w http.ResponseWriter, r *http.Request) 
 	base := strings.TrimRight(h.cfg.BaseURL, "/")
 	url := base + "/cloud/signup/" + token
 	writeJSON(w, http.StatusCreated, map[string]any{
-		"id":          inviteID,
+		"id":           inviteID,
 		"workspace_id": id,
-		"email":       email,
-		"role":        role,
-		"token":       token,
-		"url":         url,
+		"email":        email,
+		"role":         role,
+		"token":        token,
+		"url":          url,
 	})
 }
 
@@ -477,8 +476,3 @@ func (h *WorkspaceHandler) ListSites(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"sites": rows})
 }
-
-// errSlugTaken is exported so the cloud signup flow can map it to a
-// 409 response. Today the handler maps any insert error to 400; a
-// follow-up can switch to introspecting sqlite UNIQUE violations.
-var errSlugTaken = errors.New("workspace slug already in use")

@@ -24,7 +24,7 @@ import (
 )
 
 type capturingMail struct {
-	mu sync.Mutex
+	mu    sync.Mutex
 	calls []capturedFormCall
 }
 type capturedFormCall struct {

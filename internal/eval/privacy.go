@@ -86,8 +86,15 @@ func RunPrivacyChecks(site *SiteContext) []CheckResult {
 	case len(detectedTrackers) == 0:
 		checks = append(checks, Pass("Tracker Count", "tracking", 2, "No trackers detected"))
 	case len(detectedTrackers) <= 2:
-		checks = append(checks, Pass("Tracker Count", "tracking", 1,
-			fmt.Sprintf("%d tracker(s) detected", len(detectedTrackers))))
+		// Honest partial split: a Pass with reduced weight scored 1/1
+		// (full credit) instead of 1/2; the denominator must keep the
+		// full weight.
+		checks = append(checks,
+			Pass("Tracker Count (within budget)", "tracking", 1,
+				fmt.Sprintf("%d tracker(s) detected (budget 2)", len(detectedTrackers))),
+			Fail("Tracker Count (zero-tracker goal)", "tracking", 1, SeverityInfo,
+				fmt.Sprintf("%d tracker(s) present; a tracker-free site scores full marks", len(detectedTrackers)),
+				"Consider the server-side atomicsite tracking (no client trackers) or Umami instead."))
 	default:
 		checks = append(checks, Fail("Tracker Count", "tracking", 2, SeverityWarning,
 			fmt.Sprintf("%d trackers detected", len(detectedTrackers)),

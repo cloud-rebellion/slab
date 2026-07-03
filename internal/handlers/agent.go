@@ -11,6 +11,7 @@ import (
 	"github.com/bright-interaction/slab/internal/builder"
 	"github.com/bright-interaction/slab/internal/config"
 	authmw "github.com/bright-interaction/slab/internal/middleware"
+	"github.com/bright-interaction/slab/internal/revisions"
 	"github.com/bright-interaction/slab/internal/store"
 )
 
@@ -21,6 +22,11 @@ type AgentHandler struct {
 	db         *sql.DB
 	context    *agent.ContextBuilder
 	guardrails *agent.GuardrailEngine
+	// recorder snapshots pages/blocks BEFORE agent mutations so the
+	// admin history + restore surface covers agent edits too. Agent
+	// writes used to destroy prior state with no undo while the restore
+	// tools advertised agent:{keyID} history.
+	recorder *revisions.Recorder
 
 	// surfaceFn returns the live MCP surface (tools, resources, prompts,
 	// curriculum) for the admin Settings -> Agent page. Set after MCP
@@ -50,6 +56,7 @@ func NewAgentHandler(cfg *config.Config, queries *store.Queries, db *sql.DB) *Ag
 		db:         db,
 		context:    agent.NewContextBuilder(queries),
 		guardrails: agent.NewGuardrailEngine(queries),
+		recorder:   revisions.New(queries),
 	}
 }
 
@@ -312,6 +319,15 @@ func (h *AgentHandler) UpdatePage(w http.ResponseWriter, r *http.Request) {
 		params.HideGlobalBlocks = *req.HideGlobalBlocks
 	}
 
+	recordRevision(h.recorder, r.Context(), revisions.RecordParams{
+		SiteID:        a.SiteID,
+		EntityType:    revisions.EntityTypePage,
+		EntityID:      page.ID,
+		Snapshot:      page,
+		ChangeSummary: "agent update via REST",
+		CreatedBy:     "agent:" + a.KeyID,
+	})
+
 	if err := h.queries.UpdatePage(r.Context(), params); err != nil {
 		writeError(w, http.StatusInternalServerError, "Failed to update page")
 		return
@@ -335,6 +351,15 @@ func (h *AgentHandler) DeletePage(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+
+	recordRevision(h.recorder, r.Context(), revisions.RecordParams{
+		SiteID:        a.SiteID,
+		EntityType:    revisions.EntityTypePage,
+		EntityID:      page.ID,
+		Snapshot:      page,
+		ChangeSummary: "pre-delete snapshot (agent REST)",
+		CreatedBy:     "agent:" + a.KeyID,
+	})
 
 	if err := h.queries.DeletePage(r.Context(), page.ID); err != nil {
 		writeError(w, http.StatusInternalServerError, "Failed to delete page")
@@ -483,6 +508,15 @@ func (h *AgentHandler) UpdateBlock(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	recordRevision(h.recorder, r.Context(), revisions.RecordParams{
+		SiteID:        a.SiteID,
+		EntityType:    revisions.EntityTypeBlock,
+		EntityID:      blockID,
+		Snapshot:      existing,
+		ChangeSummary: "agent update via REST",
+		CreatedBy:     "agent:" + a.KeyID,
+	})
+
 	err := h.queries.UpdateBlock(r.Context(), store.UpdateBlockParams{
 		ID:        blockID,
 		BlockType: blockType,
@@ -532,6 +566,15 @@ func (h *AgentHandler) DeleteBlock(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+
+	recordRevision(h.recorder, r.Context(), revisions.RecordParams{
+		SiteID:        a.SiteID,
+		EntityType:    revisions.EntityTypeBlock,
+		EntityID:      blockID,
+		Snapshot:      block,
+		ChangeSummary: "pre-delete snapshot (agent REST)",
+		CreatedBy:     "agent:" + a.KeyID,
+	})
 
 	if err := h.queries.DeleteBlock(r.Context(), blockID); err != nil {
 		writeError(w, http.StatusInternalServerError, "Failed to delete block")

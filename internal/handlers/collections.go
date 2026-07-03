@@ -413,7 +413,8 @@ func (h *CollectionHandler) DeleteItem(w http.ResponseWriter, r *http.Request) {
 // doesn't fail the whole call.
 //
 // POST /api/sites/{siteID}/collections/{collectionID}/items/bulk-delete
-//   body: {"ids":[...]}
+//
+//	body: {"ids":[...]}
 func (h *CollectionHandler) BulkDeleteItems(w http.ResponseWriter, r *http.Request) {
 	siteID := urlParam(r, "siteID")
 	collectionID := urlParam(r, "collectionID")

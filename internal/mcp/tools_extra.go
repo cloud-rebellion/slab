@@ -157,9 +157,9 @@ func (s *Server) registerExtraTools() {
 	})
 
 	register(Tool{
-		Name:        "delete_component",
-		Description: "Deletes a registered component by id. Cross-tenant guarded.",
-		InputSchema: schema(`{"type":"object","properties":{"id":{"type":"string"}},"required":["id"]}`),
+		Name:          "delete_component",
+		Description:   "Deletes a registered component by id. Cross-tenant guarded.",
+		InputSchema:   schema(`{"type":"object","properties":{"id":{"type":"string"}},"required":["id"]}`),
 		RequiresWrite: true,
 		Handler: func(ctx context.Context, agent *authmw.AgentIdentity, raw json.RawMessage) (string, error) {
 			var args struct {
@@ -265,9 +265,9 @@ func (s *Server) registerExtraTools() {
 	})
 
 	register(Tool{
-		Name:        "delete_css_class",
-		Description: "Deletes a CSS class by id. Cross-tenant guarded.",
-		InputSchema: schema(`{"type":"object","properties":{"id":{"type":"string"}},"required":["id"]}`),
+		Name:          "delete_css_class",
+		Description:   "Deletes a CSS class by id. Cross-tenant guarded.",
+		InputSchema:   schema(`{"type":"object","properties":{"id":{"type":"string"}},"required":["id"]}`),
 		RequiresWrite: true,
 		Handler: func(ctx context.Context, agent *authmw.AgentIdentity, raw json.RawMessage) (string, error) {
 			var args struct {
@@ -397,9 +397,9 @@ func (s *Server) registerExtraTools() {
 	})
 
 	register(Tool{
-		Name:        "delete_knowledgebase_entry",
-		Description: "Deletes a knowledgebase entry by id. Cross-tenant guarded.",
-		InputSchema: schema(`{"type":"object","properties":{"id":{"type":"string"}},"required":["id"]}`),
+		Name:          "delete_knowledgebase_entry",
+		Description:   "Deletes a knowledgebase entry by id. Cross-tenant guarded.",
+		InputSchema:   schema(`{"type":"object","properties":{"id":{"type":"string"}},"required":["id"]}`),
 		RequiresWrite: true,
 		Handler: func(ctx context.Context, agent *authmw.AgentIdentity, raw json.RawMessage) (string, error) {
 			var args struct {
@@ -483,9 +483,9 @@ func (s *Server) registerExtraTools() {
 	})
 
 	register(Tool{
-		Name:        "delete_guardrail",
-		Description: "Deletes a guardrail rule by id. Cross-tenant guarded.",
-		InputSchema: schema(`{"type":"object","properties":{"id":{"type":"string"}},"required":["id"]}`),
+		Name:          "delete_guardrail",
+		Description:   "Deletes a guardrail rule by id. Cross-tenant guarded.",
+		InputSchema:   schema(`{"type":"object","properties":{"id":{"type":"string"}},"required":["id"]}`),
 		RequiresWrite: true,
 		Handler: func(ctx context.Context, agent *authmw.AgentIdentity, raw json.RawMessage) (string, error) {
 			var args struct {
@@ -572,9 +572,9 @@ func (s *Server) registerExtraTools() {
 	})
 
 	register(Tool{
-		Name:        "revoke_allowed_script",
-		Description: "Revokes a whitelisted origin by id. The next build regenerates CSP directives without it.",
-		InputSchema: schema(`{"type":"object","properties":{"id":{"type":"string"}},"required":["id"]}`),
+		Name:          "revoke_allowed_script",
+		Description:   "Revokes a whitelisted origin by id. The next build regenerates CSP directives without it.",
+		InputSchema:   schema(`{"type":"object","properties":{"id":{"type":"string"}},"required":["id"]}`),
 		RequiresWrite: true,
 		Handler: func(ctx context.Context, agent *authmw.AgentIdentity, raw json.RawMessage) (string, error) {
 			var args struct {
@@ -620,9 +620,9 @@ func (s *Server) registerExtraTools() {
 	})
 
 	register(Tool{
-		Name:        "delete_font",
-		Description: "Removes an uploaded font by id. The id comes from list_fonts. Cross-tenant guarded.",
-		InputSchema: schema(`{"type":"object","properties":{"id":{"type":"string"}},"required":["id"]}`),
+		Name:          "delete_font",
+		Description:   "Removes an uploaded font by id. The id comes from list_fonts. Cross-tenant guarded.",
+		InputSchema:   schema(`{"type":"object","properties":{"id":{"type":"string"}},"required":["id"]}`),
 		RequiresWrite: true,
 		Handler: func(ctx context.Context, agent *authmw.AgentIdentity, raw json.RawMessage) (string, error) {
 			var args struct {
@@ -720,9 +720,9 @@ func (s *Server) registerExtraTools() {
 	})
 
 	register(Tool{
-		Name:        "delete_design_reference",
-		Description: "Removes a design reference by id. Cross-tenant guarded.",
-		InputSchema: schema(`{"type":"object","properties":{"id":{"type":"string"}},"required":["id"]}`),
+		Name:          "delete_design_reference",
+		Description:   "Removes a design reference by id. Cross-tenant guarded.",
+		InputSchema:   schema(`{"type":"object","properties":{"id":{"type":"string"}},"required":["id"]}`),
 		RequiresWrite: true,
 		Handler: func(ctx context.Context, agent *authmw.AgentIdentity, raw json.RawMessage) (string, error) {
 			var args struct {

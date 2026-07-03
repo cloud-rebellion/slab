@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -219,7 +220,9 @@ func (h *InvitesHandler) Redeem(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.queries.MarkInviteUsed(r.Context(), row.ID); err != nil {
-		// Non-fatal - the user is created. Log via stdlib elsewhere if desired.
+		// Non-fatal (the user is created), but an unmarked invite stays
+		// redeemable-looking forever, so it must be loud.
+		slog.Error("invites: user created but MarkInviteUsed failed; invite remains unmarked", "invite_id", row.ID, "err", err)
 	}
 
 	created, err := h.queries.GetUserByID(r.Context(), userID)

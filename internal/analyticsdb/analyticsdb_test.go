@@ -66,9 +66,9 @@ func seedTestDB(t *testing.T) (string, *sql.DB) {
 	// Engagement: fp_a is engaged (high scroll), fp_b is not, fp_c is not
 	for _, eng := range []struct {
 		id, fp, path string
-		scrollPct   int
+		scrollPct    int
 		timeOnPageMs int
-		ts          string
+		ts           string
 	}{
 		{"eng1", "fp_a", "/about", 80, 45000, rfc(t1)},
 		{"eng2", "fp_b", "/pricing", 20, 5000, rfc(t1)},

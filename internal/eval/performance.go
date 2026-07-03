@@ -14,10 +14,10 @@ import (
 // visible and scored. Performance fidelity keeps the balanced budgets:
 // they already permit perfect scores, the discipline is authorial.
 type perfBudget struct {
-	pageHTMLBytes  int64   // per-page HTML size cap
-	inlineCSSBytes int     // total <style> content cap per page
-	totalHTMLBytes int64   // site-wide dist HTML cap
-	lazyRatioNum   int     // required lazy-loaded fraction (num/den) of non-first images
+	pageHTMLBytes  int64 // per-page HTML size cap
+	inlineCSSBytes int   // total <style> content cap per page
+	totalHTMLBytes int64 // site-wide dist HTML cap
+	lazyRatioNum   int   // required lazy-loaded fraction (num/den) of non-first images
 	lazyRatioDen   int
 }
 
@@ -54,8 +54,12 @@ func RunPerformanceChecks(site *SiteContext) []CheckResult {
 	var checks []CheckResult
 	budget := perfBudgetFor(site.Fidelity)
 
-	// 1. Page weight (per-page HTML size — small approximation since we don't bundle assets)
-	checks = append(checks, perPageCheck(fmt.Sprintf("HTML Size < %dKB", budget.pageHTMLBytes/1024), "weight", 2, site, func(p PageContext) (bool, string) {
+	// 1. Page weight (per-page HTML size, a small approximation since we
+	// don't bundle assets). The check NAME is stable across fidelities
+	// (the budget lives in the detail): perfectfoundation.CheckOwnership
+	// and dashboards key on names, and a fidelity-dependent name broke
+	// that contract.
+	checks = append(checks, perPageCheck("HTML Size", "weight", 2, site, func(p PageContext) (bool, string) {
 		if p.FileSize > budget.pageHTMLBytes {
 			return false, fmt.Sprintf("%d bytes (budget %dKB, %s fidelity)", p.FileSize, budget.pageHTMLBytes/1024, budget.label(site.Fidelity))
 		}

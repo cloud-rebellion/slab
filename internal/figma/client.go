@@ -108,25 +108,25 @@ func (c *Client) FetchFileMeta(ctx context.Context, fileKey string) (*File, erro
 // `fills` array for color styles.
 type StyleNode struct {
 	Document struct {
-		ID     string         `json:"id"`
-		Name   string         `json:"name"`
-		Type   string         `json:"type"`
-		Style  *TextStyleData `json:"style,omitempty"`
-		Fills  []Fill         `json:"fills,omitempty"`
+		ID    string         `json:"id"`
+		Name  string         `json:"name"`
+		Type  string         `json:"type"`
+		Style *TextStyleData `json:"style,omitempty"`
+		Fills []Fill         `json:"fills,omitempty"`
 	} `json:"document"`
 }
 
 // TextStyleData mirrors the Figma TypeStyle shape.
 type TextStyleData struct {
-	FontFamily       string  `json:"fontFamily"`
-	FontPostScript   string  `json:"fontPostScriptName"`
-	FontWeight       float64 `json:"fontWeight"`
-	FontSize         float64 `json:"fontSize"`
-	LetterSpacing    float64 `json:"letterSpacing"`
-	LineHeightPx     float64 `json:"lineHeightPx"`
-	LineHeightUnit   string  `json:"lineHeightUnit"`
-	TextDecoration   string  `json:"textDecoration"`
-	TextCase         string  `json:"textCase"`
+	FontFamily     string  `json:"fontFamily"`
+	FontPostScript string  `json:"fontPostScriptName"`
+	FontWeight     float64 `json:"fontWeight"`
+	FontSize       float64 `json:"fontSize"`
+	LetterSpacing  float64 `json:"letterSpacing"`
+	LineHeightPx   float64 `json:"lineHeightPx"`
+	LineHeightUnit string  `json:"lineHeightUnit"`
+	TextDecoration string  `json:"textDecoration"`
+	TextCase       string  `json:"textCase"`
 }
 
 // Fill is a Figma SolidColor / Gradient entry. We only handle SolidColor.

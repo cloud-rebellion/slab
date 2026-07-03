@@ -16,18 +16,18 @@ import (
 // vhosts; we own those files and want certbot to stay in its lane.
 //
 // Webroot flow:
-//   1. atomicsite-acme.conf (written by EdgeWriter) serves
-//      /.well-known/acme-challenge/ from AcmeWebrootDir on port 80.
-//   2. We exec `certbot certonly --webroot -w <dir> -d <host>`.
-//   3. certbot drops a challenge file in
-//      AcmeWebrootDir/.well-known/acme-challenge/, hits the LE API,
-//      LE fetches the file, certbot writes the cert to
-//      /etc/letsencrypt/live/<host>/.
+//  1. atomicsite-acme.conf (written by EdgeWriter) serves
+//     /.well-known/acme-challenge/ from AcmeWebrootDir on port 80.
+//  2. We exec `certbot certonly --webroot -w <dir> -d <host>`.
+//  3. certbot drops a challenge file in
+//     AcmeWebrootDir/.well-known/acme-challenge/, hits the LE API,
+//     LE fetches the file, certbot writes the cert to
+//     /etc/letsencrypt/live/<host>/.
 type CertbotRunner struct {
-	BinaryPath  string // /usr/bin/certbot or empty to disable
-	WebrootDir  string
-	LiveDir     string // /etc/letsencrypt/live  (set explicitly so tests can override)
-	AdminEmail  string // reused as the LE registration email (any valid email works)
+	BinaryPath     string // /usr/bin/certbot or empty to disable
+	WebrootDir     string
+	LiveDir        string // /etc/letsencrypt/live  (set explicitly so tests can override)
+	AdminEmail     string // reused as the LE registration email (any valid email works)
 	NonInteractive bool
 	// Timeout caps the total certbot exec. LE rate limits + retries
 	// can push real runs past 60s; 5 minutes is safe.

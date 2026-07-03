@@ -231,18 +231,35 @@ func (h *OrderHandler) Refund(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadGateway, "Mollie refund failed: "+err.Error())
 		return
 	}
-	_ = h.queries.UpdateOrderRefundID(r.Context(), store.UpdateOrderRefundIDParams{
+	// Money has already moved at Mollie; a failed local write must not
+	// fail the refund, but it MUST be loud and land in the response so
+	// the operator reconciles the row instead of trusting a stale
+	// 'paid' status.
+	var reconcileWarnings []string
+	if err := h.queries.UpdateOrderRefundID(r.Context(), store.UpdateOrderRefundIDParams{
 		RefundID: refund.ID, ID: orderID, SiteID: siteID,
-	})
-	_ = h.queries.UpdateOrderStatus(r.Context(), store.UpdateOrderStatusParams{
+	}); err != nil {
+		slog.Error("refund: Mollie refund executed but persisting refund_id failed",
+			"order_id", orderID, "site_id", siteID, "refund_id", refund.ID, "err", err)
+		reconcileWarnings = append(reconcileWarnings, "refund_id not persisted; reconcile manually against Mollie refund "+refund.ID)
+	}
+	if err := h.queries.UpdateOrderStatus(r.Context(), store.UpdateOrderStatusParams{
 		Status:        "refunded",
 		PaymentStatus: o.PaymentStatus,
 		Column3:       "refunded", Column4: "refunded", Column5: "refunded", Column6: "refunded",
 		ID:     orderID,
 		SiteID: siteID,
-	})
+	}); err != nil {
+		slog.Error("refund: Mollie refund executed but status flip failed",
+			"order_id", orderID, "site_id", siteID, "refund_id", refund.ID, "err", err)
+		reconcileWarnings = append(reconcileWarnings, "order status still shows the pre-refund value; set it to refunded manually")
+	}
 	updated, _ := h.queries.GetOrderByID(r.Context(), store.GetOrderByIDParams{ID: orderID, SiteID: siteID})
 	out, _ := h.loadOut(r.Context(), updated)
+	if len(reconcileWarnings) > 0 {
+		writeJSON(w, http.StatusOK, map[string]any{"order": out, "reconcile_warnings": reconcileWarnings})
+		return
+	}
 	writeJSON(w, http.StatusOK, out)
 }
 
@@ -412,7 +429,18 @@ func (h *OrderHandler) Checkout(w http.ResponseWriter, r *http.Request) {
 	shippingJSON, _ := json.Marshal(in.ShippingAddress)
 	billingJSON, _ := json.Marshal(in.BillingAddress)
 
-	if err := h.queries.CreateOrder(ctx, store.CreateOrderParams{
+	// Order + items are one atomic write: a swallowed item insert used
+	// to leave a short order in the DB while Mollie charged the FULL
+	// total computed from all items (customer pays for a line the
+	// fulfilment view never shows).
+	tx, err := h.db.BeginTx(ctx, nil)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "create order failed: could not start transaction")
+		return
+	}
+	defer tx.Rollback()
+	qtx := h.queries.WithTx(tx)
+	if err := qtx.CreateOrder(ctx, store.CreateOrderParams{
 		ID:                  orderID,
 		SiteID:              siteID,
 		OrderNumber:         orderNumber,
@@ -440,7 +468,7 @@ func (h *OrderHandler) Checkout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	for _, v := range validated {
-		_ = h.queries.CreateOrderItem(ctx, store.CreateOrderItemParams{
+		if err := qtx.CreateOrderItem(ctx, store.CreateOrderItemParams{
 			ID:             newID(),
 			OrderID:        orderID,
 			VariantID:      v.Variant.ID,
@@ -451,7 +479,14 @@ func (h *OrderHandler) Checkout(w http.ResponseWriter, r *http.Request) {
 			Quantity:       v.Quantity,
 			UnitPriceCents: v.UnitPrice,
 			TotalCents:     v.LineTotal,
-		})
+		}); err != nil {
+			writeError(w, http.StatusInternalServerError, "create order failed: could not persist order items")
+			return
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		writeError(w, http.StatusInternalServerError, "create order failed: could not commit")
+		return
 	}
 
 	// Create Mollie payment. Skip if API key not configured (order stays

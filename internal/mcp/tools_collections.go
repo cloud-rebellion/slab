@@ -69,11 +69,11 @@ func (s *Server) registerCollectionTools() {
 		RequiresWrite: true,
 		Handler: func(ctx context.Context, agent *authmw.AgentIdentity, raw json.RawMessage) (string, error) {
 			var args struct {
-				Name      string                 `json:"name"`
-				Slug      string                 `json:"slug"`
-				Schema    []collectionFieldDef   `json:"schema"`
-				Settings  map[string]any         `json:"settings"`
-				SortOrder int64                  `json:"sort_order"`
+				Name      string               `json:"name"`
+				Slug      string               `json:"slug"`
+				Schema    []collectionFieldDef `json:"schema"`
+				Settings  map[string]any       `json:"settings"`
+				SortOrder int64                `json:"sort_order"`
 			}
 			if err := json.Unmarshal(raw, &args); err != nil {
 				return "", err
@@ -343,14 +343,14 @@ func (s *Server) registerCollectionTools() {
 		RequiresWrite: true,
 		Handler: func(ctx context.Context, agent *authmw.AgentIdentity, raw json.RawMessage) (string, error) {
 			var args struct {
-				ID          string          `json:"id"`
-				Slug        *string         `json:"slug"`
-				Title       *string         `json:"title"`
-				Data        map[string]any  `json:"data"`
-				Locale      *string         `json:"locale"`
-				Status      *string         `json:"status"`
-				PublishedAt *string         `json:"published_at"`
-				SortOrder   *int64          `json:"sort_order"`
+				ID          string         `json:"id"`
+				Slug        *string        `json:"slug"`
+				Title       *string        `json:"title"`
+				Data        map[string]any `json:"data"`
+				Locale      *string        `json:"locale"`
+				Status      *string        `json:"status"`
+				PublishedAt *string        `json:"published_at"`
+				SortOrder   *int64         `json:"sort_order"`
 			}
 			if err := json.Unmarshal(raw, &args); err != nil {
 				return "", err

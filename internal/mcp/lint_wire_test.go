@@ -73,4 +73,3 @@ func TestWireToolCallLintBlock_CleanHeroNoWarnings(t *testing.T) {
 		t.Errorf("expected zero design_warnings for clean hero; got %d (%s)", int(count), body[:min(500, len(body))])
 	}
 }
-

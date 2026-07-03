@@ -162,7 +162,7 @@ func (h *BlockHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if h.recorder != nil {
-		_ = h.recorder.Record(r.Context(), revisions.RecordParams{
+		recordRevision(h.recorder, r.Context(), revisions.RecordParams{
 			SiteID:        siteID,
 			EntityType:    revisions.EntityTypeBlock,
 			EntityID:      blockID,
@@ -231,7 +231,7 @@ func (h *BlockHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if h.recorder != nil {
-		_ = h.recorder.Record(r.Context(), revisions.RecordParams{
+		recordRevision(h.recorder, r.Context(), revisions.RecordParams{
 			SiteID:        siteID,
 			EntityType:    revisions.EntityTypeBlock,
 			EntityID:      blockID,

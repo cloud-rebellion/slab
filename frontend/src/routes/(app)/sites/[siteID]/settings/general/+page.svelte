@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { invalidateAll } from '$app/navigation';
 	import * as sitesApi from '$lib/api/sites';
 	import * as settingsApi from '$lib/api/settings';
 	import { ApiError } from '$lib/api/client';
@@ -219,6 +220,10 @@
 			if (Object.keys(sitePatch).length > 0) {
 				updatedSite = await sitesApi.update(siteID, sitePatch);
 				setSite(updatedSite);
+				// The [siteID] layout load is memoized by SvelteKit, so the
+				// site header keeps rendering the OLD name/domain until a
+				// hard reload without this.
+				await invalidateAll();
 			}
 
 			const items: settingsApi.SettingUpsertInput[] = [
@@ -383,13 +388,33 @@
 					was graded under. Security, privacy, accessibility and content
 					honesty are identical in all three.
 				</p>
+				<!-- ARIA radio pattern: roving tabindex (one tab stop for the
+				     whole group) + ArrowLeft/Up and ArrowRight/Down move the
+				     selection with wrap and follow focus. -->
 				<div class="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-3" role="radiogroup" aria-label="Design fidelity">
-					{#each fidelityOptions as opt (opt.value)}
+					{#each fidelityOptions as opt, i (opt.value)}
 						<button
 							type="button"
 							role="radio"
 							aria-checked={designFidelity === opt.value}
+							tabindex={designFidelity === opt.value ? 0 : -1}
 							onclick={() => (designFidelity = opt.value)}
+							onkeydown={(e) => {
+								const dir =
+									e.key === 'ArrowRight' || e.key === 'ArrowDown'
+										? 1
+										: e.key === 'ArrowLeft' || e.key === 'ArrowUp'
+											? -1
+											: 0;
+								if (dir === 0) return;
+								e.preventDefault();
+								const nextIdx = (i + dir + fidelityOptions.length) % fidelityOptions.length;
+								const next = fidelityOptions[nextIdx];
+								if (!next) return;
+								designFidelity = next.value;
+								const group = (e.currentTarget as HTMLElement).closest('[role="radiogroup"]');
+								group?.querySelectorAll<HTMLElement>('[role="radio"]')[nextIdx]?.focus();
+							}}
 							class="flex flex-col gap-1 rounded-lg border px-4 py-3 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent
 								{designFidelity === opt.value
 								? 'border-accent bg-bg-elevated ring-1 ring-accent'

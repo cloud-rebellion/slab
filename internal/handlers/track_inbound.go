@@ -34,12 +34,12 @@ type inboundRequest struct {
 // X-Atomicsite-Signature using the same global webhook secret used outbound,
 // so the relationship is symmetric.
 //
-//   401 - missing or invalid signature
-//   400 - malformed JSON / missing site_id / missing both identifiers
-//   404 - unknown site, OR no matching visit_sessions row
-//   413 - body too large (caps at trackBodyMaxBytes)
-//   503 - secret not configured (server admin must set BRIGHTCRM_WEBHOOK_SECRET)
-//   204 - success
+//	401 - missing or invalid signature
+//	400 - malformed JSON / missing site_id / missing both identifiers
+//	404 - unknown site, OR no matching visit_sessions row
+//	413 - body too large (caps at trackBodyMaxBytes)
+//	503 - secret not configured (server admin must set BRIGHTCRM_WEBHOOK_SECRET)
+//	204 - success
 func (h *TrackHandler) Inbound(w http.ResponseWriter, r *http.Request) {
 	// Dual-secret verifier (long-lived on TrackHandler so /admin/reload-secrets
 	// can hot-swap its values during a Dockyard rotation): accepts the current

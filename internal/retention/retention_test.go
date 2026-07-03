@@ -80,8 +80,8 @@ func TestSweepPurgesOldRowsKeepsRecent(t *testing.T) {
 		VALUES (?, ?, 'general', 'engagement_retention_days', '14')`, "s3", siteID)
 
 	now := time.Now().UTC()
-	old := now.AddDate(0, 0, -45).Format(time.RFC3339)        // 45 days back, well past 30/14
-	recent := now.AddDate(0, 0, -7).Format(time.RFC3339)      // last week, inside both windows
+	old := now.AddDate(0, 0, -45).Format(time.RFC3339)           // 45 days back, well past 30/14
+	recent := now.AddDate(0, 0, -7).Format(time.RFC3339)         // last week, inside both windows
 	oldEngagement := now.AddDate(0, 0, -20).Format(time.RFC3339) // past 14, inside 30
 	oldMs := now.AddDate(0, 0, -45).UnixMilli()
 	recentMs := now.AddDate(0, 0, -7).UnixMilli()

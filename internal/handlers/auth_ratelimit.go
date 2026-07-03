@@ -32,8 +32,8 @@ type loginRateLimiter struct {
 }
 
 type loginFailureCount struct {
-	count       int
-	firstFailMs int64
+	count         int
+	firstFailMs   int64
 	lockedUntilMs int64
 }
 

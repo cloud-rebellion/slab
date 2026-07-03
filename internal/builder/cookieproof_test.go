@@ -568,7 +568,7 @@ func TestBuildCookieProofConfig_InjectsDeclarations(t *testing.T) {
 		TextColor:      "#1A1A1A",
 	}
 	settings := map[string]string{
-		"analytics.ga4_enabled": "1",
+		"analytics.ga4_enabled":         "1",
 		"analytics.cookie_declarations": `[{"category":"marketing","name":"fbp","provider":"Meta","purpose":"Advertising","expiry":"3 months"}]`,
 	}
 	cfg := BuildCookieProofConfig(site, settings)

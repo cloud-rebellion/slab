@@ -13,8 +13,8 @@ func init() {
 
 type saasLandingKit struct{}
 
-func (k *saasLandingKit) ID() string          { return "saas-landing" }
-func (k *saasLandingKit) Name() string        { return "SaaS Landing Page" }
+func (k *saasLandingKit) ID() string   { return "saas-landing" }
+func (k *saasLandingKit) Name() string { return "SaaS Landing Page" }
 func (k *saasLandingKit) Description() string {
 	return "Modern English SaaS marketing site. Hero, features, pricing, testimonials, FAQ, CTA, docs hub."
 }

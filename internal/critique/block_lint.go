@@ -31,11 +31,11 @@ type LintFinding struct {
 // page. Soft warnings (headline length, hero quality, content tone)
 // stay non-blocking so the agent can still ship a draft and revise.
 var BlockingFindingNames = map[string]struct{}{
-	"slop_term":        {},
-	"slop_name":        {},
-	"slop_company":     {},
-	"slop_number":      {},
-	"archetype_drift":  {},
+	"slop_term":       {},
+	"slop_name":       {},
+	"slop_company":    {},
+	"slop_number":     {},
+	"archetype_drift": {},
 }
 
 // HasBlockingFindings reports whether any finding in the slice should

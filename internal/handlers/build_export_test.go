@@ -91,10 +91,10 @@ func TestExportDistZip_HappyPath(t *testing.T) {
 	siteID := "abcdef0123456789abcdef00"
 	seedSiteAndDeploy(t, sqlDB, q, siteID, "demo", "succeeded")
 	plantDist(t, dataDir, siteID, map[string]string{
-		"index.html":           "<!doctype html><h1>Hi</h1>",
-		"about/index.html":     "<!doctype html><h1>About</h1>",
-		"_astro/styles.css":    "body{margin:0}",
-		"images/logo.png":      "fake-png-bytes",
+		"index.html":        "<!doctype html><h1>Hi</h1>",
+		"about/index.html":  "<!doctype html><h1>About</h1>",
+		"_astro/styles.css": "body{margin:0}",
+		"images/logo.png":   "fake-png-bytes",
 	})
 	_ = q
 
@@ -383,12 +383,12 @@ func TestBuildExportFilename_Sanitizes(t *testing.T) {
 
 func TestSafeSlugForFilename(t *testing.T) {
 	cases := map[string]string{
-		"my-site":              "my-site",
-		"My Site":              "my-site",
-		"a/b/c":                "a-b-c",
+		"my-site":                "my-site",
+		"My Site":                "my-site",
+		"a/b/c":                  "a-b-c",
 		"-leading-and-trailing-": "leading-and-trailing",
-		"a..b..c":              "a-b-c",
-		"":                     "",
+		"a..b..c":                "a-b-c",
+		"":                       "",
 	}
 	for in, want := range cases {
 		if got := safeSlugForFilename(in); got != want {

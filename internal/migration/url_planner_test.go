@@ -221,12 +221,12 @@ func TestPlanURLs_CollectionItemsTracked(t *testing.T) {
 
 func TestNormalizePath_CollisionKey(t *testing.T) {
 	cases := map[string]string{
-		"/About-Us":         "/about-us",
-		"/about-us/":        "/about-us",
-		"/about-us.html":    "/about-us",
-		"/about-us.HTML":    "/about-us",
-		"/about-us?ref=x":   "/about-us",
-		"/":                 "/",
+		"/About-Us":       "/about-us",
+		"/about-us/":      "/about-us",
+		"/about-us.html":  "/about-us",
+		"/about-us.HTML":  "/about-us",
+		"/about-us?ref=x": "/about-us",
+		"/":               "/",
 	}
 	for in, want := range cases {
 		if got := normalizePath(in); got != want {

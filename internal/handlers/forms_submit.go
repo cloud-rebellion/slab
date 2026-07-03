@@ -336,13 +336,13 @@ func (h *FormHandler) ListAdminForms(w http.ResponseWriter, r *http.Request) {
 	for _, f := range forms {
 		subs, _ := h.queries.ListFormSubmissions(r.Context(), f.ID)
 		out = append(out, map[string]any{
-			"id":            f.ID,
-			"name":          f.Name,
-			"action":        f.Action,
-			"action_config": f.ActionConfig,
-			"fields_json":   f.FieldsJson,
-			"created_at":    f.CreatedAt,
-			"updated_at":    f.UpdatedAt,
+			"id":               f.ID,
+			"name":             f.Name,
+			"action":           f.Action,
+			"action_config":    f.ActionConfig,
+			"fields_json":      f.FieldsJson,
+			"created_at":       f.CreatedAt,
+			"updated_at":       f.UpdatedAt,
 			"submission_count": len(subs),
 		})
 	}

@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	authmw "github.com/bright-interaction/slab/internal/middleware"
 	"github.com/bright-interaction/slab/internal/knowledge"
+	authmw "github.com/bright-interaction/slab/internal/middleware"
 )
 
 // registerKnowledgeResources exposes the curriculum in

@@ -51,27 +51,27 @@ const (
 // ----- Ghost shapes -----
 
 type ghostPost struct {
-	ID            string    `json:"id"`
-	UUID          string    `json:"uuid"`
-	Slug          string    `json:"slug"`
-	Title         string    `json:"title"`
-	HTML          string    `json:"html"`
-	FeatureImage  string    `json:"feature_image"`
-	FeatureImageAlt string  `json:"feature_image_alt"`
-	Excerpt       string    `json:"excerpt"`
-	CustomExcerpt string    `json:"custom_excerpt"`
-	URL           string    `json:"url"`
-	CreatedAt     string    `json:"created_at"`
-	UpdatedAt     string    `json:"updated_at"`
-	PublishedAt   string    `json:"published_at"`
-	MetaTitle     string    `json:"meta_title"`
-	MetaDescription string  `json:"meta_description"`
-	OGTitle       string    `json:"og_title"`
-	OGDescription string    `json:"og_description"`
-	OGImage       string    `json:"og_image"`
-	Visibility    string    `json:"visibility"`
-	Tags          []ghostTag `json:"tags"`
-	Authors       []ghostAuthor `json:"authors"`
+	ID              string        `json:"id"`
+	UUID            string        `json:"uuid"`
+	Slug            string        `json:"slug"`
+	Title           string        `json:"title"`
+	HTML            string        `json:"html"`
+	FeatureImage    string        `json:"feature_image"`
+	FeatureImageAlt string        `json:"feature_image_alt"`
+	Excerpt         string        `json:"excerpt"`
+	CustomExcerpt   string        `json:"custom_excerpt"`
+	URL             string        `json:"url"`
+	CreatedAt       string        `json:"created_at"`
+	UpdatedAt       string        `json:"updated_at"`
+	PublishedAt     string        `json:"published_at"`
+	MetaTitle       string        `json:"meta_title"`
+	MetaDescription string        `json:"meta_description"`
+	OGTitle         string        `json:"og_title"`
+	OGDescription   string        `json:"og_description"`
+	OGImage         string        `json:"og_image"`
+	Visibility      string        `json:"visibility"`
+	Tags            []ghostTag    `json:"tags"`
+	Authors         []ghostAuthor `json:"authors"`
 }
 
 type ghostTag struct {
@@ -84,12 +84,12 @@ type ghostTag struct {
 }
 
 type ghostAuthor struct {
-	ID            string `json:"id"`
-	Name          string `json:"name"`
-	Slug          string `json:"slug"`
-	ProfileImage  string `json:"profile_image"`
-	Email         string `json:"email"`
-	URL           string `json:"url"`
+	ID           string `json:"id"`
+	Name         string `json:"name"`
+	Slug         string `json:"slug"`
+	ProfileImage string `json:"profile_image"`
+	Email        string `json:"email"`
+	URL          string `json:"url"`
 }
 
 type ghostMeta struct {

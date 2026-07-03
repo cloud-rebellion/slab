@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"log/slog"
 	"net/http"
 
 	"github.com/bright-interaction/slab/internal/builder"
@@ -129,13 +130,21 @@ func (h *SettingsHandler) BulkUpsert(w http.ResponseWriter, r *http.Request) {
 		if s.Category == "analytics" {
 			touchedAnalytics = true
 		}
-		_ = h.queries.UpsertSetting(r.Context(), store.UpsertSettingParams{
+		if err := h.queries.UpsertSetting(r.Context(), store.UpsertSettingParams{
 			ID:       newID(),
 			SiteID:   siteID,
 			Category: s.Category,
 			Key:      s.Key,
 			Value:    s.Value,
-		})
+		}); err != nil {
+			// Batch was pre-validated, so this is infrastructure-level.
+			// Stop and say exactly where it broke; a 200 with silently
+			// dropped keys is how half-applied state used to ship.
+			slog.Error("settings: bulk upsert write failed", "site_id", siteID, "key", s.Category+"."+s.Key, "err", err)
+			writeError(w, http.StatusInternalServerError,
+				"Failed to apply settings batch at "+s.Category+"."+s.Key+"; keys before it were written, keys after were not")
+			return
+		}
 	}
 
 	if touchedAnalytics && h.onAnalyticsChange != nil {
@@ -210,16 +219,16 @@ func (h *SettingsHandler) SecurityPreview(w http.ResponseWriter, r *http.Request
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"csp":                                hdrs.CSP,
-		"hsts":                               hdrs.HSTS,
-		"x_frame_options":                    hdrs.XFrameOptions,
-		"x_content_type_options":             hdrs.XContentTypeOptions,
-		"referrer_policy":                    hdrs.ReferrerPolicy,
-		"permissions_policy":                 hdrs.PermissionsPolicy,
-		"cross_origin_opener_policy":         hdrs.COOP,
-		"cross_origin_resource_policy":       hdrs.CORP,
-		"cross_origin_embedder_policy":       hdrs.COEP,
-		"x_permitted_cross_domain_policies":  hdrs.XPermittedCrossDomainPolicies,
-		"x_xss_protection":                   hdrs.XXSSProtection,
+		"csp":                               hdrs.CSP,
+		"hsts":                              hdrs.HSTS,
+		"x_frame_options":                   hdrs.XFrameOptions,
+		"x_content_type_options":            hdrs.XContentTypeOptions,
+		"referrer_policy":                   hdrs.ReferrerPolicy,
+		"permissions_policy":                hdrs.PermissionsPolicy,
+		"cross_origin_opener_policy":        hdrs.COOP,
+		"cross_origin_resource_policy":      hdrs.CORP,
+		"cross_origin_embedder_policy":      hdrs.COEP,
+		"x_permitted_cross_domain_policies": hdrs.XPermittedCrossDomainPolicies,
+		"x_xss_protection":                  hdrs.XXSSProtection,
 	})
 }

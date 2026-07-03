@@ -64,16 +64,16 @@ type CheckoutCallResult struct {
 // WebhookCallResult is the resolved payment status the EE shim
 // returns to the OSS-shaped webhook handler.
 type WebhookCallResult struct {
-	PaymentID    string
-	Status       string
-	Description  string
-	CustomerID   string
-	WorkspaceID  string
-	PlanKey      string
-	AmountCents  int64
-	Currency     string
-	Mode         string
-	RawJSON      string
+	PaymentID   string
+	Status      string
+	Description string
+	CustomerID  string
+	WorkspaceID string
+	PlanKey     string
+	AmountCents int64
+	Currency    string
+	Mode        string
+	RawJSON     string
 }
 
 // NewBillingHandler is called by both builds. The EE build uses
@@ -133,20 +133,20 @@ func (h *BillingHandler) StartCheckout(w http.ResponseWriter, r *http.Request) {
 	}
 	subID := newID()
 	if err := h.queries.CreateSubscription(r.Context(), store.CreateSubscriptionParams{
-		ID:                  subID,
-		WorkspaceID:         ws.ID,
-		Provider:            "mollie",
-		ExternalID:          res.PaymentID, // payment id at first; webhook upgrades to subscription id
-		ExternalCustomerID:  res.CustomerID,
-		Plan:                plan.Key,
-		Status:              "pending",
-		AmountCents:         plan.PriceCents,
-		Currency:            plan.Currency,
-		IntervalUnit:        "months",
-		IntervalCount:       1,
-		CurrentPeriodEnd:    "",
-		CancelAt:            "",
-		MetadataJson:        `{"first_payment_id":"` + res.PaymentID + `"}`,
+		ID:                 subID,
+		WorkspaceID:        ws.ID,
+		Provider:           "mollie",
+		ExternalID:         res.PaymentID, // payment id at first; webhook upgrades to subscription id
+		ExternalCustomerID: res.CustomerID,
+		Plan:               plan.Key,
+		Status:             "pending",
+		AmountCents:        plan.PriceCents,
+		Currency:           plan.Currency,
+		IntervalUnit:       "months",
+		IntervalCount:      1,
+		CurrentPeriodEnd:   "",
+		CancelAt:           "",
+		MetadataJson:       `{"first_payment_id":"` + res.PaymentID + `"}`,
 	}); err != nil {
 		writeError(w, http.StatusInternalServerError, "Failed to record subscription")
 		return
@@ -204,12 +204,12 @@ func (h *BillingHandler) Webhook(w http.ResponseWriter, r *http.Request) {
 	// the same row and does nothing.
 	eventID := newID()
 	_ = h.queries.RecordBillingEvent(r.Context(), store.RecordBillingEventParams{
-		ID:                eventID,
-		WorkspaceID:       "",
-		Provider:          "mollie",
-		ExternalEventID:   paymentID,
-		EventType:         "payment.notification",
-		PayloadJson:       `{"id":"` + paymentID + `"}`,
+		ID:              eventID,
+		WorkspaceID:     "",
+		Provider:        "mollie",
+		ExternalEventID: paymentID,
+		EventType:       "payment.notification",
+		PayloadJson:     `{"id":"` + paymentID + `"}`,
 	})
 	res, err := h.webhookImpl(r.Context(), paymentID)
 	if err != nil {
@@ -284,4 +284,3 @@ func (h *BillingHandler) Webhook(w http.ResponseWriter, r *http.Request) {
 	})
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "payment_status": res.Status})
 }
-

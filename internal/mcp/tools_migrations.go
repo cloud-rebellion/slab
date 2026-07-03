@@ -26,7 +26,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
+	"time"
 	"unicode"
 
 	authmw "github.com/bright-interaction/slab/internal/middleware"
@@ -104,7 +106,7 @@ func (s *Server) registerMigrationTools() {
 
 	register(Tool{
 		Name:        "start_migration_crawl",
-		Description: "Crawls a source CMS and stores the parsed manifest. SYNCHRONOUS - large WordPress sites (1000+ posts) take minutes. Set source_type to one of: sitemap, wordpress, webflow, ghost. Auth varies per source: WordPress uses Application Password via wordpress_auth_header (\"Basic base64(user:apppass)\"); Webflow needs webflow_site_id + webflow_auth_token; Ghost needs ghost_content_key. Returns the new migration's id and status (typically 'ready'). Status flow: pending -> ready (after parse) -> applied (after apply_migration) | failed.",
+		Description: "Starts an ASYNC crawl of a source CMS and stores the parsed manifest when done. Returns immediately with the migration id and status 'crawling'; poll get_migration until status is 'ready' (then plan_migration/apply_migration) or 'failed' (error field explains). Large WordPress sites (1000+ posts) take minutes, which is why the crawl no longer runs inside the request (it used to exceed the server's write timeout and the response was lost). Set source_type to one of: sitemap, wordpress, webflow, ghost. Auth varies per source: WordPress uses Application Password via wordpress_auth_header (\"Basic base64(user:apppass)\"); Webflow needs webflow_site_id + webflow_auth_token; Ghost needs ghost_content_key. Status flow: crawling -> ready -> applied | failed.",
 		InputSchema: schema(`{
 			"type":"object",
 			"properties":{
@@ -120,12 +122,12 @@ func (s *Server) registerMigrationTools() {
 		RequiresWrite: true,
 		Handler: func(ctx context.Context, agent *authmw.AgentIdentity, raw json.RawMessage) (string, error) {
 			var args struct {
-				SourceType         string `json:"source_type"`
-				SourceURL          string `json:"source_url"`
-				WordPressAuth      string `json:"wordpress_auth_header"`
-				WebflowSiteID      string `json:"webflow_site_id"`
-				WebflowAuthToken   string `json:"webflow_auth_token"`
-				GhostContentKey    string `json:"ghost_content_key"`
+				SourceType       string `json:"source_type"`
+				SourceURL        string `json:"source_url"`
+				WordPressAuth    string `json:"wordpress_auth_header"`
+				WebflowSiteID    string `json:"webflow_site_id"`
+				WebflowAuthToken string `json:"webflow_auth_token"`
+				GhostContentKey  string `json:"ghost_content_key"`
 			}
 			if err := json.Unmarshal(raw, &args); err != nil {
 				return "", err
@@ -133,29 +135,43 @@ func (s *Server) registerMigrationTools() {
 			if args.SourceURL == "" {
 				return "", errors.New("source_url is required")
 			}
-			manifest, err := runMCPImporter(ctx, args.SourceType, args.SourceURL, args.WordPressAuth, args.WebflowSiteID, args.WebflowAuthToken, args.GhostContentKey)
-			if err != nil {
-				return "", err
-			}
-			manifestJSON, err := json.Marshal(manifest)
-			if err != nil {
-				return "", fmt.Errorf("encode manifest: %w", err)
-			}
+			// Create the row first, then crawl in the background: a
+			// multi-minute crawl inside the JSON-RPC request used to
+			// blow past the HTTP server's write timeout, so the tool
+			// result never reached the agent even when the crawl worked.
 			id := newID()
 			if err := s.queries.CreateMigration(ctx, store.CreateMigrationParams{
 				ID: id, SiteID: agent.SiteID, SourceUrl: args.SourceURL, SourceType: args.SourceType,
-				ManifestJson: string(manifestJSON), Status: "ready", Error: "",
+				ManifestJson: "{}", Status: "crawling", Error: "",
 			}); err != nil {
 				return "", err
 			}
+			go func() {
+				crawlCtx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
+				defer cancel()
+				manifest, err := runMCPImporter(crawlCtx, args.SourceType, args.SourceURL, args.WordPressAuth, args.WebflowSiteID, args.WebflowAuthToken, args.GhostContentKey)
+				if err == nil {
+					var manifestJSON []byte
+					manifestJSON, err = json.Marshal(manifest)
+					if err == nil {
+						err = s.queries.UpdateMigrationManifest(crawlCtx, store.UpdateMigrationManifestParams{
+							ManifestJson: string(manifestJSON), Status: "ready", Error: "", ID: id,
+						})
+					}
+				}
+				if err != nil {
+					slog.Warn("migration crawl failed", "migration_id", id, "site_id", agent.SiteID, "err", err)
+					if uerr := s.queries.UpdateMigrationStatus(context.Background(), store.UpdateMigrationStatusParams{
+						ID: id, Status: "failed", Error: err.Error(),
+					}); uerr != nil {
+						slog.Error("migration crawl: persisting failed status failed", "migration_id", id, "err", uerr)
+					}
+				}
+			}()
 			return mustJSON(map[string]any{
 				"id":     id,
-				"status": "ready",
-				"stats": map[string]any{
-					"pages":       manifest.Stats.PagesFound,
-					"collections": manifest.Stats.CollectionsFound,
-					"media":       manifest.Stats.MediaFound,
-				},
+				"status": "crawling",
+				"hint":   "Crawl runs in the background. Poll get_migration with this id until status is ready (then plan_migration), or failed (error field explains).",
 			}), nil
 		},
 	})
@@ -291,9 +307,13 @@ func (s *Server) registerMigrationTools() {
 				})
 				return "", err
 			}
-			_ = s.queries.UpdateMigrationStatus(ctx, store.UpdateMigrationStatusParams{
+			if err := s.queries.UpdateMigrationStatus(ctx, store.UpdateMigrationStatusParams{
 				ID: args.MigrationID, Status: "applied", Error: "",
-			})
+			}); err != nil {
+				// The apply itself succeeded; a stuck 'ready' status
+				// invites a second apply (duplicate pages), so be loud.
+				slog.Error("migration: apply succeeded but status flip to applied failed", "migration_id", args.MigrationID, "site_id", agent.SiteID, "err", err)
+			}
 			return mustJSON(result), nil
 		},
 	})

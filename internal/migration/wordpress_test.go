@@ -16,11 +16,11 @@ import (
 
 func TestNormalizeWPBaseURL_AcceptsAllThreeShapes(t *testing.T) {
 	cases := map[string]string{
-		"https://example.com":              "https://example.com/wp-json/wp/v2",
-		"https://example.com/":             "https://example.com/wp-json/wp/v2",
-		"https://example.com/wp-json":      "https://example.com/wp-json/wp/v2",
-		"https://example.com/wp-json/":     "https://example.com/wp-json/wp/v2",
-		"https://example.com/wp-json/wp/v2": "https://example.com/wp-json/wp/v2",
+		"https://example.com":                  "https://example.com/wp-json/wp/v2",
+		"https://example.com/":                 "https://example.com/wp-json/wp/v2",
+		"https://example.com/wp-json":          "https://example.com/wp-json/wp/v2",
+		"https://example.com/wp-json/":         "https://example.com/wp-json/wp/v2",
+		"https://example.com/wp-json/wp/v2":    "https://example.com/wp-json/wp/v2",
 		"  https://example.com/wp-json/wp/v2/": "https://example.com/wp-json/wp/v2",
 	}
 	for in, want := range cases {
@@ -34,11 +34,11 @@ func TestNormalizeWPBaseURL_AcceptsAllThreeShapes(t *testing.T) {
 
 func TestStripHTMLTags(t *testing.T) {
 	cases := map[string]string{
-		"<p>Hello <strong>world</strong></p>":       "Hello world",
-		"Plain text":                                 "Plain text",
-		"":                                           "",
-		"   <em>spaced</em>   ":                      "spaced",
-		"<p>Multi&nbsp;entity &amp; more</p>":       "Multi entity & more",
+		"<p>Hello <strong>world</strong></p>": "Hello world",
+		"Plain text":                          "Plain text",
+		"":                                    "",
+		"   <em>spaced</em>   ":               "spaced",
+		"<p>Multi&nbsp;entity &amp; more</p>": "Multi entity & more",
 	}
 	for in, want := range cases {
 		if got := stripHTMLTags(in); got != want {
@@ -294,21 +294,21 @@ func TestWordPress_CrawlMapsPagesPostsCategoriesTagsAndMedia(t *testing.T) {
 	fw.posts = []wpPage{
 		{
 			ID: 50, Slug: "first-post", Status: "publish",
-			DateGMT: "2024-02-20T09:30:00",
-			Title:   wpRendered{Rendered: "First &amp; Best Post"},
-			Content: wpRendered{Rendered: `<p>Body</p><img src="/wp-content/uploads/inline.png">`},
-			Excerpt: wpRendered{Rendered: "<p>Excerpt.</p>"},
-			Link:    fw.srv.URL + "/posts/first-post/",
+			DateGMT:       "2024-02-20T09:30:00",
+			Title:         wpRendered{Rendered: "First &amp; Best Post"},
+			Content:       wpRendered{Rendered: `<p>Body</p><img src="/wp-content/uploads/inline.png">`},
+			Excerpt:       wpRendered{Rendered: "<p>Excerpt.</p>"},
+			Link:          fw.srv.URL + "/posts/first-post/",
 			FeaturedMedia: 100,
 			Categories:    []int64{10},
 			Tags:          []int64{20, 21},
 		},
 		{
 			ID: 51, Slug: "second-post", Status: "publish",
-			DateGMT: "2024-03-01T15:00:00",
-			Title:   wpRendered{Rendered: "Second"},
-			Content: wpRendered{Rendered: "<p>Two</p>"},
-			Link:    fw.srv.URL + "/posts/second-post/",
+			DateGMT:    "2024-03-01T15:00:00",
+			Title:      wpRendered{Rendered: "Second"},
+			Content:    wpRendered{Rendered: "<p>Two</p>"},
+			Link:       fw.srv.URL + "/posts/second-post/",
 			Categories: []int64{11},
 		},
 	}

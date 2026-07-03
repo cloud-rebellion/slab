@@ -12,8 +12,8 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
-	_ "modernc.org/sqlite"
 	"golang.org/x/crypto/bcrypt"
+	_ "modernc.org/sqlite"
 
 	"github.com/bright-interaction/slab/internal/config"
 	dbpkg "github.com/bright-interaction/slab/internal/db"

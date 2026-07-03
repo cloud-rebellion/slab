@@ -152,12 +152,12 @@ func TestParseLimit(t *testing.T) {
 		max  int64
 		want int64
 	}{
-		{"", 100, 1000, 100},     // default
-		{"50", 100, 1000, 50},    // explicit
+		{"", 100, 1000, 100},       // default
+		{"50", 100, 1000, 50},      // explicit
 		{"99999", 100, 1000, 1000}, // clamped to max
-		{"-5", 100, 1000, 100},   // negative -> default
-		{"abc", 100, 1000, 100},  // junk -> default
-		{"0", 100, 1000, 100},    // zero -> default (we treat as invalid)
+		{"-5", 100, 1000, 100},     // negative -> default
+		{"abc", 100, 1000, 100},    // junk -> default
+		{"0", 100, 1000, 100},      // zero -> default (we treat as invalid)
 	}
 	for _, c := range cases {
 		r := httptest.NewRequest("GET", "/x?limit="+c.raw, nil)

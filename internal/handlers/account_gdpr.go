@@ -46,12 +46,12 @@ func NewAccountGDPRHandler(queries *store.Queries) *AccountGDPRHandler {
 // The archive contains JSON files (one per resource type) so the
 // user can re-import elsewhere or audit what we have. Files:
 //
-//   user.json                 - profile + audit timestamps
-//   workspaces.json           - every workspace the user is a member of
-//   sites.json                - sites the user has access to
-//   pages.json                - per-site pages
-//   collections.json          - per-site collections + items
-//   audit_log.json            - audit-log rows where actor_user_id matches
+//	user.json                 - profile + audit timestamps
+//	workspaces.json           - every workspace the user is a member of
+//	sites.json                - sites the user has access to
+//	pages.json                - per-site pages
+//	collections.json          - per-site collections + items
+//	audit_log.json            - audit-log rows where actor_user_id matches
 //
 // Streamed (not buffered) so the response can scale to large workspaces
 // without blowing the goroutine memory.
@@ -100,8 +100,8 @@ func (h *AccountGDPRHandler) Export(w http.ResponseWriter, r *http.Request) {
 		"updated_at":            row.UpdatedAt,
 		"totp_enrolled_at":      row.TotpEnrolledAt,
 		"deletion_requested_at": row.DeletionRequestedAt,
-		"_redactions": []string{"password_hash", "totp_secret", "totp_recovery_json"},
-		"_note":       "Auth secrets are intentionally redacted. The hashes have no value to a downstream system you'd import this into; if you want to verify enrollment status use totp_enrolled_at.",
+		"_redactions":           []string{"password_hash", "totp_secret", "totp_recovery_json"},
+		"_note":                 "Auth secrets are intentionally redacted. The hashes have no value to a downstream system you'd import this into; if you want to verify enrollment status use totp_enrolled_at.",
 	})
 
 	// Workspaces the user is a member of. Each list is capped at

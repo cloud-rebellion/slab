@@ -2,7 +2,6 @@ package mcp
 
 import (
 	"context"
-	"errors"
 
 	authmw "github.com/bright-interaction/slab/internal/middleware"
 )
@@ -107,8 +106,3 @@ func (s *Server) registerResources() {
 	s.registerKnowledgeResources()
 	s.registerServiceContextResources()
 }
-
-// errResourceNotFound is returned when a Reader can't resolve its URI to
-// real data (e.g. a deleted resource is still listed somewhere stale).
-// Centralised so all resource readers stay consistent.
-var errResourceNotFound = errors.New("resource not found")

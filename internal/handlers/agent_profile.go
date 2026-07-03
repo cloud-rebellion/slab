@@ -11,6 +11,8 @@
 package handlers
 
 import (
+	"database/sql"
+	"errors"
 	"net/http"
 
 	"github.com/bright-interaction/slab/internal/store"
@@ -86,8 +88,14 @@ func (h *AgentHandler) UpdateProfile(w http.ResponseWriter, r *http.Request) {
 
 	// Read current state, overlay the patch, upsert. UpsertSiteProfile is a
 	// full-row write, so we have to load first to avoid clearing fields the
-	// caller didn't touch.
-	current, _ := h.queries.GetSiteProfile(r.Context(), a.SiteID)
+	// caller didn't touch. A read ERROR (unlike no-row-yet) must abort:
+	// overlaying a partial PATCH onto a zero-value current would
+	// full-row-upsert empty strings over every field the caller omitted.
+	current, err := h.queries.GetSiteProfile(r.Context(), a.SiteID)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		writeError(w, http.StatusInternalServerError, "Failed to load current profile; patch not applied")
+		return
+	}
 
 	pickStr := func(p *string, fallback string) string {
 		if p == nil {

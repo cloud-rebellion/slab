@@ -98,9 +98,9 @@ func TestLocalDeployer_Validate_AcceptsSlugPath(t *testing.T) {
 func TestLocalDeployer_Deploy_HappyPath(t *testing.T) {
 	dist := t.TempDir()
 	writeDist(t, dist, map[string]string{
-		"index.html":            "<h1>hello</h1>",
-		"about/index.html":      "<h1>about</h1>",
-		"_app/immutable/x.css":  "body{}",
+		"index.html":           "<h1>hello</h1>",
+		"about/index.html":     "<h1>about</h1>",
+		"_app/immutable/x.css": "body{}",
 	})
 
 	parent := t.TempDir()

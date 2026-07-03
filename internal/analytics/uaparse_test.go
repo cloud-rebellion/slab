@@ -103,8 +103,8 @@ func TestParsePrimaryLanguage(t *testing.T) {
 
 func TestParseUTMFromPath(t *testing.T) {
 	tests := []struct {
-		in       string
-		s, m, c  string
+		in      string
+		s, m, c string
 	}{
 		{"/?utm_source=newsletter&utm_medium=email&utm_campaign=spring", "newsletter", "email", "spring"},
 		{"/blog/post?utm_source=twitter", "twitter", "", ""},

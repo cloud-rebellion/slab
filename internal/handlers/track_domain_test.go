@@ -52,11 +52,11 @@ func TestConsentDomainMatches_RejectMismatch(t *testing.T) {
 
 func TestNormaliseDomain_StripsScheme(t *testing.T) {
 	cases := map[string]string{
-		"https://example.com":           "example.com",
-		"HTTP://EXAMPLE.COM/path":       "example.com",
-		"  example.com  ":               "example.com",
-		"example.com:8080":              "example.com",
-		"example.com/foo?bar":           "example.com",
+		"https://example.com":     "example.com",
+		"HTTP://EXAMPLE.COM/path": "example.com",
+		"  example.com  ":         "example.com",
+		"example.com:8080":        "example.com",
+		"example.com/foo?bar":     "example.com",
 	}
 	for in, want := range cases {
 		if got := normaliseDomain(in); got != want {

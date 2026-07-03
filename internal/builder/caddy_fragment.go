@@ -7,27 +7,34 @@
 // Usage on the host (one of these patterns; replace <BUILT_SITE_SUFFIX>
 // with whatever you set in env, e.g. ".tenants.example.com"):
 //
-//   1. Wildcard subdomain server with per-tenant fragment import:
+//  1. Wildcard subdomain server. NOTE: Caddy's `import` is a
+//     PARSE-TIME directive, so it cannot take a request-time
+//     placeholder like {re.host.1} (caddy validate fails with "File
+//     to import not found"). The wildcard block therefore serves via
+//     root + file_server only; per-tenant headers come from the
+//     _headers-aware host config or pattern 2. This matches the
+//     production host setup (root with {labels.N}, no import):
 //
-//        *<BUILT_SITE_SUFFIX> {
-//            tls { on_demand }
-//            @tenant header_regexp host Host ^([^.]+)<BUILT_SITE_SUFFIX_ESCAPED>$
-//            handle @tenant {
-//                root * /srv/atomicsite/{re.host.1}/dist
-//                import /srv/atomicsite/{re.host.1}/dist/Caddyfile
-//                file_server
-//            }
-//        }
+//     *<BUILT_SITE_SUFFIX> {
+//     tls { on_demand }
+//     @tenant header_regexp host Host ^([^.]+)<BUILT_SITE_SUFFIX_ESCAPED>$
+//     handle @tenant {
+//     root * /srv/atomicsite/{re.host.1}/dist
+//     file_server
+//     }
+//     }
 //
-//   2. One vhost per custom domain (auto-managed by atomicsite via
-//      the DomainReconciler in Phase 30.5):
+//  2. One vhost per custom domain (auto-managed by atomicsite via
+//     the DomainReconciler in Phase 30.5). Here the slug is a literal
+//     at config-write time, so importing the per-tenant fragment
+//     works and applies the full header set:
 //
-//        :443 {
-//            tls { on_demand }
-//            root * /srv/atomicsite/<slug>/dist
-//            import /srv/atomicsite/<slug>/dist/Caddyfile
-//            file_server
-//        }
+//     :443 {
+//     tls { on_demand }
+//     root * /srv/atomicsite/<slug>/dist
+//     import /srv/atomicsite/<slug>/dist/Caddyfile
+//     file_server
+//     }
 //
 // The fragment never declares a server block (no host/port). It
 // ships only the directives that go inside one: `header { ... }`,

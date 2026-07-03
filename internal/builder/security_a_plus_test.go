@@ -62,16 +62,16 @@ func TestBuildSecurityHeaders_AutoAPlusDefaults(t *testing.T) {
 	// header must be non-empty here. The values themselves are tested
 	// separately; this asserts presence.
 	checks := map[string]string{
-		"CSP":                            h.CSP,
-		"HSTS":                           h.HSTS,
-		"XFrameOptions":                  h.XFrameOptions,
-		"XContentTypeOptions":            h.XContentTypeOptions,
-		"ReferrerPolicy":                 h.ReferrerPolicy,
-		"PermissionsPolicy":              h.PermissionsPolicy,
-		"COOP":                           h.COOP,
-		"CORP":                           h.CORP,
-		"XPermittedCrossDomainPolicies":  h.XPermittedCrossDomainPolicies,
-		"XXSSProtection":                 h.XXSSProtection,
+		"CSP":                           h.CSP,
+		"HSTS":                          h.HSTS,
+		"XFrameOptions":                 h.XFrameOptions,
+		"XContentTypeOptions":           h.XContentTypeOptions,
+		"ReferrerPolicy":                h.ReferrerPolicy,
+		"PermissionsPolicy":             h.PermissionsPolicy,
+		"COOP":                          h.COOP,
+		"CORP":                          h.CORP,
+		"XPermittedCrossDomainPolicies": h.XPermittedCrossDomainPolicies,
+		"XXSSProtection":                h.XXSSProtection,
 	}
 	for name, value := range checks {
 		if strings.TrimSpace(value) == "" {

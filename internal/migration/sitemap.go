@@ -19,10 +19,10 @@ import (
 // would rather ship an importer that takes 10 minutes than one that gets
 // the source site's IP banned mid-migration.
 type CrawlOptions struct {
-	Concurrency       int           // parallel fetches; default 8
-	PolitenessDelay   time.Duration // pause between requests to same host; default 200ms
-	MaxURLs           int           // hard cap on URLs touched per crawl; default 5000
-	FetchOpts         FetchOptions
+	Concurrency     int           // parallel fetches; default 8
+	PolitenessDelay time.Duration // pause between requests to same host; default 200ms
+	MaxURLs         int           // hard cap on URLs touched per crawl; default 5000
+	FetchOpts       FetchOptions
 }
 
 const (
@@ -40,7 +40,7 @@ type urlsetXML struct {
 }
 
 type sitemapindexXML struct {
-	XMLName  xml.Name        `xml:"sitemapindex"`
+	XMLName  xml.Name       `xml:"sitemapindex"`
 	Sitemaps []sitemapEntry `xml:"sitemap"`
 }
 

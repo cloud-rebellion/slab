@@ -36,11 +36,11 @@ type DesignCritiqueCheck struct {
 
 // DesignCritiqueResponse is the MCP tool output shape.
 type DesignCritiqueResponse struct {
-	BuildID string                 `json:"build_id"`
-	Score   int64                  `json:"score"`
-	Max     int64                  `json:"max_score"`
-	Grade   string                 `json:"grade"`
-	Checks  []DesignCritiqueCheck  `json:"checks"`
+	BuildID string                `json:"build_id"`
+	Score   int64                 `json:"score"`
+	Max     int64                 `json:"max_score"`
+	Grade   string                `json:"grade"`
+	Checks  []DesignCritiqueCheck `json:"checks"`
 }
 
 // RunDesignCritique fetches the persisted critique for the given

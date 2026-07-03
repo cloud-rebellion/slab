@@ -23,3 +23,13 @@ WHERE id = ?;
 
 -- name: DeleteDeployment :exec
 DELETE FROM deployments WHERE id = ?;
+
+-- name: ReapStaleDeployments :execrows
+-- Boot-time reaper: builds run in-process, so a crash or redeploy
+-- mid-build strands rows in 'pending'/'building' forever (the UI then
+-- shows a permanently-running build). Mirrors ReapStaleVerifyJobs.
+UPDATE deployments
+SET status = 'failed',
+    error = 'interrupted: server restarted during build',
+    completed_at = datetime('now')
+WHERE status IN ('pending', 'building');

@@ -48,7 +48,7 @@
 	// this page (the merged Evals tab content).
 	let allEvals = $state<Evaluation[]>([]);
 
-	const CATEGORIES = ['security', 'seo', 'performance', 'accessibility', 'privacy'] as const;
+	import { CATEGORIES } from '$lib/evaluations/categories';
 
 	let deployTargets = $state<DeployTarget[]>([]);
 	let deployTargetsLoading = $state(true);
@@ -58,42 +58,19 @@
 	let deployedAt = $state<string | null>(null);
 	let deployTargetUsedID = $state<string | null>(null);
 
-	type Grade = 'A+' | 'A' | 'B+' | 'B' | 'C' | 'D' | 'F';
-	const validGrades: Grade[] = ['A+', 'A', 'B+', 'B', 'C', 'D', 'F'];
-	const gradeRank: Record<Grade, number> = {
-		'A+': 0,
-		A: 1,
-		'B+': 2,
-		B: 3,
-		C: 4,
-		D: 5,
-		F: 6
-	};
-
-	function asGrade(value: string): Grade | null {
-		return (validGrades as string[]).includes(value) ? (value as Grade) : null;
-	}
-
+	// Grade machinery lives in $lib/evaluations/grade (13-grade scale
+	// mirroring the backend). A local 7-grade fork here used to render
+	// minus grades (A-, B-...) as '?' in build history.
 	interface RecentBuildRow {
 		buildID: string;
 		created_at: string;
-		composite: Grade | null;
+		composite: SharedGrade | null;
 		categoryCount: number;
 		evaluations: Evaluation[];
 		targetID?: string;
 		deployURL?: string;
 		deployedAt?: string;
 		targetName?: string;
-	}
-
-	function compositeGrade(evals: Evaluation[]): Grade | null {
-		let worst: Grade | null = null;
-		for (const e of evals) {
-			const g = asGrade(e.grade);
-			if (!g) continue;
-			if (worst === null || gradeRank[g] > gradeRank[worst]) worst = g;
-		}
-		return worst;
 	}
 
 	function groupRecentBuilds(evals: Evaluation[]): RecentBuildRow[] {
@@ -112,7 +89,7 @@
 			rows.push({
 				buildID,
 				created_at: newest.created_at,
-				composite: compositeGrade(group),
+				composite: sharedComposite(group),
 				categoryCount: group.length,
 				evaluations: group
 			});

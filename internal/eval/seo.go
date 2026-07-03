@@ -510,27 +510,42 @@ func collectHreflangs(doc *html.Node) []hreflangAlt {
 }
 
 // pageNeedsHreflang reports whether the page has any reason to be checked
-// for hreflang emission. Heuristic: if the site has more than one
-// language-prefixed top-level slug under /pages (e.g. both /about and
-// /sv/about exist), then the page belongs to a multi-language site and
-// should emit hreflang.
+// for hreflang emission. A site is multi-language only when there is
+// REAL evidence: two distinct locale prefixes, or a prefixed page whose
+// unprefixed counterpart also exists (/sv/about alongside /about). A
+// single 2-letter first segment used to flip the entire site to
+// "multi-language" and fail hreflang on every page (e.g. a monolingual
+// site with a /go/tools section).
 func pageNeedsHreflang(p PageContext, site *SiteContext) bool {
 	if len(site.Pages) < 2 {
 		return false
 	}
-	prefixes := map[string]bool{}
+	slugs := map[string]bool{}
 	for _, q := range site.Pages {
-		s := strings.TrimPrefix(q.Slug, "/")
+		slugs[strings.TrimPrefix(q.Slug, "/")] = true
+	}
+	isLocalePrefix := func(s string) bool {
+		if len(s) != 2 {
+			return false
+		}
+		return s[0] >= 'a' && s[0] <= 'z' && s[1] >= 'a' && s[1] <= 'z'
+	}
+	prefixes := map[string]bool{}
+	counterpart := false
+	for s := range slugs {
 		if s == "" {
 			continue
 		}
 		first := strings.SplitN(s, "/", 2)[0]
-		// Heuristic: a 2-letter ASCII first segment is a locale prefix.
-		if len(first) == 2 && first == strings.ToLower(first) {
-			prefixes[first] = true
+		if !isLocalePrefix(first) {
+			continue
+		}
+		prefixes[first] = true
+		if rest := strings.TrimPrefix(strings.TrimPrefix(s, first), "/"); rest != "" && slugs[rest] {
+			counterpart = true
 		}
 	}
-	return len(prefixes) > 0
+	return len(prefixes) >= 2 || counterpart
 }
 
 // mailtoCovers reports whether an email address appears inside a
@@ -755,9 +770,26 @@ func isCollectionIndexPage(p PageContext) bool {
 	return hasCollection && !isCollectionItemPage(p)
 }
 
+// hasCollectionItemPages reports whether the site renders any
+// Collection item pages at all. The three collection checks emit Info
+// (not a weighted Pass) when there is nothing to check: a weighted
+// N/A-Pass handed every collection-less site 5 free points and diluted
+// the categories that were actually measured.
+func hasCollectionItemPages(site *SiteContext) bool {
+	for _, p := range site.Pages {
+		if isCollectionItemPage(p) {
+			return true
+		}
+	}
+	return false
+}
+
 // CheckCollectionJSONLDPresent: every Collection-item page must
 // embed a <script type="application/ld+json"> with a non-empty @type.
 func CheckCollectionJSONLDPresent(site *SiteContext) CheckResult {
+	if !hasCollectionItemPages(site) {
+		return Info("Collection JSON-LD present", "collections", "No Collection item pages on this site; nothing to check.")
+	}
 	for _, p := range site.Pages {
 		if !isCollectionItemPage(p) {
 			continue
@@ -789,6 +821,9 @@ func CheckCollectionJSONLDPresent(site *SiteContext) CheckResult {
 // Heuristic: if any pages share the same path stub but differ by
 // locale prefix, every such page should advertise the others.
 func CheckCollectionHreflangAlternates(site *SiteContext) CheckResult {
+	if !hasCollectionItemPages(site) {
+		return Info("Collection hreflang alternates", "collections", "No Collection item pages on this site; nothing to check.")
+	}
 	// Group item pages by their item slug component (last path segment).
 	// If the same slug exists at multiple locale prefixes, all pages
 	// with that slug must advertise hreflang.
@@ -827,16 +862,21 @@ func CheckCollectionHreflangAlternates(site *SiteContext) CheckResult {
 // link to at least one item; every item page should link back to the
 // index.
 func CheckCollectionInternalLinks(site *SiteContext) CheckResult {
+	hasIndex := false
 	for _, p := range site.Pages {
 		if !isCollectionIndexPage(p) {
 			continue
 		}
+		hasIndex = true
 		links := elementsByTag(p.Doc, "a")
 		if len(links) == 0 {
 			return Fail("Collection internal links", "collections", 1, SeverityInfo,
 				fmt.Sprintf("Collection index %s has no item links", p.Slug),
 				"Index pages should link to every published item. Re-run the build after publishing items.")
 		}
+	}
+	if !hasIndex {
+		return Info("Collection internal links", "collections", "No Collection index pages on this site; nothing to check.")
 	}
 	return Pass("Collection internal links", "collections", 1, "Collection index pages link to items.")
 }
@@ -848,4 +888,3 @@ func lastPathSegment(slug string) string {
 	}
 	return slug
 }
-

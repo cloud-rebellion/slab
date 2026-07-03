@@ -7,7 +7,6 @@ import (
 	"log/slog"
 	"os/exec"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/bright-interaction/slab/internal/store"
@@ -16,31 +15,30 @@ import (
 // Reconciler drives every site_domains row from 'pending' to 'live'.
 // One goroutine, one DB. Steps for each row at each tick:
 //
-//   pending     → ensure DNS (Cloudflare helper if zone matches),
-//                  probe verify URL, advance to verified on success.
-//   verified    → certbot HTTP-01, write 443 vhost + map entry,
-//                  reload nginx, advance to cert_ready.
-//   cert_ready  → live HTTPS probe, advance to live on success.
-//   live        → re-probe at low cadence, demote to error on
-//                  three consecutive failures (stale cert, DNS
-//                  changed, etc.).
-//   error       → retry with exponential backoff up to 30 min.
+//	pending     → ensure DNS (Cloudflare helper if zone matches),
+//	               probe verify URL, advance to verified on success.
+//	verified    → certbot HTTP-01, write 443 vhost + map entry,
+//	               reload nginx, advance to cert_ready.
+//	cert_ready  → live HTTPS probe, advance to live on success.
+//	live        → re-probe at low cadence, demote to error on
+//	               three consecutive failures (stale cert, DNS
+//	               changed, etc.).
+//	error       → retry with exponential backoff up to 30 min.
 //
 // The signal channel lets handlers nudge the loop the moment a row
 // changes (so the admin sees status flips within seconds, not at the
 // next periodic tick). Closing the channel via Stop() drains and
 // returns.
 type Reconciler struct {
-	queries    *store.Queries
-	edge       *EdgeWriter
-	certbot    *CertbotRunner
-	cloudflare *CloudflareClient
-	edgeIP     string
+	queries     *store.Queries
+	edge        *EdgeWriter
+	certbot     *CertbotRunner
+	cloudflare  *CloudflareClient
+	edgeIP      string
 	appUpstream string
 
 	tick   time.Duration
 	signal chan struct{}
-	once   sync.Once
 	done   chan struct{}
 }
 

@@ -48,11 +48,11 @@ func TestRevisions_RecorderWritesSnapshotOnPageUpdate(t *testing.T) {
 		t.Fatalf("record: %v", err)
 	}
 	if err := q.UpdatePage(ctx, store.UpdatePageParams{
-		Title:  "Edited Title",
-		Slug:   cur.Slug,
-		Status: cur.Status,
-		Layout: cur.Layout,
-		ID:     pageID,
+		Title:            "Edited Title",
+		Slug:             cur.Slug,
+		Status:           cur.Status,
+		Layout:           cur.Layout,
+		ID:               pageID,
 		ShowInNav:        cur.ShowInNav,
 		MetaTitle:        cur.MetaTitle,
 		MetaDescription:  cur.MetaDescription,

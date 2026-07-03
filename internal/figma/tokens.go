@@ -10,21 +10,21 @@ import (
 // ImportResult is what the handler returns to the client after a successful
 // design-tokens import.
 type ImportResult struct {
-	FileName        string         `json:"file_name"`
-	Colors          []ColorToken   `json:"colors"`
-	Typography      []TextToken    `json:"typography"`
-	PrimarySuggest  string         `json:"primary_suggest,omitempty"`  // hex
-	HeadingSuggest  string         `json:"heading_suggest,omitempty"`  // font family
-	BodySuggest     string         `json:"body_suggest,omitempty"`     // font family
-	SkippedStyles   []string       `json:"skipped,omitempty"`
+	FileName       string       `json:"file_name"`
+	Colors         []ColorToken `json:"colors"`
+	Typography     []TextToken  `json:"typography"`
+	PrimarySuggest string       `json:"primary_suggest,omitempty"` // hex
+	HeadingSuggest string       `json:"heading_suggest,omitempty"` // font family
+	BodySuggest    string       `json:"body_suggest,omitempty"`    // font family
+	SkippedStyles  []string     `json:"skipped,omitempty"`
 }
 
 // ColorToken is one extracted Figma color style ready to seed as a CSS class.
 type ColorToken struct {
-	Name      string `json:"name"`        // raw Figma name, e.g. "Brand / Primary 600"
-	ClassName string `json:"class_name"`  // ".brand-primary-600"
-	Hex       string `json:"hex"`         // "#1e3a8a"
-	Property  string `json:"property"`    // "color" | "background-color"
+	Name      string `json:"name"`       // raw Figma name, e.g. "Brand / Primary 600"
+	ClassName string `json:"class_name"` // ".brand-primary-600"
+	Hex       string `json:"hex"`        // "#1e3a8a"
+	Property  string `json:"property"`   // "color" | "background-color"
 }
 
 // TextToken is one extracted Figma text style.

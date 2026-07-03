@@ -131,4 +131,3 @@ func findLinkHref(doc *html.Node, rel string) string {
 	}
 	return ""
 }
-

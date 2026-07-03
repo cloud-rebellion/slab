@@ -17,9 +17,10 @@ import (
 // state with single-digit-ms reads.
 //
 // Key layout:
-//   shield:sess:<id>           -> expires_at unix nanos (string)
-//   shield:tok:<token>         -> JSON {session_id, kind, hint, ciphertext}
-//   shield:sess:<id>:tokens    -> SET of tokens issued in this session
+//
+//	shield:sess:<id>           -> expires_at unix nanos (string)
+//	shield:tok:<token>         -> JSON {session_id, kind, hint, ciphertext}
+//	shield:sess:<id>:tokens    -> SET of tokens issued in this session
 //
 // TTL on every key matches the session expiry so Redis garbage-collects
 // expired sessions automatically without needing a sweep job. SweepExpiredSessions

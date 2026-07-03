@@ -95,13 +95,13 @@ type analyticsOverview struct {
 }
 
 type engagementSummary struct {
-	Samples           int64           `json:"samples"`
-	AvgTimeOnPageMs   int64           `json:"avg_time_on_page_ms"`
-	AvgScrollPct      int64           `json:"avg_scroll_pct"`
-	DarkPct           int64           `json:"dark_pct"`
-	ReducedMotionPct  int64           `json:"reduced_motion_pct"`
-	ByPath            []engagementRow `json:"by_path"`
-	ViewportBuckets   []nameCount     `json:"viewport_buckets"`
+	Samples          int64           `json:"samples"`
+	AvgTimeOnPageMs  int64           `json:"avg_time_on_page_ms"`
+	AvgScrollPct     int64           `json:"avg_scroll_pct"`
+	DarkPct          int64           `json:"dark_pct"`
+	ReducedMotionPct int64           `json:"reduced_motion_pct"`
+	ByPath           []engagementRow `json:"by_path"`
+	ViewportBuckets  []nameCount     `json:"viewport_buckets"`
 }
 
 type engagementRow struct {
@@ -429,13 +429,13 @@ func toInt64(v any) int64 {
 // if the publisher-side web-vitals library bumps its threshold table
 // at some future date.
 type CWVMetricResult struct {
-	Metric      string  `json:"metric"`
-	Device      string  `json:"device"`
-	P75         float64 `json:"p75"`
-	Samples     int     `json:"samples"`
-	Rating      string  `json:"rating"`
-	BadCount    int     `json:"bad_count"`
-	GoodCount   int     `json:"good_count"`
+	Metric    string  `json:"metric"`
+	Device    string  `json:"device"`
+	P75       float64 `json:"p75"`
+	Samples   int     `json:"samples"`
+	Rating    string  `json:"rating"`
+	BadCount  int     `json:"bad_count"`
+	GoodCount int     `json:"good_count"`
 }
 
 // AnalyticsCWV returns p75 LCP / INP / CLS / FCP / TTFB over the

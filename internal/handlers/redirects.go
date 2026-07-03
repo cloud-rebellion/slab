@@ -349,11 +349,11 @@ type VerifyRequest struct {
 // migration UI can surface "X URLs will 404 after launch" before the operator
 // flips DNS.
 type VerifyResponse struct {
-	Will200   []string `json:"will_200"`   // URL has a live page at the same slug
-	Will301   []string `json:"will_301"`   // URL is covered by a redirect rule (exact or regex)
-	Will410   []string `json:"will_410"`   // URL is explicitly marked gone
-	Will404   []string `json:"will_404"`   // unmapped - SEO leak risk
-	Malformed []string `json:"malformed"`  // input we couldn't parse
+	Will200   []string `json:"will_200"`  // URL has a live page at the same slug
+	Will301   []string `json:"will_301"`  // URL is covered by a redirect rule (exact or regex)
+	Will410   []string `json:"will_410"`  // URL is explicitly marked gone
+	Will404   []string `json:"will_404"`  // unmapped - SEO leak risk
+	Malformed []string `json:"malformed"` // input we couldn't parse
 }
 
 // Verify takes a list of source-site URLs (from a Search Console export, the

@@ -219,10 +219,16 @@ func StorefrontIslandScript(siteID string) string {
       if(errBox){errBox.textContent="Network error. Please try again.";errBox.hidden=false;}
     });
   });
-  document.addEventListener("DOMContentLoaded",function(){
+  function initialRender(){
     var drawer=document.querySelector("[data-cart-drawer]");if(drawer)renderDrawer(drawer);
     document.dispatchEvent(new CustomEvent("atomic-cart-change"));
-  });
+  }
+  if(document.readyState!=="loading"){initialRender();}else{document.addEventListener("DOMContentLoaded",initialRender);}
+  /* Astro ClientRouter (showcase fidelity) swaps the body without firing
+     DOMContentLoaded again; re-render badge + drawer on soft navs. The
+     delegated listeners above survive swaps (bound on document). No-op
+     on sites without the router. */
+  document.addEventListener("astro:page-load",initialRender);
   window.AtomicCart={items:read,add:add,setQty:setQty,remove:remove,clear:clear,subtotal:subtotal};
 })();
 `, siteID)

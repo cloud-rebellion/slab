@@ -1,11 +1,18 @@
--- name: CreateEntityRevision :exec
+-- name: CreateEntityRevision :one
+-- version_number is computed inside the INSERT so read and write are one
+-- atomic statement under SQLite's writer lock: two concurrent Record
+-- calls can no longer race SELECT MAX+1 into duplicate versions (which
+-- broke GetEntityRevisionByVersion :one and therefore restore). The
+-- unique index idx_entity_revisions_version is the schema backstop.
 INSERT INTO entity_revisions (id, site_id, entity_type, entity_id, version_number, snapshot_json, change_summary, created_by, created_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'));
-
--- name: NextEntityRevisionVersion :one
-SELECT COALESCE(MAX(version_number), 0) + 1
-FROM entity_revisions
-WHERE site_id = ? AND entity_type = ? AND entity_id = ?;
+VALUES (
+    ?1, ?2, ?3, ?4,
+    (SELECT COALESCE(MAX(version_number), 0) + 1
+       FROM entity_revisions
+      WHERE site_id = ?2 AND entity_type = ?3 AND entity_id = ?4),
+    ?5, ?6, ?7, datetime('now')
+)
+RETURNING version_number;
 
 -- name: GetEntityRevisionByVersion :one
 SELECT * FROM entity_revisions

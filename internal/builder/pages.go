@@ -125,10 +125,10 @@ func RenderPages(ctx context.Context, queries *store.Queries, siteID string, wsD
 	}
 
 	pageCtx := pageRenderContext{
-		site:      site,
-		i18n:      i18n,
-		titleTpl:  sm["seo.meta_title_template"],
-		descTpl:   sm["seo.meta_description_template"],
+		site:     site,
+		i18n:     i18n,
+		titleTpl: sm["seo.meta_title_template"],
+		descTpl:  sm["seo.meta_description_template"],
 	}
 
 	written := 0

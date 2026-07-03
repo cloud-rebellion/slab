@@ -23,9 +23,9 @@ import (
 // Salts older than the retention window (default 30 days) are pruned by
 // PruneConsentSalts so historical hashes can never be linked back to an IP.
 type consentSaltCache struct {
-	mu     sync.RWMutex
-	day    string // YYYY-MM-DD UTC
-	salt   string
+	mu   sync.RWMutex
+	day  string // YYYY-MM-DD UTC
+	salt string
 }
 
 var saltCache = &consentSaltCache{}

@@ -148,7 +148,7 @@ func TestRecord_MarshalsArbitraryStructs(t *testing.T) {
 	seedSite(t, sqlDB, siteID)
 	r := New(q)
 	type sample struct {
-		Title string `json:"title"`
+		Title string   `json:"title"`
 		Tags  []string `json:"tags"`
 	}
 	if err := r.Record(context.Background(), RecordParams{

@@ -184,11 +184,11 @@ func TestProductionUploader_SourceErrorPropagated(t *testing.T) {
 func TestProductionUploader_FilenameDerivation(t *testing.T) {
 	cases := map[string]string{
 		"https://cdn.example.com/wp-content/uploads/2024/03/hero.png": "hero.png",
-		"https://x/img.jpg":                                            "img.jpg",
-		"https://x/":                                                   "imported-image",
-		"https://x":                                                    "imported-image",
-		"https://x/path/":                                              "path",
-		"not a url":                                                    "imported-image",
+		"https://x/img.jpg": "img.jpg",
+		"https://x/":        "imported-image",
+		"https://x":         "imported-image",
+		"https://x/path/":   "path",
+		"not a url":         "imported-image",
 	}
 	for in, want := range cases {
 		if got := filenameFromURL(in); got != want {

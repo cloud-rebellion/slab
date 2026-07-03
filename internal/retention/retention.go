@@ -135,36 +135,36 @@ type Manager struct {
 // SweepResult is the per-run summary the slog line + admin debug endpoint
 // expose. Counts are aggregate across all sites; PerSite holds the breakdown.
 type SweepResult struct {
-	StartedAt    time.Time            `json:"started_at"`
-	FinishedAt   time.Time            `json:"finished_at"`
-	DurationMs   int64                `json:"duration_ms"`
-	SitesScanned int                  `json:"sites_scanned"`
-	VisitEvents  int64                `json:"visit_events_deleted"`
-	Engagement   int64                `json:"engagement_deleted"`
-	Sessions     int64                `json:"sessions_deleted"`
-	Consent      int64                `json:"consent_deleted"`
-	Salts        int64                `json:"salts_deleted"`
-	AuditLog        int64                `json:"audit_log_deleted"`
-	AuditDays       int                  `json:"audit_log_retention_days"`
-	Paused          int                  `json:"lifecycle_paused"`
-	Deleted         int                  `json:"lifecycle_deleted"`
-	UsersHardDeleted int                 `json:"gdpr_users_hard_deleted"`
-	QuotaOverages   int                  `json:"plan_quota_overages_detected"`
-	PerSite      []PerSiteSweepResult `json:"per_site,omitempty"`
-	Errors       []string             `json:"errors,omitempty"`
+	StartedAt        time.Time            `json:"started_at"`
+	FinishedAt       time.Time            `json:"finished_at"`
+	DurationMs       int64                `json:"duration_ms"`
+	SitesScanned     int                  `json:"sites_scanned"`
+	VisitEvents      int64                `json:"visit_events_deleted"`
+	Engagement       int64                `json:"engagement_deleted"`
+	Sessions         int64                `json:"sessions_deleted"`
+	Consent          int64                `json:"consent_deleted"`
+	Salts            int64                `json:"salts_deleted"`
+	AuditLog         int64                `json:"audit_log_deleted"`
+	AuditDays        int                  `json:"audit_log_retention_days"`
+	Paused           int                  `json:"lifecycle_paused"`
+	Deleted          int                  `json:"lifecycle_deleted"`
+	UsersHardDeleted int                  `json:"gdpr_users_hard_deleted"`
+	QuotaOverages    int                  `json:"plan_quota_overages_detected"`
+	PerSite          []PerSiteSweepResult `json:"per_site,omitempty"`
+	Errors           []string             `json:"errors,omitempty"`
 }
 
 // PerSiteSweepResult is the per-tenant breakdown inside a SweepResult. Useful
 // for a "your site dropped N rows last night" admin dashboard line.
 type PerSiteSweepResult struct {
-	SiteID                 string `json:"site_id"`
-	AnalyticsDays          int    `json:"analytics_days"`
-	ConsentDays            int    `json:"consent_days"`
-	EngagementDays         int    `json:"engagement_days"`
-	VisitEventsDeleted     int64  `json:"visit_events_deleted"`
-	EngagementDeleted      int64  `json:"engagement_deleted"`
-	SessionsDeleted        int64  `json:"sessions_deleted"`
-	ConsentDeleted         int64  `json:"consent_deleted"`
+	SiteID             string `json:"site_id"`
+	AnalyticsDays      int    `json:"analytics_days"`
+	ConsentDays        int    `json:"consent_days"`
+	EngagementDays     int    `json:"engagement_days"`
+	VisitEventsDeleted int64  `json:"visit_events_deleted"`
+	EngagementDeleted  int64  `json:"engagement_deleted"`
+	SessionsDeleted    int64  `json:"sessions_deleted"`
+	ConsentDeleted     int64  `json:"consent_deleted"`
 	// CWVDeleted is the count of cwv_events rows purged in this sweep.
 	// Shares the analytics retention window.
 	CWVDeleted int64 `json:"cwv_deleted"`
@@ -801,8 +801,8 @@ func escapeJSONString(s string) string {
 // sweepWorkspaceLifecycle walks every non-deleted workspace, computes
 // last-activity timestamps, and transitions status:
 //
-//   active -> paused: idle >= pauseDays (when pauseDays > 0)
-//   * -> deleted: idle >= deleteDays (when deleteDays > 0)
+//	active -> paused: idle >= pauseDays (when pauseDays > 0)
+//	* -> deleted: idle >= deleteDays (when deleteDays > 0)
 //
 // "Deleted" here is a soft state (status='deleted'); rows stay in the
 // DB until an operator-initiated hard purge. This intentional safety

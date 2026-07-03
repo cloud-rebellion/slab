@@ -42,14 +42,28 @@ func renderSearchBoxBlock(data map[string]any) string {
 	// Init script. Inline + small + same-origin matches the
 	// RenderVisitorHydration / RenderStorefrontIslandTag pattern; CSP
 	// allows it via 'self' since the dist file lives same-origin.
+	//
+	// Idempotent + view-transition aware: under showcase fidelity the
+	// layout ships Astro's ClientRouter, which swaps the body without
+	// firing DOMContentLoaded again, so init also runs on
+	// astro:page-load (that event fires on first load too, hence the
+	// mount marker guard). On non-showcase sites astro:page-load never
+	// fires and the readyState/DOMContentLoaded path behaves as before.
 	b.WriteString("    <script defer>\n")
-	b.WriteString("      window.addEventListener('DOMContentLoaded', function () {\n")
-	b.WriteString("        if (typeof PagefindUI !== 'function') return;\n")
-	b.WriteString(fmt.Sprintf("        new PagefindUI({ element: '#search', showImages: false, resetStyles: false, translations: { placeholder: %q, zero_results: %q } });\n",
+	b.WriteString("      (function () {\n")
+	b.WriteString("        function initSearch() {\n")
+	b.WriteString("          var mount = document.querySelector('#search[data-pagefind-mount]');\n")
+	b.WriteString("          if (!mount || mount.hasAttribute('data-pagefind-init')) return;\n")
+	b.WriteString("          if (typeof PagefindUI !== 'function') return;\n")
+	b.WriteString("          mount.setAttribute('data-pagefind-init', '1');\n")
+	b.WriteString(fmt.Sprintf("          new PagefindUI({ element: '#search', showImages: false, resetStyles: false, translations: { placeholder: %q, zero_results: %q } });\n",
 		placeholder, zeroResultsCopy(showEmpty)))
-	b.WriteString(fmt.Sprintf("        var sr = document.querySelector('#search .pagefind-ui__results-area'); if (sr) sr.style.maxHeight = 'none';\n"))
+	b.WriteString("          var sr = document.querySelector('#search .pagefind-ui__results-area'); if (sr) sr.style.maxHeight = 'none';\n")
+	b.WriteString("        }\n")
+	b.WriteString("        if (document.readyState !== 'loading') { initSearch(); } else { window.addEventListener('DOMContentLoaded', initSearch); }\n")
+	b.WriteString("        document.addEventListener('astro:page-load', initSearch);\n")
+	b.WriteString("      })();\n")
 	_ = resultsMax
-	b.WriteString("      });\n")
 	b.WriteString("    </script>\n")
 	b.WriteString("  </section>\n")
 	return b.String()

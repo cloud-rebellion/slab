@@ -72,13 +72,13 @@ func extOf(filename string) string {
 // (ga4_id / umami_id / umami_url) because the settings rows are the
 // authoritative surface going forward.
 type analyticsConfig struct {
-	GA4Enabled     bool
-	GA4ID          string
-	UmamiEnabled   bool
-	UmamiURL       string
-	UmamiSiteID    string
-	CookieProofOn  bool
-	TrackPath      string
+	GA4Enabled    bool
+	GA4ID         string
+	UmamiEnabled  bool
+	UmamiURL      string
+	UmamiSiteID   string
+	CookieProofOn bool
+	TrackPath     string
 }
 
 func resolveAnalyticsConfig(site store.Site, settingsMap map[string]string) analyticsConfig {

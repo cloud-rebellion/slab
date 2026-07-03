@@ -72,10 +72,10 @@ type RecordParams struct {
 
 // Record writes a single revision row for the given entity. Validates
 // entity_type against the schema CHECK constraint, marshals Snapshot
-// to JSON, computes the next monotonic version_number, inserts the
-// row, then prunes rows past MaxPerEntity. All errors are returned;
-// callers typically log + continue because revision recording must
-// never block a real update.
+// to JSON, inserts the row (version_number computed atomically inside
+// the INSERT, see entity_revisions.sql), then prunes rows past
+// MaxPerEntity. All errors are returned; callers typically log +
+// continue because revision recording must never block a real update.
 func (r *Recorder) Record(ctx context.Context, p RecordParams) error {
 	if r == nil {
 		return errors.New("revisions: recorder is nil")
@@ -99,21 +99,11 @@ func (r *Recorder) Record(ctx context.Context, p RecordParams) error {
 		return fmt.Errorf("revisions: marshal snapshot: %w", err)
 	}
 
-	next, err := r.queries.NextEntityRevisionVersion(ctx, store.NextEntityRevisionVersionParams{
-		SiteID:     p.SiteID,
-		EntityType: p.EntityType,
-		EntityID:   p.EntityID,
-	})
-	if err != nil {
-		return fmt.Errorf("revisions: next version: %w", err)
-	}
-
-	if err := r.queries.CreateEntityRevision(ctx, store.CreateEntityRevisionParams{
+	if _, err := r.queries.CreateEntityRevision(ctx, store.CreateEntityRevisionParams{
 		ID:            newID(),
 		SiteID:        p.SiteID,
 		EntityType:    p.EntityType,
 		EntityID:      p.EntityID,
-		VersionNumber: next,
 		SnapshotJson:  string(snap),
 		ChangeSummary: p.ChangeSummary,
 		CreatedBy:     p.CreatedBy,

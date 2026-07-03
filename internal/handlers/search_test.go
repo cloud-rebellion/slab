@@ -250,14 +250,14 @@ func TestSearch_CrossSiteIsolation(t *testing.T) {
 
 func TestBuildFTS5Query_SanitizesEverySpecial(t *testing.T) {
 	cases := map[string]string{
-		"hello world":        `"hello" AND "world"`,
-		"OR (foo) NEAR":      `"OR" AND "foo" AND "NEAR"`,
-		"":                   "",
-		"   ":                "",
-		"  hello   world  ":  `"hello" AND "world"`,
-		`"quoted"`:           `"""quoted"""`,
-		"x*y":                `"xy"`,
-		"a:b":                `"ab"`,
+		"hello world":       `"hello" AND "world"`,
+		"OR (foo) NEAR":     `"OR" AND "foo" AND "NEAR"`,
+		"":                  "",
+		"   ":               "",
+		"  hello   world  ": `"hello" AND "world"`,
+		`"quoted"`:          `"""quoted"""`,
+		"x*y":               `"xy"`,
+		"a:b":               `"ab"`,
 	}
 	for in, want := range cases {
 		if got := buildFTS5Query(in); got != want {

@@ -10,6 +10,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 
 	"github.com/bright-interaction/slab/internal/payments/mollie"
@@ -73,17 +74,33 @@ func (h *OrderHandler) RefundForAgent(ctx context.Context, siteID, orderID strin
 	if err != nil {
 		return nil, fmt.Errorf("mollie refund failed: %w", err)
 	}
-	_ = h.queries.UpdateOrderRefundID(ctx, store.UpdateOrderRefundIDParams{
+	// Money has already moved at Mollie; local write failures must be
+	// loud and surfaced to the agent so a human reconciles, never
+	// silently swallowed behind a success payload.
+	var reconcileWarnings []string
+	if err := h.queries.UpdateOrderRefundID(ctx, store.UpdateOrderRefundIDParams{
 		RefundID: refund.ID, ID: orderID, SiteID: siteID,
-	})
-	_ = h.queries.UpdateOrderStatus(ctx, store.UpdateOrderStatusParams{
+	}); err != nil {
+		slog.Error("refund: Mollie refund executed but persisting refund_id failed",
+			"order_id", orderID, "site_id", siteID, "refund_id", refund.ID, "err", err)
+		reconcileWarnings = append(reconcileWarnings, "refund_id not persisted; reconcile manually against Mollie refund "+refund.ID)
+	}
+	if err := h.queries.UpdateOrderStatus(ctx, store.UpdateOrderStatusParams{
 		Status:        "refunded",
 		PaymentStatus: o.PaymentStatus,
 		Column3:       "refunded", Column4: "refunded", Column5: "refunded", Column6: "refunded",
 		ID:     orderID,
 		SiteID: siteID,
-	})
+	}); err != nil {
+		slog.Error("refund: Mollie refund executed but status flip failed",
+			"order_id", orderID, "site_id", siteID, "refund_id", refund.ID, "err", err)
+		reconcileWarnings = append(reconcileWarnings, "order status still shows the pre-refund value; flag to the operator")
+	}
 	updated, _ := h.queries.GetOrderByID(ctx, store.GetOrderByIDParams{ID: orderID, SiteID: siteID})
 	items, _ := h.queries.ListOrderItems(ctx, orderID)
-	return map[string]any{"order": updated, "items": items, "mollie_refund_id": refund.ID}, nil
+	out := map[string]any{"order": updated, "items": items, "mollie_refund_id": refund.ID}
+	if len(reconcileWarnings) > 0 {
+		out["reconcile_warnings"] = reconcileWarnings
+	}
+	return out, nil
 }

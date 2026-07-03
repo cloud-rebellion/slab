@@ -92,11 +92,16 @@ func (q *Queries) DeleteSettingsByCategory(ctx context.Context, arg DeleteSettin
 }
 
 const deleteSilo = `-- name: DeleteSilo :exec
-DELETE FROM site_silos WHERE id = ?
+DELETE FROM site_silos WHERE id = ? AND site_id = ?
 `
 
-func (q *Queries) DeleteSilo(ctx context.Context, id string) error {
-	_, err := q.db.ExecContext(ctx, deleteSilo, id)
+type DeleteSiloParams struct {
+	ID     string `json:"id"`
+	SiteID string `json:"site_id"`
+}
+
+func (q *Queries) DeleteSilo(ctx context.Context, arg DeleteSiloParams) error {
+	_, err := q.db.ExecContext(ctx, deleteSilo, arg.ID, arg.SiteID)
 	return err
 }
 
@@ -125,11 +130,20 @@ func (q *Queries) GetSetting(ctx context.Context, arg GetSettingParams) (SiteSet
 }
 
 const getSiloByID = `-- name: GetSiloByID :one
-SELECT id, site_id, name, slug_prefix, silo_type, sort_order, created_at FROM site_silos WHERE id = ?
+SELECT id, site_id, name, slug_prefix, silo_type, sort_order, created_at FROM site_silos WHERE id = ? AND site_id = ?
 `
 
-func (q *Queries) GetSiloByID(ctx context.Context, id string) (SiteSilo, error) {
-	row := q.db.QueryRowContext(ctx, getSiloByID, id)
+type GetSiloByIDParams struct {
+	ID     string `json:"id"`
+	SiteID string `json:"site_id"`
+}
+
+// The by-id silo queries are site-scoped preventively: they have no
+// callers yet, and an unscoped WHERE id = ? is exactly the shape that
+// caused the agent-API block IDORs. Whoever wires them inherits the
+// tenant guard for free.
+func (q *Queries) GetSiloByID(ctx context.Context, arg GetSiloByIDParams) (SiteSilo, error) {
+	row := q.db.QueryRowContext(ctx, getSiloByID, arg.ID, arg.SiteID)
 	var i SiteSilo
 	err := row.Scan(
 		&i.ID,
@@ -359,7 +373,7 @@ func (q *Queries) UpdateAllowedScript(ctx context.Context, arg UpdateAllowedScri
 }
 
 const updateSilo = `-- name: UpdateSilo :exec
-UPDATE site_silos SET name = ?, slug_prefix = ?, silo_type = ?, sort_order = ? WHERE id = ?
+UPDATE site_silos SET name = ?, slug_prefix = ?, silo_type = ?, sort_order = ? WHERE id = ? AND site_id = ?
 `
 
 type UpdateSiloParams struct {
@@ -368,6 +382,7 @@ type UpdateSiloParams struct {
 	SiloType   string `json:"silo_type"`
 	SortOrder  int64  `json:"sort_order"`
 	ID         string `json:"id"`
+	SiteID     string `json:"site_id"`
 }
 
 func (q *Queries) UpdateSilo(ctx context.Context, arg UpdateSiloParams) error {
@@ -377,6 +392,7 @@ func (q *Queries) UpdateSilo(ctx context.Context, arg UpdateSiloParams) error {
 		arg.SiloType,
 		arg.SortOrder,
 		arg.ID,
+		arg.SiteID,
 	)
 	return err
 }

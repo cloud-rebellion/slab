@@ -239,8 +239,8 @@ func TestResolveLocaleSwitcherBlocks_StuffsResolvedList(t *testing.T) {
 
 func TestRenderLocaleSwitcherBlock_InlineMarksCurrent(t *testing.T) {
 	data := map[string]any{
-		"style":      "inline",
-		"show_label": false,
+		"style":             "inline",
+		"show_label":        false,
 		"_resolved_current": "en",
 		"_resolved_locales": []any{
 			map[string]any{"locale": "en", "url": "https://example.com/", "is_current": true},

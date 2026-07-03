@@ -21,6 +21,7 @@ import (
 	"regexp"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/bright-interaction/slab/internal/agent"
 	"github.com/bright-interaction/slab/internal/builder"
@@ -50,19 +51,26 @@ func Run(ctx context.Context, queries *store.Queries, siteID, buildID, distDir s
 
 	fidelity := agent.FidelityForSite(ctx, queries, siteID)
 	playbook := agent.DesignPlaybookFor(fidelity)
-	checks := RunChecksFor(site, playbook, fidelity)
+
+	// Agent-authored css_classes are emitted into the EXTERNAL
+	// global.css bundle, which the inline-<style> scan never sees, so
+	// gradients/transitions/token drift written there were invisible to
+	// the detectors. Feed the SOURCE rows (only agent CSS, never the
+	// builder's own library, which would false-positive on the
+	// always-emitted keyframes).
+	var cssSrc strings.Builder
+	if rows, err := queries.ListCSSClassesBySite(ctx, siteID); err == nil {
+		for _, r := range rows {
+			cssSrc.WriteString(r.Css)
+			cssSrc.WriteString("\n")
+		}
+	}
+	checks := RunChecksWithAgentCSS(site, playbook, fidelity, cssSrc.String())
 
 	// Showcase grants a real motion budget, so it also verifies the
 	// a11y contract on the agent's own CSS at the source: css_classes
 	// rows carrying animation without any reduced-motion guard fail.
 	if fidelity == agent.FidelityShowcase {
-		var cssSrc strings.Builder
-		if rows, err := queries.ListCSSClassesBySite(ctx, siteID); err == nil {
-			for _, r := range rows {
-				cssSrc.WriteString(r.Css)
-				cssSrc.WriteString("\n")
-			}
-		}
 		checks = append(checks, reducedMotionCoverageChecks(cssSrc.String())...)
 	}
 
@@ -104,6 +112,13 @@ func RunChecks(site *eval.SiteContext, playbook agent.DesignPlaybookInfo) []eval
 // the playbook as the rule source and the fidelity as the rubric
 // selector. Pure function, no I/O, easy to unit test.
 func RunChecksFor(site *eval.SiteContext, playbook agent.DesignPlaybookInfo, fidelity agent.DesignFidelity) []eval.CheckResult {
+	return RunChecksWithAgentCSS(site, playbook, fidelity, "")
+}
+
+// RunChecksWithAgentCSS additionally scans agentCSS (the css_classes
+// SOURCE rows) with the CSS detectors: those rows land in the external
+// global.css bundle the inline-<style> scan cannot see.
+func RunChecksWithAgentCSS(site *eval.SiteContext, playbook agent.DesignPlaybookInfo, fidelity agent.DesignFidelity, agentCSS string) []eval.CheckResult {
 	var checks []eval.CheckResult
 
 	// Concatenate all page HTML once for whole-site searches. Per-page
@@ -111,6 +126,9 @@ func RunChecksFor(site *eval.SiteContext, playbook agent.DesignPlaybookInfo, fid
 	allHTML := concatHTML(site)
 	allText := concatVisibleText(site)
 	allCSS := readSiteCSS(site)
+	if agentCSS != "" {
+		allCSS += "\n" + agentCSS
+	}
 	headings := extractHeadings(site)
 
 	// Grading-context stamp: zero-weight, excluded from scoring, but
@@ -404,56 +422,85 @@ func motionBudgetFor(fidelity agent.DesignFidelity) int {
 	return 1
 }
 
-func motionDensityChecks(css string, site *eval.SiteContext, fidelity agent.DesignFidelity) []eval.CheckResult {
-	matches := keyframesNameRE.FindAllStringSubmatch(css, -1)
-	// Count keyframes that are actually used outside of :hover/:focus.
-	// Heuristic: for each keyframe name, check if it appears in an
-	// `animation:` declaration that doesn't sit inside a hover/focus
-	// selector. Quick scan: split on `}` then check each rule block.
-	perpetualNames := map[string]bool{}
-	rules := strings.Split(css, "}")
-	for _, rule := range rules {
+// pageInlineCSS extracts the <style> blocks of one page's HTML.
+func pageInlineCSS(pageHTML string) string {
+	var sb strings.Builder
+	for _, m := range scriptStyleRE.FindAllStringSubmatch(pageHTML, -1) {
+		if len(m) > 1 && strings.EqualFold(m[1], "style") {
+			sb.WriteString(m[0])
+			sb.WriteString("\n")
+		}
+	}
+	return sb.String()
+}
+
+// perpetualInlineKeyframes counts @keyframes-driven animations used
+// outside :hover/:focus/:active within ONE page's inline CSS.
+// Heuristic: for each keyframe name, check if it appears in an
+// `animation:` declaration that doesn't sit inside a hover/focus
+// selector or a prefers-reduced-motion guard.
+func perpetualInlineKeyframes(pageCSS string) map[string]bool {
+	matches := keyframesNameRE.FindAllStringSubmatch(pageCSS, -1)
+	perpetual := map[string]bool{}
+	for _, rule := range strings.Split(pageCSS, "}") {
 		ruleLower := strings.ToLower(rule)
 		if !strings.Contains(ruleLower, "animation") {
 			continue
 		}
-		// Skip hover/focus/active states.
 		if strings.Contains(ruleLower, ":hover") || strings.Contains(ruleLower, ":focus") || strings.Contains(ruleLower, ":active") {
 			continue
 		}
-		// Skip the prefers-reduced-motion guard.
 		if strings.Contains(ruleLower, "prefers-reduced-motion") {
 			continue
 		}
 		for _, m := range matches {
 			name := strings.ToLower(m[1])
 			if strings.Contains(ruleLower, name) {
-				perpetualNames[name] = true
+				perpetual[name] = true
+			}
+		}
+	}
+	return perpetual
+}
+
+func motionDensityChecks(_ string, site *eval.SiteContext, fidelity agent.DesignFidelity) []eval.CheckResult {
+	// fx utilities are emitted only under showcase fidelity; on
+	// balanced/performance builds those class names are dead (no CSS
+	// behind them) and must not cost points.
+	markers := ambientMotionMarkers
+	if fidelity != agent.FidelityShowcase {
+		markers = markers[:0:0]
+		for _, m := range ambientMotionMarkers {
+			if !strings.HasPrefix(m, "fx-") {
+				markers = append(markers, m)
 			}
 		}
 	}
 
-	// Rendered ambient markers: worst page wins ("per viewport").
-	inlineCount := len(perpetualNames)
-	signals := mapKeys(perpetualNames)
-	renderedWorst := 0
+	// Per PAGE (the "per viewport" the playbook budgets): that page's
+	// own inline-style keyframes plus that page's rendered ambient
+	// markers, worst page wins. Summing a SITE-WIDE inline count with
+	// the worst page's markers double-counted multi-page sites.
+	worst := 0
+	var signals []string
 	for _, p := range site.Pages {
-		pageCount := 0
-		var pageSignals []string
-		for _, marker := range ambientMotionMarkers {
+		pageSignals := make([]string, 0, 4)
+		for name := range perpetualInlineKeyframes(pageInlineCSS(p.HTML)) {
+			pageSignals = append(pageSignals, name)
+		}
+		for _, marker := range markers {
 			if strings.Contains(p.HTML, marker) {
-				pageCount++
 				pageSignals = append(pageSignals, marker)
 			}
 		}
-		if pageCount > renderedWorst {
-			renderedWorst = pageCount
-			signals = append(mapKeys(perpetualNames), pageSignals...)
+		if len(pageSignals) > worst {
+			worst = len(pageSignals)
+			signals = pageSignals
 		}
 	}
 
 	budget := motionBudgetFor(fidelity)
-	count := inlineCount + renderedWorst
+	count := worst
 	if count <= budget {
 		return []eval.CheckResult{eval.Pass("motion_density", "motion", 5,
 			fmt.Sprintf("%d perpetual animation signal(s) per viewport (budget %d under %s fidelity)", count, budget, string(fidelity)))}
@@ -501,10 +548,10 @@ func reducedMotionCoverageChecks(cssClassesSrc string) []eval.CheckResult {
 // where Lovable users had to manually fix every page's meta after
 // generation.
 var (
-	titleRE       = regexp.MustCompile(`(?i)<title>([^<]*)</title>`)
-	metaDescRE    = regexp.MustCompile(`(?i)<meta[^>]+name=["']description["'][^>]+content=["']([^"']*)["']`)
-	ogImageRE     = regexp.MustCompile(`(?i)<meta[^>]+property=["']og:image["'][^>]+content=["']([^"']*)["']`)
-	canonicalRE   = regexp.MustCompile(`(?i)<link[^>]+rel=["']canonical["'][^>]+href=["']([^"']*)["']`)
+	titleRE     = regexp.MustCompile(`(?i)<title>([^<]*)</title>`)
+	metaDescRE  = regexp.MustCompile(`(?i)<meta[^>]+name=["']description["'][^>]+content=["']([^"']*)["']`)
+	ogImageRE   = regexp.MustCompile(`(?i)<meta[^>]+property=["']og:image["'][^>]+content=["']([^"']*)["']`)
+	canonicalRE = regexp.MustCompile(`(?i)<link[^>]+rel=["']canonical["'][^>]+href=["']([^"']*)["']`)
 )
 
 func metaCompletenessChecks(site *eval.SiteContext) []eval.CheckResult {
@@ -513,14 +560,16 @@ func metaCompletenessChecks(site *eval.SiteContext) []eval.CheckResult {
 		t := strings.TrimSpace(firstMatch(titleRE, p.HTML))
 		if t == "" {
 			findings = append(findings, fmt.Sprintf("%s: missing <title>", p.Slug))
-		} else if l := len(t); l < 30 || l > 65 {
+		} else if l := utf8.RuneCountInString(t); l < 30 || l > 65 {
+			// Rune count, not bytes: eval/seo.go counts runes for the
+			// same checks, and byte-length false-fails Swedish titles.
 			findings = append(findings, fmt.Sprintf("%s: <title> is %d chars (target 30-60)", p.Slug, l))
 		}
 
 		d := strings.TrimSpace(firstMatch(metaDescRE, p.HTML))
 		if d == "" {
 			findings = append(findings, fmt.Sprintf("%s: missing meta description", p.Slug))
-		} else if l := len(d); l < 100 || l > 175 {
+		} else if l := utf8.RuneCountInString(d); l < 100 || l > 175 {
 			findings = append(findings, fmt.Sprintf("%s: meta description is %d chars (target 120-160)", p.Slug, l))
 		}
 
@@ -588,7 +637,7 @@ func concatHTML(site *eval.SiteContext) string {
 // concatVisibleText extracts visible text content (what users read)
 // from each page. Strips tags + script/style. Used for slop-term scans.
 var (
-	tagRE        = regexp.MustCompile(`<[^>]+>`)
+	tagRE         = regexp.MustCompile(`<[^>]+>`)
 	scriptStyleRE = regexp.MustCompile(`(?is)<(script|style)[^>]*>.*?</(script|style)>`)
 	wsRE          = regexp.MustCompile(`\s+`)
 )
@@ -753,12 +802,12 @@ func hasQualityHero(pageHTML string) bool {
 func aboveTheFoldTrustChecks(site *eval.SiteContext, fidelity agent.DesignFidelity) []eval.CheckResult {
 	const max = 5
 	trustTypes := map[string]bool{
-		"logo_strip":      true,
-		"logo_carousel":   true,
-		"stat_grid":       true,
-		"quote":           true,
-		"accordion_faq":   true,
-		"testimonial":     true, // schema isn't registered yet but reserve.
+		"logo_strip":    true,
+		"logo_carousel": true,
+		"stat_grid":     true,
+		"quote":         true,
+		"accordion_faq": true,
+		"testimonial":   true, // schema isn't registered yet but reserve.
 	}
 	var fails []string
 	for _, p := range site.Pages {

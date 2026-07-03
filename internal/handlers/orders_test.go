@@ -46,11 +46,11 @@ func checkoutRouter(h *OrderHandler) chi.Router {
 }
 
 func TestOrders_CheckoutHappyPathNoMollie(t *testing.T) {
-	_, q := setupDeployTestDB(t)
+	db, q := setupDeployTestDB(t)
 	siteID := "ositea0000000000aaaa01"
 	seedSite(t, q, siteID)
 	_, v := seedActiveProductWithVariant(t, q, siteID, "hat", 10)
-	h := NewOrderHandler(nil, q, nil)
+	h := NewOrderHandler(nil, q, db)
 	r := checkoutRouter(h)
 
 	code, body := postJSON(t, r, "/api/sites/"+siteID+"/checkout", map[string]any{
@@ -73,7 +73,7 @@ func TestOrders_CheckoutHappyPathNoMollie(t *testing.T) {
 }
 
 func TestOrders_CheckoutRejectsInactiveProduct(t *testing.T) {
-	_, q := setupDeployTestDB(t)
+	db, q := setupDeployTestDB(t)
 	siteID := "ositea0000000000aaaa02"
 	seedSite(t, q, siteID)
 	ph := NewProductHandler(nil, q)
@@ -83,7 +83,7 @@ func TestOrders_CheckoutRejectsInactiveProduct(t *testing.T) {
 	rawV, _ := json.Marshal(VariantInput{Name: "x", PriceCents: 1000, InventoryCount: 5})
 	v, _ := ph.CreateVariantForAgent(context.Background(), siteID, p.ID, rawV)
 
-	h := NewOrderHandler(nil, q, nil)
+	h := NewOrderHandler(nil, q, db)
 	r := checkoutRouter(h)
 	code, _ := postJSON(t, r, "/api/sites/"+siteID+"/checkout", map[string]any{
 		"items":    []map[string]any{{"variant_id": v.ID, "quantity": 1}},
@@ -95,11 +95,11 @@ func TestOrders_CheckoutRejectsInactiveProduct(t *testing.T) {
 }
 
 func TestOrders_CheckoutRejectsInsufficientInventory(t *testing.T) {
-	_, q := setupDeployTestDB(t)
+	db, q := setupDeployTestDB(t)
 	siteID := "ositea0000000000aaaa03"
 	seedSite(t, q, siteID)
 	_, v := seedActiveProductWithVariant(t, q, siteID, "scarce", 2)
-	h := NewOrderHandler(nil, q, nil)
+	h := NewOrderHandler(nil, q, db)
 	r := checkoutRouter(h)
 	code, _ := postJSON(t, r, "/api/sites/"+siteID+"/checkout", map[string]any{
 		"items":    []map[string]any{{"variant_id": v.ID, "quantity": 5}},
@@ -111,7 +111,7 @@ func TestOrders_CheckoutRejectsInsufficientInventory(t *testing.T) {
 }
 
 func TestOrders_CheckoutAppliesDiscountCode(t *testing.T) {
-	_, q := setupDeployTestDB(t)
+	db, q := setupDeployTestDB(t)
 	siteID := "ositea0000000000aaaa04"
 	seedSite(t, q, siteID)
 	_, v := seedActiveProductWithVariant(t, q, siteID, "tshirt", 100)
@@ -122,7 +122,7 @@ func TestOrders_CheckoutAppliesDiscountCode(t *testing.T) {
 	if _, err := dh.CreateForAgent(context.Background(), siteID, raw); err != nil {
 		t.Fatalf("seed code: %v", err)
 	}
-	h := NewOrderHandler(nil, q, nil)
+	h := NewOrderHandler(nil, q, db)
 	r := checkoutRouter(h)
 	code, body := postJSON(t, r, "/api/sites/"+siteID+"/checkout", map[string]any{
 		"items":         []map[string]any{{"variant_id": v.ID, "quantity": 3}},
@@ -145,11 +145,11 @@ func TestOrders_CheckoutAppliesDiscountCode(t *testing.T) {
 }
 
 func TestOrders_StateMachineRejectsIllegalTransition(t *testing.T) {
-	_, q := setupDeployTestDB(t)
+	db, q := setupDeployTestDB(t)
 	siteID := "ositea0000000000aaaa05"
 	seedSite(t, q, siteID)
 	_, v := seedActiveProductWithVariant(t, q, siteID, "shirt", 50)
-	h := NewOrderHandler(nil, q, nil)
+	h := NewOrderHandler(nil, q, db)
 	r := checkoutRouter(h)
 	code, body := postJSON(t, r, "/api/sites/"+siteID+"/checkout", map[string]any{
 		"items":    []map[string]any{{"variant_id": v.ID, "quantity": 1}},
@@ -184,7 +184,7 @@ func TestOrders_StateMachineRejectsIllegalTransition(t *testing.T) {
 }
 
 func TestOrders_PaidSideEffectsDecrementInventoryAndIncrementDiscount(t *testing.T) {
-	_, q := setupDeployTestDB(t)
+	db, q := setupDeployTestDB(t)
 	siteID := "ositea0000000000aaaa06"
 	seedSite(t, q, siteID)
 	_, v := seedActiveProductWithVariant(t, q, siteID, "thing", 10)
@@ -196,7 +196,7 @@ func TestOrders_PaidSideEffectsDecrementInventoryAndIncrementDiscount(t *testing
 	if err != nil {
 		t.Fatalf("seed code: %v", err)
 	}
-	h := NewOrderHandler(nil, q, nil)
+	h := NewOrderHandler(nil, q, db)
 	r := checkoutRouter(h)
 	code, body := postJSON(t, r, "/api/sites/"+siteID+"/checkout", map[string]any{
 		"items":         []map[string]any{{"variant_id": v.ID, "quantity": 3}},

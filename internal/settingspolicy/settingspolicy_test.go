@@ -1,4 +1,4 @@
-package handlers
+package settingspolicy
 
 import (
 	"strings"
@@ -74,87 +74,87 @@ func TestValidateAnalyticsSetting_DispatchesCookieDeclarations(t *testing.T) {
 	// right validator. Mismatch here means the catalog change was not
 	// wired into the handler-level validate switch.
 	good := `[{"category":"analytics","name":"_ga"}]`
-	if err := validateAnalyticsSetting("cookie_declarations", good); err != nil {
+	if err := validateAnalytics("cookie_declarations", good); err != nil {
 		t.Errorf("good declarations rejected by analytics dispatch: %v", err)
 	}
-	if err := validateAnalyticsSetting("cookie_declarations", "{not json"); err == nil {
+	if err := validateAnalytics("cookie_declarations", "{not json"); err == nil {
 		t.Error("malformed declarations should fail through analytics dispatch")
 	}
 }
 
 func TestValidateAnalyticsSetting_PositionEnum(t *testing.T) {
 	for _, ok := range []string{"bottom", "top", "center"} {
-		if err := validateAnalyticsSetting("cookie_banner_position", ok); err != nil {
+		if err := validateAnalytics("cookie_banner_position", ok); err != nil {
 			t.Errorf("position=%q should be accepted, got %v", ok, err)
 		}
 	}
-	if err := validateAnalyticsSetting("cookie_banner_position", "side"); err == nil {
+	if err := validateAnalytics("cookie_banner_position", "side"); err == nil {
 		t.Error("position=side should be rejected")
 	}
 }
 
 func TestValidateAnalyticsSetting_ThemeEnum(t *testing.T) {
 	for _, ok := range []string{"light", "dark", "auto"} {
-		if err := validateAnalyticsSetting("cookie_theme", ok); err != nil {
+		if err := validateAnalytics("cookie_theme", ok); err != nil {
 			t.Errorf("theme=%q should be accepted, got %v", ok, err)
 		}
 	}
-	if err := validateAnalyticsSetting("cookie_theme", "neon"); err == nil {
+	if err := validateAnalytics("cookie_theme", "neon"); err == nil {
 		t.Error("theme=neon should be rejected")
 	}
 }
 
 func TestValidateAnalyticsSetting_FloatingTriggerEnum(t *testing.T) {
 	for _, ok := range []string{"left", "right", "off"} {
-		if err := validateAnalyticsSetting("cookie_floating_trigger", ok); err != nil {
+		if err := validateAnalytics("cookie_floating_trigger", ok); err != nil {
 			t.Errorf("floating_trigger=%q should be accepted, got %v", ok, err)
 		}
 	}
-	if err := validateAnalyticsSetting("cookie_floating_trigger", "top"); err == nil {
+	if err := validateAnalytics("cookie_floating_trigger", "top"); err == nil {
 		t.Error("floating_trigger=top should be rejected")
 	}
 }
 
 func TestValidateAnalyticsSetting_ExpiryRange(t *testing.T) {
-	if err := validateAnalyticsSetting("cookie_expiry_days", "365"); err != nil {
+	if err := validateAnalytics("cookie_expiry_days", "365"); err != nil {
 		t.Errorf("365 should be accepted, got %v", err)
 	}
-	if err := validateAnalyticsSetting("cookie_expiry_days", "366"); err == nil {
-		t.Error("366 must be rejected — IMY caps at 365")
+	if err := validateAnalytics("cookie_expiry_days", "366"); err == nil {
+		t.Error("366 must be rejected: IMY caps at 365")
 	}
-	if err := validateAnalyticsSetting("cookie_expiry_days", "0"); err != nil {
+	if err := validateAnalytics("cookie_expiry_days", "0"); err != nil {
 		t.Errorf("0 should be accepted (means use widget default), got %v", err)
 	}
-	if err := validateAnalyticsSetting("cookie_expiry_days", "-1"); err == nil {
+	if err := validateAnalytics("cookie_expiry_days", "-1"); err == nil {
 		t.Error("negative should be rejected")
 	}
 }
 
 func TestValidateAnalyticsSetting_TrackPathRelative(t *testing.T) {
-	if err := validateAnalyticsSetting("track_path", "/t"); err != nil {
+	if err := validateAnalytics("track_path", "/t"); err != nil {
 		t.Errorf("/t should be accepted, got %v", err)
 	}
-	if err := validateAnalyticsSetting("track_path", "https://evil.com/t"); err == nil {
+	if err := validateAnalytics("track_path", "https://evil.com/t"); err == nil {
 		t.Error("absolute URL must be rejected (anti-redirect)")
 	}
-	if err := validateAnalyticsSetting("track_path", "//evil.com/t"); err == nil {
+	if err := validateAnalytics("track_path", "//evil.com/t"); err == nil {
 		t.Error("protocol-relative URL must be rejected")
 	}
-	if err := validateAnalyticsSetting("track_path", "t"); err == nil {
+	if err := validateAnalytics("track_path", "t"); err == nil {
 		t.Error("non-rooted path must be rejected")
 	}
 }
 
 func TestValidateAnalyticsSetting_CcpaURL(t *testing.T) {
 	for _, ok := range []string{"/privacy", "/privacy#ccpa", "https://example.com/do-not-sell"} {
-		if err := validateAnalyticsSetting("ccpa_url", ok); err != nil {
+		if err := validateAnalytics("ccpa_url", ok); err != nil {
 			t.Errorf("ccpa_url=%q should be accepted, got %v", ok, err)
 		}
 	}
-	if err := validateAnalyticsSetting("ccpa_url", "javascript:alert(1)"); err == nil {
+	if err := validateAnalytics("ccpa_url", "javascript:alert(1)"); err == nil {
 		t.Error("javascript: URL must be rejected")
 	}
-	if err := validateAnalyticsSetting("ccpa_url", "ftp://example.com/foo"); err == nil {
+	if err := validateAnalytics("ccpa_url", "ftp://example.com/foo"); err == nil {
 		t.Error("non-http(s) absolute URL must be rejected")
 	}
 }

@@ -66,7 +66,7 @@ type RedirectPlan struct {
 // before commit. The migration UI groups these and offers per-row actions
 // (rename, skip, replace).
 type PlanConflict struct {
-	SourcePath  string `json:"source_path"`
+	SourcePath   string `json:"source_path"`
 	ProposedSlug string `json:"proposed_slug"`
 	ExistingKind string `json:"existing_kind"` // "page" or "plan_collision"
 	Detail       string `json:"detail"`

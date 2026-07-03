@@ -31,10 +31,10 @@ type CookieProofConfig struct {
 
 	// Optional banner copy overrides. Empty values fall back to the widget's
 	// built-in i18n strings for the resolved Locale.
-	Title       string
-	Description string
-	AcceptLabel string
-	RejectLabel string
+	Title         string
+	Description   string
+	AcceptLabel   string
+	RejectLabel   string
 	SettingsLabel string
 
 	// Banner position: "bottom" (default), "top", or "center".
@@ -185,27 +185,27 @@ func buildCookieProofEmbedConfig(cfg CookieProofConfig) ([]byte, error) {
 	proofEndpoint := strings.TrimRight(trackPath, "/") + "/consent"
 
 	type embedConfig struct {
-		SiteID            string            `json:"siteId"`
-		Domain            string            `json:"domain"`
-		ProofEndpoint     string            `json:"proofEndpoint"`
-		Language          string            `json:"language,omitempty"`
-		Position          string            `json:"position,omitempty"`
-		Categories        []CookieCategory  `json:"categories,omitempty"`
-		PrivacyPolicyURL  string            `json:"privacyPolicyUrl,omitempty"`
-		GcmEnabled        bool              `json:"gcmEnabled"`
-		RespectGPC        bool              `json:"respectGPC"`
-		FloatingTrigger   any               `json:"floatingTrigger,omitempty"`
-		Theme             string            `json:"theme,omitempty"`
-		CookieName        string            `json:"cookieName,omitempty"`
-		CookieExpiry      int               `json:"cookieExpiry,omitempty"`
-		Revision          int               `json:"revision,omitempty"`
+		SiteID           string           `json:"siteId"`
+		Domain           string           `json:"domain"`
+		ProofEndpoint    string           `json:"proofEndpoint"`
+		Language         string           `json:"language,omitempty"`
+		Position         string           `json:"position,omitempty"`
+		Categories       []CookieCategory `json:"categories,omitempty"`
+		PrivacyPolicyURL string           `json:"privacyPolicyUrl,omitempty"`
+		GcmEnabled       bool             `json:"gcmEnabled"`
+		RespectGPC       bool             `json:"respectGPC"`
+		FloatingTrigger  any              `json:"floatingTrigger,omitempty"`
+		Theme            string           `json:"theme,omitempty"`
+		CookieName       string           `json:"cookieName,omitempty"`
+		CookieExpiry     int              `json:"cookieExpiry,omitempty"`
+		Revision         int              `json:"revision,omitempty"`
 		// LanguageSelector accepts the same shape the widget does:
 		// bool (true = all built-in, false = none) or []string of ISO codes.
-		LanguageSelector  any               `json:"languageSelector,omitempty"`
-		CcpaEnabled       bool              `json:"ccpaEnabled,omitempty"`
-		CcpaURL           string            `json:"ccpaUrl,omitempty"`
-		CssVars           map[string]string `json:"cssVars,omitempty"`
-		Copy              map[string]string `json:"copy,omitempty"`
+		LanguageSelector any               `json:"languageSelector,omitempty"`
+		CcpaEnabled      bool              `json:"ccpaEnabled,omitempty"`
+		CcpaURL          string            `json:"ccpaUrl,omitempty"`
+		CssVars          map[string]string `json:"cssVars,omitempty"`
+		Copy             map[string]string `json:"copy,omitempty"`
 		// CustomTranslations maps ISO language code -> partial
 		// TranslationStrings (title, description, accept, reject,
 		// customize). Widget merges over its built-in en/sv/de/etc.
@@ -345,7 +345,6 @@ func WriteCookieProofWidgetAsset(workspaceDir string, cfg CookieProofConfig) err
 	target := filepath.Join(publicDir, CookieProofWidgetFilename(prefix))
 	return WriteFile(target, string(prefix)+string(CookieProofWidget))
 }
-
 
 // BuildCookieProofConfig assembles a CookieProofConfig from a site row +
 // settings map + any per-site profile, picking sensible defaults so the

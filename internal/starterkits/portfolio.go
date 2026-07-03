@@ -13,8 +13,8 @@ func init() {
 
 type portfolioKit struct{}
 
-func (k *portfolioKit) ID() string          { return "portfolio" }
-func (k *portfolioKit) Name() string        { return "Portfolio (One-Pager)" }
+func (k *portfolioKit) ID() string   { return "portfolio" }
+func (k *portfolioKit) Name() string { return "Portfolio (One-Pager)" }
 func (k *portfolioKit) Description() string {
 	return "Personal portfolio one-pager. Hero, project grid, about block, contact."
 }

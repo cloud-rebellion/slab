@@ -275,11 +275,11 @@ func TestParser404IsCapturedToMissingURLs(t *testing.T) {
 
 func TestStripQueryFragment(t *testing.T) {
 	cases := map[string]string{
-		"/about":            "/about",
-		"/about?ref=email":  "/about",
-		"/about#section":    "/about",
-		"/about?x=1#sec":    "/about",
-		"":                  "",
+		"/about":           "/about",
+		"/about?ref=email": "/about",
+		"/about#section":   "/about",
+		"/about?x=1#sec":   "/about",
+		"":                 "",
 	}
 	for in, want := range cases {
 		if got := stripQueryFragment(in); got != want {

@@ -1,10 +1,10 @@
 // Package domains owns the custom-hostname pipeline:
 //
-//   nginx fragment writer  (this file: edge.go)
-//   verification poller    (verify.go)
-//   certbot orchestration  (certbot.go)
-//   Cloudflare helper      (cloudflare.go)
-//   reconcile loop          (reconciler.go)
+//	nginx fragment writer  (this file: edge.go)
+//	verification poller    (verify.go)
+//	certbot orchestration  (certbot.go)
+//	Cloudflare helper      (cloudflare.go)
+//	reconcile loop          (reconciler.go)
 //
 // The handlers package owns the HTTP CRUD surface and the public verify
 // endpoint; this package owns the side-effects: writing nginx server

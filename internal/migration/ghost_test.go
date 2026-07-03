@@ -54,12 +54,12 @@ func TestGhost_RedactGhostKey(t *testing.T) {
 // ----- Mock Ghost server -----
 
 type fakeGhost struct {
-	t          *testing.T
-	srv        *httptest.Server
-	expectKey  string
-	posts      []ghostPost
-	pages      []ghostPost
-	tags       []ghostTag
+	t         *testing.T
+	srv       *httptest.Server
+	expectKey string
+	posts     []ghostPost
+	pages     []ghostPost
+	tags      []ghostTag
 }
 
 func newFakeGhost(t *testing.T) *fakeGhost {
@@ -213,28 +213,28 @@ func TestGhost_CrawlEndToEnd(t *testing.T) {
 	fg.pages = []ghostPost{
 		{
 			ID: "pg1", Slug: "about", Title: "About",
-			URL: "https://acme.example/about/",
-			HTML: `<p>About body with <a href="https://acme.example/contact">contact</a></p>`,
+			URL:       "https://acme.example/about/",
+			HTML:      `<p>About body with <a href="https://acme.example/contact">contact</a></p>`,
 			MetaTitle: "About Acme", MetaDescription: "About description",
-			OGImage: "https://acme.example/og.jpg",
+			OGImage:     "https://acme.example/og.jpg",
 			PublishedAt: "2024-04-01T00:00:00.000Z",
 		},
 	}
 	fg.posts = []ghostPost{
 		{
 			ID: "p1", Slug: "hello", Title: "Hello",
-			URL: "https://acme.example/hello/",
-			HTML: `<p>Body <img src="https://acme.example/img.jpg"></p>`,
+			URL:     "https://acme.example/hello/",
+			HTML:    `<p>Body <img src="https://acme.example/img.jpg"></p>`,
 			Excerpt: "Excerpt text", FeatureImage: "https://acme.example/feat.jpg",
 			FeatureImageAlt: "Feat",
-			PublishedAt: "2024-05-15T12:00:00.000Z",
-			Tags:        []ghostTag{{Slug: "intro"}, {Slug: "news"}},
-			Authors:     []ghostAuthor{{Name: "Alice", Slug: "alice"}},
+			PublishedAt:     "2024-05-15T12:00:00.000Z",
+			Tags:            []ghostTag{{Slug: "intro"}, {Slug: "news"}},
+			Authors:         []ghostAuthor{{Name: "Alice", Slug: "alice"}},
 		},
 		{
 			ID: "p2", Slug: "second", Title: "Second",
-			URL: "https://acme.example/second/",
-			HTML: "<p>Two</p>",
+			URL:         "https://acme.example/second/",
+			HTML:        "<p>Two</p>",
 			PublishedAt: "2024-05-20T00:00:00.000Z",
 		},
 	}
@@ -313,7 +313,7 @@ func TestGhost_PaginationFollowsMetaPages(t *testing.T) {
 		fg.posts = append(fg.posts, ghostPost{
 			ID:   fmt.Sprintf("p%d", i),
 			Slug: fmt.Sprintf("p%d", i), Title: fmt.Sprintf("P%d", i),
-			URL: fmt.Sprintf("https://acme.example/p%d/", i),
+			URL:         fmt.Sprintf("https://acme.example/p%d/", i),
 			PublishedAt: "2024-01-01T00:00:00.000Z",
 		})
 	}

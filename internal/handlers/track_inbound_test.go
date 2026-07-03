@@ -245,11 +245,11 @@ func TestInbound_HappyPath(t *testing.T) {
 		"email":                 "alice@example.com",
 		"identity_confirmed_at": time.Now().UTC().Format(time.RFC3339),
 		"metadata": map[string]any{
-			"lifecycle":          "WARM",
-			"lead_score":         42,
-			"last_topic":         "Pricing page",
-			"consent_marketing":  true,
-			"consent_analytics":  true,
+			"lifecycle":         "WARM",
+			"lead_score":        42,
+			"last_topic":        "Pricing page",
+			"consent_marketing": true,
+			"consent_analytics": true,
 		},
 	}, nil)
 

@@ -23,17 +23,17 @@ func NewContextBuilder(queries *store.Queries) *ContextBuilder {
 
 // SiteContext is the full context payload returned to AI agents.
 type SiteContext struct {
-	Site             SiteInfo              `json:"site"`
-	Structure        Structure             `json:"structure"`
-	Knowledgebase    []KBEntry             `json:"knowledgebase"`
-	Components       []ComponentInfo       `json:"components"`
-	CSSClasses       []CSSClassInfo        `json:"css_classes"`
+	Site          SiteInfo        `json:"site"`
+	Structure     Structure       `json:"structure"`
+	Knowledgebase []KBEntry       `json:"knowledgebase"`
+	Components    []ComponentInfo `json:"components"`
+	CSSClasses    []CSSClassInfo  `json:"css_classes"`
 	// Collections lists every Custom Collection (custom content type)
 	// the agent can read or write via the *_collection / *_collection_item
 	// MCP tools. Schema describes field shape; item_count + locales help
 	// the agent decide whether bulk-import or per-item create is the
 	// right path.
-	Collections []CollectionInfo `json:"collections"`
+	Collections      []CollectionInfo      `json:"collections"`
 	Constraints      Constraints           `json:"constraints"`
 	Architecture     ArchitectureInfo      `json:"architecture"`
 	DesignReferences []DesignReferenceInfo `json:"design_references"`
@@ -158,16 +158,16 @@ type DesignPlaybookInfo struct {
 	// FIRST; the sections below are already adapted to it.
 	Fidelity FidelityInfo `json:"fidelity"`
 
-	Stack             string                  `json:"stack"`
-	Principles        []DesignPrinciple       `json:"principles"`
-	PageArchetypes    []PageArchetype         `json:"page_archetypes"`
-	BlockSelection    []BlockSelectionRule    `json:"block_selection"`
-	Typography        TypographyScale         `json:"typography"`
-	Spacing           SpacingScale            `json:"spacing"`
-	Color             ColorGuidance           `json:"color"`
-	CommonMistakes    []DesignMistake         `json:"common_mistakes"`
-	OneShotRecipe     OneShotRecipe           `json:"one_shot_recipe"`
-	ReferenceRepos    []DesignReferenceRepo   `json:"reference_repos"`
+	Stack          string                `json:"stack"`
+	Principles     []DesignPrinciple     `json:"principles"`
+	PageArchetypes []PageArchetype       `json:"page_archetypes"`
+	BlockSelection []BlockSelectionRule  `json:"block_selection"`
+	Typography     TypographyScale       `json:"typography"`
+	Spacing        SpacingScale          `json:"spacing"`
+	Color          ColorGuidance         `json:"color"`
+	CommonMistakes []DesignMistake       `json:"common_mistakes"`
+	OneShotRecipe  OneShotRecipe         `json:"one_shot_recipe"`
+	ReferenceRepos []DesignReferenceRepo `json:"reference_repos"`
 
 	// AntiPatterns lists the AI design tells that make a site look
 	// generic. Each entry pairs a banned pattern with the preferred
@@ -257,8 +257,8 @@ type DesignPlaybookInfo struct {
 // "how-to-apply-via-atomicsite" mapping so the agent isn't left
 // translating abstract advice into block fields.
 type DesignPrinciple struct {
-	Name        string `json:"name"`
-	Rule        string `json:"rule"`
+	Name         string `json:"name"`
+	Rule         string `json:"rule"`
 	WhyItMatters string `json:"why"`
 	HowToApply   string `json:"how"`
 }
@@ -268,10 +268,10 @@ type DesignPrinciple struct {
 // Each block entry names the block_type the agent should create_block
 // against, plus a one-line "why this slot."
 type PageArchetype struct {
-	Name        string                `json:"name"`
-	Use         string                `json:"use"`
-	Description string                `json:"description"`
-	Blocks      []ArchetypeBlock      `json:"blocks"`
+	Name        string           `json:"name"`
+	Use         string           `json:"use"`
+	Description string           `json:"description"`
+	Blocks      []ArchetypeBlock `json:"blocks"`
 }
 
 type ArchetypeBlock struct {
@@ -294,11 +294,11 @@ type BlockSelectionRule struct {
 // the renderer ships, expressed in rem so the agent knows the ratios
 // without inspecting CSS.
 type TypographyScale struct {
-	HeadingFont      string         `json:"heading_font"`
-	BodyFont         string         `json:"body_font"`
-	MonoFont         string         `json:"mono_font"`
-	Scale            []TypeStep     `json:"scale"`
-	UsageRules       []string       `json:"usage_rules"`
+	HeadingFont string     `json:"heading_font"`
+	BodyFont    string     `json:"body_font"`
+	MonoFont    string     `json:"mono_font"`
+	Scale       []TypeStep `json:"scale"`
+	UsageRules  []string   `json:"usage_rules"`
 }
 
 type TypeStep struct {
@@ -312,9 +312,9 @@ type TypeStep struct {
 // rhythm between sections so the agent knows what's already wired into
 // the renderer (and shouldn't try to fight via custom CSS).
 type SpacingScale struct {
-	ContainerWidths   map[string]string `json:"container_widths"`
-	BlockPadding      map[string]string `json:"block_padding"`
-	SectionRhythm     []string          `json:"section_rhythm"`
+	ContainerWidths map[string]string `json:"container_widths"`
+	BlockPadding    map[string]string `json:"block_padding"`
+	SectionRhythm   []string          `json:"section_rhythm"`
 }
 
 // ColorGuidance maps the CSS custom properties to "what they're for."
@@ -322,8 +322,8 @@ type SpacingScale struct {
 // --color-surface-elevated and others; this tells the agent which one
 // belongs in which UI moment.
 type ColorGuidance struct {
-	Tokens          []ColorToken `json:"tokens"`
-	UsageRules      []string     `json:"usage_rules"`
+	Tokens     []ColorToken `json:"tokens"`
+	UsageRules []string     `json:"usage_rules"`
 }
 
 type ColorToken struct {
@@ -332,36 +332,36 @@ type ColorToken struct {
 }
 
 type DesignMistake struct {
-	Mistake  string `json:"mistake"`
-	Symptom  string `json:"symptom"`
-	Fix      string `json:"fix"`
+	Mistake string `json:"mistake"`
+	Symptom string `json:"symptom"`
+	Fix     string `json:"fix"`
 }
 
 // OneShotRecipe is the canonical block sequence for a B2B SaaS marketing
 // homepage that scores B+ on the eval and looks intentional. Used as
 // the default when the agent has no other guidance.
 type OneShotRecipe struct {
-	Description string             `json:"description"`
-	Blocks      []ArchetypeBlock   `json:"blocks"`
-	Settings    []string           `json:"settings"`
+	Description string           `json:"description"`
+	Blocks      []ArchetypeBlock `json:"blocks"`
+	Settings    []string         `json:"settings"`
 }
 
 // DesignReferenceRepo points at one of the curated repos checked into
 // automations/design-references/. Agents reading this know which folder
 // to inspect for production-grade Astro+Tailwind patterns.
 type DesignReferenceRepo struct {
-	Path        string   `json:"path"`
-	Stack       string   `json:"stack"`
-	BestFor     []string `json:"best_for"`
-	License     string   `json:"license"`
-	Notes       string   `json:"notes"`
+	Path    string   `json:"path"`
+	Stack   string   `json:"stack"`
+	BestFor []string `json:"best_for"`
+	License string   `json:"license"`
+	Notes   string   `json:"notes"`
 }
 
 // AntiPattern is one banned AI-design tell with its preferred replacement
 // and how to apply that replacement through atomicsite primitives.
 type AntiPattern struct {
-	Banned     string `json:"banned"`
-	Preferred  string `json:"preferred"`
+	Banned          string `json:"banned"`
+	Preferred       string `json:"preferred"`
 	HowInAtomicsite string `json:"how_in_atomicsite"`
 }
 
@@ -385,9 +385,9 @@ type VibeArchetype struct {
 // MaterialityGuidance describes the surface treatments atomicsite
 // supports + the patterns the agent should reach for vs avoid.
 type MaterialityGuidance struct {
-	Defaults  []string `json:"defaults"`
-	DoUse     []string `json:"do_use"`
-	DontUse   []string `json:"dont_use"`
+	Defaults   []string `json:"defaults"`
+	DoUse      []string `json:"do_use"`
+	DontUse    []string `json:"dont_use"`
 	HowToApply []string `json:"how_to_apply"`
 }
 
@@ -445,14 +445,14 @@ type HeroGraphic struct {
 // high-end-visual-design, stitch-design, minimalist-ui) instead of
 // reinventing patterns inline.
 type DesignWorkflow struct {
-	WhenToInvoke   string             `json:"when_to_invoke"`
-	SkillsByVibe   []SkillVibeMapping `json:"skills_by_vibe"`
-	BeforeAuthoring []string          `json:"before_authoring"`
+	WhenToInvoke    string             `json:"when_to_invoke"`
+	SkillsByVibe    []SkillVibeMapping `json:"skills_by_vibe"`
+	BeforeAuthoring []string           `json:"before_authoring"`
 }
 
 type SkillVibeMapping struct {
-	Vibe   string `json:"vibe"`
-	Skill  string `json:"skill"`
+	Vibe        string `json:"vibe"`
+	Skill       string `json:"skill"`
 	HowToInvoke string `json:"how_to_invoke"`
 }
 
@@ -481,14 +481,14 @@ type VoiceRules struct {
 // each archetype + how to obtain the woff2 files (all SIL OFL 1.1
 // licensed, free to self-host).
 type FontGuidance struct {
-	Philosophy       string             `json:"philosophy"`
-	System           []string           `json:"system"`
-	APIEndpoints     []FontEndpoint     `json:"api_endpoints"`
-	AdminUI          []string           `json:"admin_ui"`
-	UploadFlow       []string           `json:"upload_flow"`
-	Recommended      []FontFamily       `json:"recommended"`
-	SystemFallback   string             `json:"system_fallback"`
-	HowToSet         string             `json:"how_to_set"`
+	Philosophy     string         `json:"philosophy"`
+	System         []string       `json:"system"`
+	APIEndpoints   []FontEndpoint `json:"api_endpoints"`
+	AdminUI        []string       `json:"admin_ui"`
+	UploadFlow     []string       `json:"upload_flow"`
+	Recommended    []FontFamily   `json:"recommended"`
+	SystemFallback string         `json:"system_fallback"`
+	HowToSet       string         `json:"how_to_set"`
 }
 
 type FontEndpoint struct {
@@ -498,11 +498,11 @@ type FontEndpoint struct {
 }
 
 type FontFamily struct {
-	Name        string   `json:"name"`
-	GoodFor     []string `json:"good_for"`
-	License     string   `json:"license"`
-	DownloadFrom string  `json:"download_from"`
-	Notes       string   `json:"notes"`
+	Name         string   `json:"name"`
+	GoodFor      []string `json:"good_for"`
+	License      string   `json:"license"`
+	DownloadFrom string   `json:"download_from"`
+	Notes        string   `json:"notes"`
 }
 
 // StackGuidance documents the four canonical stacks atomicsite
@@ -529,20 +529,20 @@ type StackPick struct {
 }
 
 type PaymentRules struct {
-	Philosophy string             `json:"philosophy"`
-	Providers  []PaymentProvider  `json:"providers"`
-	WhenToPick []PaymentPick      `json:"when_to_pick"`
-	HowApplied string             `json:"how_applied"`
+	Philosophy string            `json:"philosophy"`
+	Providers  []PaymentProvider `json:"providers"`
+	WhenToPick []PaymentPick     `json:"when_to_pick"`
+	HowApplied string            `json:"how_applied"`
 }
 
 type PaymentProvider struct {
-	Name        string   `json:"name"`
-	BestFor     []string `json:"best_for"`
-	Strengths   []string `json:"strengths"`
-	Weaknesses  []string `json:"weaknesses"`
-	Geography   string   `json:"geography"`
-	Methods     []string `json:"methods"`
-	Pricing     string   `json:"pricing"`
+	Name       string   `json:"name"`
+	BestFor    []string `json:"best_for"`
+	Strengths  []string `json:"strengths"`
+	Weaknesses []string `json:"weaknesses"`
+	Geography  string   `json:"geography"`
+	Methods    []string `json:"methods"`
+	Pricing    string   `json:"pricing"`
 }
 
 type PaymentPick struct {
@@ -554,8 +554,8 @@ type PaymentPick struct {
 // PageTemplate is the canonical block sequence the eval engine rewards.
 // Use as the default when creating a fresh content page.
 type PageTemplate struct {
-	Description string             `json:"description"`
-	Blocks      []TemplateBlock    `json:"blocks"`
+	Description string          `json:"description"`
+	Blocks      []TemplateBlock `json:"blocks"`
 }
 
 type TemplateBlock struct {
@@ -565,7 +565,7 @@ type TemplateBlock struct {
 }
 
 type HardRule struct {
-	Rule      string `json:"rule"`
+	Rule         string `json:"rule"`
 	WhyItMatters string `json:"why"`
 	HowToApply   string `json:"how"`
 }
@@ -714,10 +714,10 @@ type EditingModeInfo struct {
 // the actual metadata keys the CRM has been pushing, and a few example
 // conditions to seed pattern recognition.
 type PersonalizationInfo struct {
-	Enabled             bool     `json:"enabled"`
-	IdentityMaxAgeDays  int      `json:"identity_max_age_days"`
-	KnownKeys           []string `json:"known_keys"`
-	ExampleConditions   []string `json:"example_conditions"`
+	Enabled            bool     `json:"enabled"`
+	IdentityMaxAgeDays int      `json:"identity_max_age_days"`
+	KnownKeys          []string `json:"known_keys"`
+	ExampleConditions  []string `json:"example_conditions"`
 }
 
 // SetupTask represents one configuration gap the agent should close. The
@@ -789,9 +789,9 @@ type SEOInfo struct {
 }
 
 type Structure struct {
-	Pages        []PageInfo       `json:"pages"`
+	Pages        []PageInfo        `json:"pages"`
 	GlobalBlocks []GlobalBlockInfo `json:"global_blocks"`
-	Silos        []SiloInfo       `json:"silos"`
+	Silos        []SiloInfo        `json:"silos"`
 }
 
 type PageInfo struct {
@@ -840,11 +840,11 @@ type KBEntry struct {
 }
 
 type ComponentInfo struct {
-	Name       string `json:"name"`
-	Category   string `json:"category"`
-	PropsSchema any   `json:"props_schema"`
-	CSSClasses []string `json:"css_classes"`
-	UsageNote  string `json:"usage_note"`
+	Name        string   `json:"name"`
+	Category    string   `json:"category"`
+	PropsSchema any      `json:"props_schema"`
+	CSSClasses  []string `json:"css_classes"`
+	UsageNote   string   `json:"usage_note"`
 }
 
 type CSSClassInfo struct {
@@ -871,12 +871,12 @@ type CollectionInfo struct {
 }
 
 type Constraints struct {
-	AllowedBlockTypes  []string `json:"allowed_block_types"`
-	ForbiddenPatterns  []string `json:"forbidden_patterns"`
-	AllowedHosts       []string `json:"allowed_hosts"`
-	MaxBlocksPerPage   int      `json:"max_blocks_per_page"`
-	MaxURLDepth        int      `json:"max_url_depth"`
-	RequiredBlocks     map[string][]string `json:"required_blocks"`
+	AllowedBlockTypes []string            `json:"allowed_block_types"`
+	ForbiddenPatterns []string            `json:"forbidden_patterns"`
+	AllowedHosts      []string            `json:"allowed_hosts"`
+	MaxBlocksPerPage  int                 `json:"max_blocks_per_page"`
+	MaxURLDepth       int                 `json:"max_url_depth"`
+	RequiredBlocks    map[string][]string `json:"required_blocks"`
 	// ActiveDesignFidelity mirrors the design.fidelity setting so the
 	// agent sees the dial at top level (the full contract lives in
 	// design_playbook.fidelity).
@@ -1474,7 +1474,7 @@ func defaultDesignPlaybook() DesignPlaybookInfo {
 				Name:         "Three primitives carry 80% of marketing pages",
 				Rule:         "hero (or split_hero) → stat_grid (proof) → feature_grid or replacement_grid (offer) → process_steps or about_split (story) → pricing → accordion_faq → cta. Most B2B SaaS homepages need only this set.",
 				WhyItMatters: "Resisting the urge to invent new primitives keeps the renderer surface stable AND keeps the agent from drifting into bespoke implementations. If it's not in the block taxonomy, it's probably an embed (Cal.com, YouTube, Typeform) or a custom block with raw markup, not a missing primitive.",
-				HowToApply:   "Read block_schemas before reaching for block_type=custom. The 21 built-in types cover the standard marketing-site catalog; custom is a last resort for genuinely bespoke widgets.",
+				HowToApply:   "Read block_schemas before reaching for block_type=custom. The 30+ built-in types (block_schemas is the authoritative list) cover the standard marketing-site catalog; custom is a last resort for genuinely bespoke widgets.",
 			},
 			{
 				Name:         "Copy is design",
@@ -1569,7 +1569,7 @@ func defaultDesignPlaybook() DesignPlaybookInfo {
 			{Question: "stat_grid vs feature_grid?", Choose: "stat_grid for numbers (599, 100/100, 60-90%, 20+). feature_grid for ideas (icon + title + body).", Why: "stat_grid renders large numerals with hierarchy; feature_grid is icon + text-balanced cards. Mixing them muddies both."},
 			{Question: "feature_grid vs replacement_grid?", Choose: "replacement_grid when positioning as 'X but better than Y' (Notion → Outline, Slack → Mattermost). feature_grid for standalone capabilities.", Why: "replacement_grid renders strikethrough+arrow+bold pattern that explicit comparison demands. feature_grid is for non-comparative cards."},
 			{Question: "process_steps vs ordered text list?", Choose: "process_steps for 3-5 sequential phases with names. text-with-list when the steps are sub-points of a paragraph.", Why: "process_steps uses big mono numerals + heading-font titles. Text lists are inline. Don't put numbered-step content into text bullet lists, you lose the hierarchy."},
-			{Question: "logo_strip vs logo_carousel?", Choose: "logo_strip for ≤6 stationary logos. logo_carousel for ≥8 OR when motion adds energy.", Why: "Carousel pauses on hover, so it's accessible. But always-on motion creates noise on small pages."},
+			{Question: "logo_strip vs logo_carousel?", Choose: "logo_strip for ≤6 stationary logos, and ALWAYS when the hero already animates (bg=circuit / mesh / pulse). logo_carousel for ≥8 logos on pages whose hero is static.", Why: "The carousel marquee is a perpetual animation and counts against the motion budget (1 per viewport in balanced fidelity); hero animation + marquee together fail the Inspector's motion_density check."},
 			{Question: "accordion_faq vs feature_grid Q+A?", Choose: "accordion_faq for ANY FAQ, never Q+A as feature_grid items.", Why: "accordion_faq auto-emits FAQPage JSON-LD which Google + AI search engines reward. feature_grid Q+A produces no schema."},
 			{Question: "Should this page have hide_global_blocks=true?", Choose: "Yes only for: splash language-chooser, dedicated landing pages with no nav, embed-style pages.", Why: "Per-page suppression of header + footer destroys cross-section navigation. Default is keep them on."},
 			{Question: "How many blocks per page?", Choose: "Homepage 8-10. Subpage 4-7. Blog post variable.", Why: "Past 12 blocks readers get fatigue and bounce. Past 10 the renderer's alternating-bg pattern starts to feel mechanical."},
@@ -1577,9 +1577,9 @@ func defaultDesignPlaybook() DesignPlaybookInfo {
 			{Question: "headline_accent field vs [[brackets]] in headline?", Choose: "[[brackets]] for inline accent in the same line ('Stop renting. Own [[it]].'). headline_accent for a coloured second line ('Stop renting your business. / Own it.' where 'Own it' is the second line).", Why: "Inline brackets read as one sentence with emphasis. Two-line accent reads as sequential statement. Pick the rhythm the headline wants."},
 		},
 		Typography: TypographyScale{
-			HeadingFont: "Space Grotesk (loaded via Google Fonts in the layout). Falls back to system-ui, sans-serif. Used for h1-h6, brand badges, process step numbers, stat values, tier names.",
-			BodyFont:    "Inter (Google Fonts). Falls back to system-ui, sans-serif. Used for paragraphs, lists, form labels, FAQ summaries.",
-			MonoFont:    "Space Mono (Google Fonts). Used for eyebrows, brand wordmarks, pricing tier-step labels (STEP 01), code blocks, footer copy fine-print.",
+			HeadingFont: "Space Grotesk (self-hosted woff2 via the per-site font upload; NEVER a font CDN, see Fonts.Philosophy). Falls back to system-ui, sans-serif when not uploaded. Used for h1-h6, brand badges, process step numbers, stat values, tier names.",
+			BodyFont:    "Inter (self-hosted woff2). Falls back to system-ui, sans-serif. Used for paragraphs, lists, form labels, FAQ summaries.",
+			MonoFont:    "Space Mono (self-hosted woff2). Used for eyebrows, brand wordmarks, pricing tier-step labels (STEP 01), code blocks, footer copy fine-print.",
 			Scale: []TypeStep{
 				{Element: "Hero h1", Size: "clamp(2.5rem, 6vw, 5rem)", Weight: "700", Use: "Above-the-fold headline. Max 18ch line-length. Letter-spacing -0.025em."},
 				{Element: "split_hero h1", Size: "clamp(2.25rem, 5vw, 4rem)", Weight: "700", Use: "Slightly smaller, sharing space with hero image."},
@@ -1643,7 +1643,7 @@ func defaultDesignPlaybook() DesignPlaybookInfo {
 			{Mistake: "Using feature_grid items as Q+A or as numbered process steps", Symptom: "Hierarchy feels flat. FAQ schema missing. Process visual rhythm broken.", Fix: "Use accordion_faq for Q+A (auto JSON-LD), process_steps for numbered phases (auto big numerals)."},
 			{Mistake: "Using the brand colour for the primary CTA", Symptom: "Page reads as 'template-y'. Primary doesn't stand apart from eyebrows + accents.", Fix: ".btn-primary uses --color-text (dark) by design. The brand colour is reserved for accents (eyebrows, links, btn-accent). To make CTAs more prominent, use larger padding or icon, NOT colour saturation."},
 			{Mistake: "Setting style_json overrides on standard blocks", Symptom: "Visual inconsistency between sections. Rhythm broken. Site feels like 'agent grabbed every option.'", Fix: "Resist style_json. The renderer's defaults are tuned. If you can't get the look you want, the answer is usually a different block_type, not custom CSS."},
-			{Mistake: "Embedding raw HTML via block_type=raw or custom when a built-in primitive fits", Symptom: "Section misses auto-section-id, alternating bg, eyebrow styling. Drifts from house style.", Fix: "Read block_schemas first. Use custom only when none of the 21 primitives match."},
+			{Mistake: "Embedding raw HTML via block_type=raw or custom when a built-in primitive fits", Symptom: "Section misses auto-section-id, alternating bg, eyebrow styling. Drifts from house style.", Fix: "Read block_schemas first. Use custom only when none of the 30+ built-in primitives match."},
 			{Mistake: "Multiple H1s per page", Symptom: "SEO eval fails Single H1. Heading hierarchy fails.", Fix: "Exactly one hero or split_hero per page (h1). Every other block uses h2 (heading or h2 field). Sub-cards use h3."},
 			{Mistake: "Hero with no secondary_label", Symptom: "Visitor with one-question hesitation has no soft path. Bounce.", Fix: "secondary_label like 'See pricing' or 'Read the docs', points lower on the same page (#pricing) so the hesitant visitor scrolls instead of leaving."},
 			{Mistake: "Pricing tiers with no featured tier", Symptom: "Visitor compares all three equally → analysis paralysis → no decision.", Fix: "Mark the recommended middle tier featured=true. Dark fill + accent CTA pulls the eye and makes the choice obvious."},
@@ -1653,11 +1653,11 @@ func defaultDesignPlaybook() DesignPlaybookInfo {
 			{Mistake: "Splash language-chooser pages indexed by search engines", Symptom: "SEO eval fails Not Noindexed; root URL outranks the locale roots.", Fix: "Set no_index=1 on the splash. Locale roots (/en/, /sv/) get indexed; splash is a UX detail."},
 		},
 		OneShotRecipe: OneShotRecipe{
-			Description: "The 9-block + 5-setting recipe that produces a B+/A homepage on the eval, every time. Use as the default when the user gives short briefs ('build me a homepage for X').",
+			Description: "The 9-block + 5-setting recipe that reliably produces a strong (B+/A range) homepage on the eval. Use as the default when the user gives short briefs ('build me a homepage for X'). MOTION BUDGET: pick ONE perpetual signal for the whole page. bg=circuit and logo_carousel are BOTH perpetual, so pair bg=circuit with logo_strip, or an image/static hero with logo_carousel; stacking both fails the Inspector's motion_density check under the balanced budget of 1.",
 			Blocks: []ArchetypeBlock{
-				{BlockType: "hero", Role: "Sort 0", Notes: "bg=circuit OR image_id, eyebrow (3-4 words), headline with [[bracket-accent]], subheading (1-2 sentences), cta_text + cta_url (booking), secondary_label (anchor to #pricing or similar)."},
+				{BlockType: "hero", Role: "Sort 0", Notes: "bg=circuit OR image_id OR a static hero_graphic (monogram/audit-receipt), eyebrow (3-4 words), headline with [[bracket-accent]], subheading (1-2 sentences), cta_text + cta_url (booking), secondary_label (anchor to #pricing or similar). bg=circuit spends the page's one perpetual-motion slot."},
 				{BlockType: "stat_grid", Role: "Sort 1", Notes: "4 items. Each {value, label, context}. Hits AI-Friendly Formatting eval (≥3 items)."},
-				{BlockType: "logo_carousel", Role: "Sort 2", Notes: "Optional but high-trust. label='Trusted by' or 'Founder previously worked with'. 6 entries minimum."},
+				{BlockType: "logo_strip OR logo_carousel", Role: "Sort 2", Notes: "Optional but high-trust. label='Trusted by' or 'Founder previously worked with'. 6 entries minimum. logo_carousel is a perpetual marquee: use it ONLY when the hero is static (no bg=circuit / mesh / pulse); otherwise logo_strip."},
 				{BlockType: "replacement_grid OR feature_grid", Role: "Sort 3", Notes: "6 items max. replacement_grid if you have an incumbent to position against; feature_grid otherwise. heading + subheading + items[] with span variants for visual interest."},
 				{BlockType: "process_steps", Role: "Sort 4", Notes: "4 steps. items[] = {number, title, description}. eyebrow='How it works' (or local equivalent)."},
 				{BlockType: "pricing", Role: "Sort 5", Notes: "3 tiers. Middle tier featured=true. Each tier: step (STEP 01/02/03) + name + price + price_period + description + features[] + cta_text + cta_url."},
@@ -1720,7 +1720,7 @@ func defaultDesignPlaybook() DesignPlaybookInfo {
 		AntiPatterns: []AntiPattern{
 			// Typography
 			{Banned: "Inter font (anywhere)", Preferred: "Space Grotesk (heading), Inter is acceptable as body fallback only when paired with a display heading. For premium feel: Geist, Outfit, Cabinet Grotesk, Satoshi, Switzer, Plus Jakarta Sans.", HowInAtomicsite: "Update branding.font_heading to Space Grotesk (default already) or one of the premium families. Do NOT set font_heading to Inter. Body can be Inter for legibility but the eye reads heading first."},
-			{Banned: "Roboto, Open Sans, Helvetica, Arial as heading fonts", Preferred: "Same as above, Space Grotesk default, Geist/Outfit/Cabinet Grotesk for character.", HowInAtomicsite: "branding.font_heading. The Google Fonts link in the Astro layout already loads Inter + Space Grotesk + Space Mono; Geist/Outfit etc. require updating the layout's <link> href."},
+			{Banned: "Roboto, Open Sans, Helvetica, Arial as heading fonts", Preferred: "Same as above, Space Grotesk default, Geist/Outfit/Cabinet Grotesk for character.", HowInAtomicsite: "branding.font_heading, and upload the family as self-hosted woff2 first (POST /api/agent/fonts or the upload_font MCP tool; check GET /api/agent/fonts for what is already available). There is NO font CDN link in the layout, see Fonts.Philosophy."},
 			{Banned: "Pure black (#000000) anywhere", Preferred: "Off-black: zinc-950 (#0a0a0a), charcoal (#18181b, atomicsite default --color-text), or a tinted dark.", HowInAtomicsite: "Default --color-text is #18181b. Don't override branding.text_color to #000000."},
 			{Banned: "Generic shadow-md / shadow-lg / shadow-xl on cards", Preferred: "Tinted shadows that carry the bg hue. Or no shadow + 1px subtle border. Or inner shadow for elevation.", HowInAtomicsite: "Atomicsite's renderer ships subtle box-shadows tuned for each block (.replacement-card, .pricing-tier, .about-split-image). Do not override via style_json, the defaults match this rule."},
 			{Banned: "Oversaturated brand colours (saturation > 80%)", Preferred: "Desaturated, muted accents (max ~75% saturation). Brand colour appears in 4-7 places per page max.", HowInAtomicsite: "branding.primary_color. Avoid pure #FF0000, #00FF00, #0000FF. Use OKLCH-tuned colours or muted variants like #0E7490 (BI's teal)."},
@@ -1776,7 +1776,7 @@ func defaultDesignPlaybook() DesignPlaybookInfo {
 				TextColor:    "#1F1A14",
 				FontHeading:  "Playfair Display",
 				FontBody:     "Inter",
-				ApplyVia:     "branding.bg_color=#FDFBF7, primary_color=#5C4033 (espresso) or #6B7359 (sage), font_heading=Playfair Display. Layout's Google Fonts link must be extended to load Playfair Display, currently only Inter+Space Grotesk+Space Mono are loaded. Apply ONLY when the brand is editorial/lifestyle.",
+				ApplyVia:     "branding.bg_color=#FDFBF7, primary_color=#5C4033 (espresso) or #6B7359 (sage), font_heading=Playfair Display. Upload Playfair Display as self-hosted woff2 first (POST /api/agent/fonts; there is no font CDN link, see Fonts.Philosophy). Apply ONLY when the brand is editorial/lifestyle.",
 			},
 			{
 				Name:         "Ethereal Glass",
@@ -1789,7 +1789,7 @@ func defaultDesignPlaybook() DesignPlaybookInfo {
 				TextColor:    "#FAFAFA",
 				FontHeading:  "Geist",
 				FontBody:     "Geist",
-				ApplyVia:     "branding.bg_color=#050505, primary_color=#06B6D4 (electric cyan) or #10B981 (emerald), text_color=#FAFAFA. Layout Google Fonts link must include Geist (currently only loads Inter+Space Grotesk). Use sparingly, dark sites convert worse than light for B2B; only ship this for genuine 'we build futuristic AI' brands.",
+				ApplyVia:     "branding.bg_color=#050505, primary_color=#06B6D4 (electric cyan) or #10B981 (emerald), text_color=#FAFAFA. Upload Geist as self-hosted woff2 first (POST /api/agent/fonts; no font CDN, see Fonts.Philosophy). Use sparingly, dark sites convert worse than light for B2B; only ship this for genuine 'we build futuristic AI' brands.",
 			},
 			{
 				Name:         "Neo-Brutalist Landing",
@@ -1998,85 +1998,85 @@ func defaultDesignPlaybook() DesignPlaybookInfo {
 			},
 			Recommended: []FontFamily{
 				{
-					Name:        "Inter",
-					GoodFor:     []string{"Body text on B2B SaaS sites", "Form labels", "Long-form prose", "Default fallback paired with a display heading font"},
-					License:     "SIL OFL 1.1",
+					Name:         "Inter",
+					GoodFor:      []string{"Body text on B2B SaaS sites", "Form labels", "Long-form prose", "Default fallback paired with a display heading font"},
+					License:      "SIL OFL 1.1",
 					DownloadFrom: "https://rsms.me/inter/download/ (Variable woff2). Or @fontsource/inter on npm.",
-					Notes:       "The most-used display+body font on the web. Geometric, neutral, hyper-legible. Good default body. AVOID using as the heading font when 'premium' is the goal, Inter as h1 is the AI-default tell.",
+					Notes:        "The most-used display+body font on the web. Geometric, neutral, hyper-legible. Good default body. AVOID using as the heading font when 'premium' is the goal, Inter as h1 is the AI-default tell.",
 				},
 				{
-					Name:        "Space Grotesk",
-					GoodFor:     []string{"Display headlines on tech/SaaS marketing sites", "Soft Structuralism vibe archetype", "Pairs well with Inter body + Space Mono eyebrow"},
-					License:     "SIL OFL 1.1",
+					Name:         "Space Grotesk",
+					GoodFor:      []string{"Display headlines on tech/SaaS marketing sites", "Soft Structuralism vibe archetype", "Pairs well with Inter body + Space Mono eyebrow"},
+					License:      "SIL OFL 1.1",
 					DownloadFrom: "https://github.com/floriankarsten/space-grotesk (Variable woff2). Or @fontsource-variable/space-grotesk.",
-					Notes:       "Wide geometric grotesk with character. Works at heading + display sizes. Used widely on premium marketing sites.",
+					Notes:        "Wide geometric grotesk with character. Works at heading + display sizes. Used widely on premium marketing sites.",
 				},
 				{
-					Name:        "Space Mono",
-					GoodFor:     []string{"Eyebrows (uppercase, tracking-widest)", "Brand wordmarks", "Code labels", "Tier-step tags (STEP 01)"},
-					License:     "SIL OFL 1.1",
+					Name:         "Space Mono",
+					GoodFor:      []string{"Eyebrows (uppercase, tracking-widest)", "Brand wordmarks", "Code labels", "Tier-step tags (STEP 01)"},
+					License:      "SIL OFL 1.1",
 					DownloadFrom: "https://fonts.google.com/specimen/Space+Mono (download → host the woff2). Or @fontsource/space-mono.",
-					Notes:       "Atomicsite's --font-mono default. Use for ANY mono surface (eyebrow, code, brand badge, footer fine print).",
+					Notes:        "Atomicsite's --font-mono default. Use for ANY mono surface (eyebrow, code, brand badge, footer fine print).",
 				},
 				{
-					Name:        "Geist + Geist Mono",
-					GoodFor:     []string{"Premium SaaS dashboards", "Ethereal Glass vibe archetype", "AI/ML product marketing"},
-					License:     "SIL OFL 1.1",
+					Name:         "Geist + Geist Mono",
+					GoodFor:      []string{"Premium SaaS dashboards", "Ethereal Glass vibe archetype", "AI/ML product marketing"},
+					License:      "SIL OFL 1.1",
 					DownloadFrom: "https://github.com/vercel/geist-font (Variable woff2). Or @fontsource/geist-sans + @fontsource/geist-mono.",
-					Notes:       "Vercel's house font. Flatter geometric grotesk than Space Grotesk, very 'tech-product'. Best paired together (sans + mono) for a unified system feel.",
+					Notes:        "Vercel's house font. Flatter geometric grotesk than Space Grotesk, very 'tech-product'. Best paired together (sans + mono) for a unified system feel.",
 				},
 				{
-					Name:        "Outfit",
-					GoodFor:     []string{"Premium consumer brands", "Health/wellness", "Lifestyle marketing"},
-					License:     "SIL OFL 1.1",
+					Name:         "Outfit",
+					GoodFor:      []string{"Premium consumer brands", "Health/wellness", "Lifestyle marketing"},
+					License:      "SIL OFL 1.1",
 					DownloadFrom: "https://fonts.google.com/specimen/Outfit (download → host). Or @fontsource-variable/outfit.",
-					Notes:       "Geometric grotesk with a softer, friendlier silhouette than Space Grotesk. Good when the brand wants to feel approachable but still premium.",
+					Notes:        "Geometric grotesk with a softer, friendlier silhouette than Space Grotesk. Good when the brand wants to feel approachable but still premium.",
 				},
 				{
-					Name:        "Cabinet Grotesk",
-					GoodFor:     []string{"Editorial Luxury vibe archetype", "Creative agencies", "Portfolio sites"},
-					License:     "SIL OFL 1.1",
+					Name:         "Cabinet Grotesk",
+					GoodFor:      []string{"Editorial Luxury vibe archetype", "Creative agencies", "Portfolio sites"},
+					License:      "SIL OFL 1.1",
 					DownloadFrom: "https://www.fontshare.com/fonts/cabinet-grotesk (Variable woff2, requires free Fontshare account).",
-					Notes:       "Tighter, more characterful grotesk. Premium feel without the 'tech-product' association of Geist. Used by many agency sites.",
+					Notes:        "Tighter, more characterful grotesk. Premium feel without the 'tech-product' association of Geist. Used by many agency sites.",
 				},
 				{
-					Name:        "Satoshi",
-					GoodFor:     []string{"Modern SaaS marketing", "Crypto/Web3", "Premium consumer"},
-					License:     "Free for commercial use (Fontshare custom)",
+					Name:         "Satoshi",
+					GoodFor:      []string{"Modern SaaS marketing", "Crypto/Web3", "Premium consumer"},
+					License:      "Free for commercial use (Fontshare custom)",
 					DownloadFrom: "https://www.fontshare.com/fonts/satoshi (requires free Fontshare account).",
-					Notes:       "Sharper, more confident grotesk. Often paired with JetBrains Mono. Works well at all sizes.",
+					Notes:        "Sharper, more confident grotesk. Often paired with JetBrains Mono. Works well at all sizes.",
 				},
 				{
-					Name:        "Plus Jakarta Sans",
-					GoodFor:     []string{"International brands", "Fintech / professional services", "Multilingual sites (broad Latin/Cyrillic coverage)"},
-					License:     "SIL OFL 1.1",
+					Name:         "Plus Jakarta Sans",
+					GoodFor:      []string{"International brands", "Fintech / professional services", "Multilingual sites (broad Latin/Cyrillic coverage)"},
+					License:      "SIL OFL 1.1",
 					DownloadFrom: "https://fonts.google.com/specimen/Plus+Jakarta+Sans. Or @fontsource-variable/plus-jakarta-sans.",
-					Notes:       "Geometric grotesk with strong i18n coverage. Good when the site needs to render Cyrillic / Greek / Vietnamese without FOUT.",
+					Notes:        "Geometric grotesk with strong i18n coverage. Good when the site needs to render Cyrillic / Greek / Vietnamese without FOUT.",
 				},
 				{
-					Name:        "Newsreader",
-					GoodFor:     []string{"Editorial Luxury vibe", "Long-form journalism / publishing", "Lifestyle brands"},
-					License:     "SIL OFL 1.1",
+					Name:         "Newsreader",
+					GoodFor:      []string{"Editorial Luxury vibe", "Long-form journalism / publishing", "Lifestyle brands"},
+					License:      "SIL OFL 1.1",
 					DownloadFrom: "https://fonts.google.com/specimen/Newsreader. Or @fontsource-variable/newsreader.",
-					Notes:       "Variable serif with optical sizing. The serif pick when you want editorial luxury without the dated feel of Playfair Display.",
+					Notes:        "Variable serif with optical sizing. The serif pick when you want editorial luxury without the dated feel of Playfair Display.",
 				},
 				{
-					Name:        "Instrument Serif",
-					GoodFor:     []string{"Editorial Luxury vibe", "Brands that want a 'magazine' feel", "Hero display type only"},
-					License:     "SIL OFL 1.1",
+					Name:         "Instrument Serif",
+					GoodFor:      []string{"Editorial Luxury vibe", "Brands that want a 'magazine' feel", "Hero display type only"},
+					License:      "SIL OFL 1.1",
 					DownloadFrom: "https://fonts.google.com/specimen/Instrument+Serif.",
-					Notes:       "Display-only serif with character. Use ONLY for the hero h1 or section headings, not body text. Pair with Inter body.",
+					Notes:        "Display-only serif with character. Use ONLY for the hero h1 or section headings, not body text. Pair with Inter body.",
 				},
 				{
-					Name:        "JetBrains Mono",
-					GoodFor:     []string{"Code blocks on developer sites", "Stat values on data-heavy dashboards", "Alternative to Space Mono"},
-					License:     "SIL OFL 1.1",
+					Name:         "JetBrains Mono",
+					GoodFor:      []string{"Code blocks on developer sites", "Stat values on data-heavy dashboards", "Alternative to Space Mono"},
+					License:      "SIL OFL 1.1",
 					DownloadFrom: "https://www.jetbrains.com/lp/mono/ (woff2). Or @fontsource/jetbrains-mono.",
-					Notes:       "Higher legibility at small sizes than Space Mono. Pick when the site is developer-heavy.",
+					Notes:        "Higher legibility at small sizes than Space Mono. Pick when the site is developer-heavy.",
 				},
 			},
 			SystemFallback: "If no font is uploaded, atomicsite emits --font-heading: 'Space Grotesk', system-ui, sans-serif (where 'Space Grotesk' is just a name in the cascade with no actual file). The browser falls through to system-ui, readable but not the intended look. The agent should ALWAYS check `GET /api/agent/fonts` first; if empty, ask the user to upload via /sites/{id}/branding before claiming the site is design-complete.",
-			HowToSet: "After uploading a font with family_name='Space Grotesk', call `bulk_upsert_settings` with category='general' (NOT possible, branding fields are separate), actually use the agent branding endpoint: PATCH /api/agent/branding {font_heading: 'Space Grotesk', font_body: 'Inter'}. The family_name string must match exactly what was used during upload (case-sensitive). Verify after build by checking the rendered global.css for the @font-face rule with the matching family-name.",
+			HowToSet:       "After uploading a font with family_name='Space Grotesk', call `bulk_upsert_settings` with category='general' (NOT possible, branding fields are separate), actually use the agent branding endpoint: PATCH /api/agent/branding {font_heading: 'Space Grotesk', font_body: 'Inter'}. The family_name string must match exactly what was used during upload (case-sensitive). Verify after build by checking the rendered global.css for the @font-face rule with the matching family-name.",
 		},
 
 		StackRecommendations: StackGuidance{
@@ -2299,7 +2299,6 @@ func defaultBlockSchemas() []BlockSchemaInfo {
 	}
 	return out
 }
-
 
 // defaultEditingModes documents the two authoring surfaces on the page
 // editor. The agent uses these to phrase its responses ("toggle to Text

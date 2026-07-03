@@ -27,9 +27,16 @@ func (q *Queries) CountEntityRevisions(ctx context.Context, arg CountEntityRevis
 	return column_1, err
 }
 
-const createEntityRevision = `-- name: CreateEntityRevision :exec
+const createEntityRevision = `-- name: CreateEntityRevision :one
 INSERT INTO entity_revisions (id, site_id, entity_type, entity_id, version_number, snapshot_json, change_summary, created_by, created_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+VALUES (
+    ?1, ?2, ?3, ?4,
+    (SELECT COALESCE(MAX(version_number), 0) + 1
+       FROM entity_revisions
+      WHERE site_id = ?2 AND entity_type = ?3 AND entity_id = ?4),
+    ?5, ?6, ?7, datetime('now')
+)
+RETURNING version_number
 `
 
 type CreateEntityRevisionParams struct {
@@ -37,24 +44,29 @@ type CreateEntityRevisionParams struct {
 	SiteID        string `json:"site_id"`
 	EntityType    string `json:"entity_type"`
 	EntityID      string `json:"entity_id"`
-	VersionNumber int64  `json:"version_number"`
 	SnapshotJson  string `json:"snapshot_json"`
 	ChangeSummary string `json:"change_summary"`
 	CreatedBy     string `json:"created_by"`
 }
 
-func (q *Queries) CreateEntityRevision(ctx context.Context, arg CreateEntityRevisionParams) error {
-	_, err := q.db.ExecContext(ctx, createEntityRevision,
+// version_number is computed inside the INSERT so read and write are one
+// atomic statement under SQLite's writer lock: two concurrent Record
+// calls can no longer race SELECT MAX+1 into duplicate versions (which
+// broke GetEntityRevisionByVersion :one and therefore restore). The
+// unique index idx_entity_revisions_version is the schema backstop.
+func (q *Queries) CreateEntityRevision(ctx context.Context, arg CreateEntityRevisionParams) (int64, error) {
+	row := q.db.QueryRowContext(ctx, createEntityRevision,
 		arg.ID,
 		arg.SiteID,
 		arg.EntityType,
 		arg.EntityID,
-		arg.VersionNumber,
 		arg.SnapshotJson,
 		arg.ChangeSummary,
 		arg.CreatedBy,
 	)
-	return err
+	var version_number int64
+	err := row.Scan(&version_number)
+	return version_number, err
 }
 
 const getEntityRevisionByVersion = `-- name: GetEntityRevisionByVersion :one
@@ -141,25 +153,6 @@ func (q *Queries) ListEntityRevisions(ctx context.Context, arg ListEntityRevisio
 		return nil, err
 	}
 	return items, nil
-}
-
-const nextEntityRevisionVersion = `-- name: NextEntityRevisionVersion :one
-SELECT COALESCE(MAX(version_number), 0) + 1
-FROM entity_revisions
-WHERE site_id = ? AND entity_type = ? AND entity_id = ?
-`
-
-type NextEntityRevisionVersionParams struct {
-	SiteID     string `json:"site_id"`
-	EntityType string `json:"entity_type"`
-	EntityID   string `json:"entity_id"`
-}
-
-func (q *Queries) NextEntityRevisionVersion(ctx context.Context, arg NextEntityRevisionVersionParams) (int64, error) {
-	row := q.db.QueryRowContext(ctx, nextEntityRevisionVersion, arg.SiteID, arg.EntityType, arg.EntityID)
-	var column_1 int64
-	err := row.Scan(&column_1)
-	return column_1, err
 }
 
 const pruneEntityRevisionsOverLimit = `-- name: PruneEntityRevisionsOverLimit :exec

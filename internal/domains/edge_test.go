@@ -190,9 +190,9 @@ func TestEdgeWriter_SweepOrphanVhosts(t *testing.T) {
 func TestQuoteForMap(t *testing.T) {
 	t.Parallel()
 	cases := map[string]string{
-		"example.com":           `"example.com"`,
-		"a-b.c.d":               `"a-b.c.d"`,
-		`weird"hostname.com`:    `"weird\"hostname.com"`,
+		"example.com":        `"example.com"`,
+		"a-b.c.d":            `"a-b.c.d"`,
+		`weird"hostname.com`: `"weird\"hostname.com"`,
 	}
 	for in, want := range cases {
 		if got := quoteForMap(in); got != want {

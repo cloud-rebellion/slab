@@ -214,6 +214,6 @@ func (m *AgentAuthMiddleware) authenticate(r *http.Request) (*AgentIdentity, err
 }
 
 const (
-	errAgentNoKey     authError = "API key required. Set X-Agent-Key header or Bearer token."
+	errAgentNoKey      authError = "API key required. Set X-Agent-Key header or Bearer token."
 	errAgentInvalidKey authError = "Invalid or deactivated API key."
 )

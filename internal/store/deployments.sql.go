@@ -155,6 +155,25 @@ func (q *Queries) ListRecentDeploymentsBySite(ctx context.Context, arg ListRecen
 	return items, nil
 }
 
+const reapStaleDeployments = `-- name: ReapStaleDeployments :execrows
+UPDATE deployments
+SET status = 'failed',
+    error = 'interrupted: server restarted during build',
+    completed_at = datetime('now')
+WHERE status IN ('pending', 'building')
+`
+
+// Boot-time reaper: builds run in-process, so a crash or redeploy
+// mid-build strands rows in 'pending'/'building' forever (the UI then
+// shows a permanently-running build). Mirrors ReapStaleVerifyJobs.
+func (q *Queries) ReapStaleDeployments(ctx context.Context) (int64, error) {
+	result, err := q.db.ExecContext(ctx, reapStaleDeployments)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const updateDeploymentDeployed = `-- name: UpdateDeploymentDeployed :exec
 UPDATE deployments
 SET target_id = ?, deploy_url = ?, deployed_at = datetime('now')

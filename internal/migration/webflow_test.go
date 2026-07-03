@@ -63,9 +63,9 @@ func TestWebflow_SchemaToFieldsSkipsUnknownTypes(t *testing.T) {
 func TestWebflow_ImageFieldFlattenedToURL(t *testing.T) {
 	raw := map[string]interface{}{
 		"hero": map[string]interface{}{
-			"url":      "https://uploads-ssl.webflow.com/abc.jpg",
-			"alt":      "alt text",
-			"fileId":   "id1",
+			"url":    "https://uploads-ssl.webflow.com/abc.jpg",
+			"alt":    "alt text",
+			"fileId": "id1",
 		},
 		"gallery": []interface{}{
 			map[string]interface{}{"url": "https://x/1.jpg"},

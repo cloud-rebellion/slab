@@ -21,7 +21,8 @@ import (
 //     translations parameter to write everything atomically.
 //
 //   - PUT mode (translations provided): upserts the page_locale row
-//     + each named block_locale row in one logical operation. JSON
+//
+//   - each named block_locale row in one logical operation. JSON
 //     in block data_json is pre-validated; an invalid payload aborts
 //     the whole call so partial writes never leak through.
 //
@@ -37,7 +38,7 @@ func (s *Server) registerTranslateTools() {
 	register := func(t Tool) { s.tools[t.Name] = t }
 
 	register(Tool{
-		Name: "translate_entity",
+		Name:        "translate_entity",
 		Description: "Translation surface for the multilingual page + block system. ONE call covers the round trip: read source content + existing overlays, then write the translated page_locale + block_locale rows atomically. Mode is determined by the `translations` parameter. Required: entity_type ('page'), entity_id (the page ID), target_locale (BCP-47 short form: 'sv', 'en-gb'). Optional: translations object (when omitted, the tool returns source content for translation; when present, the tool upserts the locale rows). translations.page is a PageTranslationOverlay {slug_override, title, meta_title, meta_description, status='draft'|'published'|'archived'}; translations.blocks is an array of {block_id, data_json, is_visible?}. data_json must be valid JSON matching the base block's shape. Returns the translation context on read; returns {success:true, page_id, target_locale, page_status} on write. Currently only entity_type='page' is supported; block-only translation is reachable via this same tool by passing the page that owns the block.",
 		InputSchema: schema(`{
 			"type":"object",
@@ -119,11 +120,11 @@ func (s *Server) registerTranslateTools() {
 				return "", err
 			}
 			return mustJSON(map[string]any{
-				"success":        true,
-				"page_id":        args.EntityID,
-				"target_locale":  strings.ToLower(strings.TrimSpace(args.TargetLocale)),
-				"page_status":    strings.ToLower(strings.TrimSpace(pageOverlay.Status)),
-				"block_count":    len(args.Translations.Blocks),
+				"success":       true,
+				"page_id":       args.EntityID,
+				"target_locale": strings.ToLower(strings.TrimSpace(args.TargetLocale)),
+				"page_status":   strings.ToLower(strings.TrimSpace(pageOverlay.Status)),
+				"block_count":   len(args.Translations.Blocks),
 			}), nil
 		},
 	})

@@ -29,10 +29,25 @@ type Violation struct {
 	Severity string `json:"severity"`
 }
 
+// guardrailLoadFailure is the fail-closed violation for a DB error while
+// loading guardrail rules or page blocks: a tenant's own rules silently
+// vanishing on a transient error would let exactly the writes they
+// forbid through. The write is refused and the agent told to retry.
+func guardrailLoadFailure(what string, err error) []Violation {
+	return []Violation{{
+		Rule:     "enforcement_unavailable",
+		Message:  fmt.Sprintf("Could not load %s (%v); refusing the write rather than skipping enforcement. Retry shortly.", what, err),
+		Severity: "error",
+	}}
+}
+
 // ValidateBlock checks a block creation/update against guardrail rules.
 func (g *GuardrailEngine) ValidateBlock(ctx context.Context, siteID string, blockType string, dataJSON string) []Violation {
 	unescaped := unescapeJSON(dataJSON)
-	rules, _ := g.queries.ListActiveGuardrailsBySite(ctx, siteID)
+	rules, err := g.queries.ListActiveGuardrailsBySite(ctx, siteID)
+	if err != nil {
+		return guardrailLoadFailure("guardrail rules", err)
+	}
 	var violations []Violation
 
 	allowedTypes := map[string]bool{}
@@ -127,7 +142,10 @@ func (g *GuardrailEngine) ValidateBlock(ctx context.Context, siteID string, bloc
 
 // ValidateBlockCount checks if adding a block would exceed the max_blocks limit.
 func (g *GuardrailEngine) ValidateBlockCount(ctx context.Context, siteID string, pageID string) []Violation {
-	rules, _ := g.queries.ListActiveGuardrailsBySite(ctx, siteID)
+	rules, err := g.queries.ListActiveGuardrailsBySite(ctx, siteID)
+	if err != nil {
+		return guardrailLoadFailure("guardrail rules", err)
+	}
 	maxBlocks := 50 // default
 
 	for _, r := range rules {
@@ -139,7 +157,10 @@ func (g *GuardrailEngine) ValidateBlockCount(ctx context.Context, siteID string,
 		}
 	}
 
-	blocks, _ := g.queries.ListBlocksByPage(ctx, pageID)
+	blocks, err := g.queries.ListBlocksByPage(ctx, pageID)
+	if err != nil {
+		return guardrailLoadFailure("page blocks", err)
+	}
 	if len(blocks) >= maxBlocks {
 		return []Violation{{
 			Rule:     "max_blocks",
@@ -153,7 +174,10 @@ func (g *GuardrailEngine) ValidateBlockCount(ctx context.Context, siteID string,
 
 // ValidateRequiredBlocks checks that required blocks are still present after a delete.
 func (g *GuardrailEngine) ValidateRequiredBlocks(ctx context.Context, siteID string, pageSlug string, pageID string, deletingBlockID string) []Violation {
-	rules, _ := g.queries.ListActiveGuardrailsBySite(ctx, siteID)
+	rules, err := g.queries.ListActiveGuardrailsBySite(ctx, siteID)
+	if err != nil {
+		return guardrailLoadFailure("guardrail rules", err)
+	}
 
 	for _, r := range rules {
 		if r.RuleType != "require_block" {
@@ -169,7 +193,10 @@ func (g *GuardrailEngine) ValidateRequiredBlocks(ctx context.Context, siteID str
 			continue
 		}
 
-		blocks, _ := g.queries.ListBlocksByPage(ctx, pageID)
+		blocks, err := g.queries.ListBlocksByPage(ctx, pageID)
+		if err != nil {
+			return guardrailLoadFailure("page blocks", err)
+		}
 		remainingTypes := map[string]bool{}
 		for _, b := range blocks {
 			if b.ID != deletingBlockID {

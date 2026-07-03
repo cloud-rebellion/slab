@@ -29,6 +29,8 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -109,10 +111,35 @@ type ScreenshotResult struct {
 	SizeBytes int  `json:"size_bytes"`
 }
 
+// screenshotSem caps concurrent headless-Chromium launches across every
+// caller (HTTP handler, MCP screenshot + preview_screenshot). Each
+// launch is a full browser process; unbounded parallel agent calls
+// could OOM the host, the same class the global build semaphore closed
+// for bun/astro. Default 2, override with ATOMICSITE_SCREENSHOT_CONCURRENCY.
+var screenshotSem = make(chan struct{}, screenshotConcurrency())
+
+func screenshotConcurrency() int {
+	if v := strings.TrimSpace(os.Getenv("ATOMICSITE_SCREENSHOT_CONCURRENCY")); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			return n
+		}
+	}
+	return 2
+}
+
+// screenshotSlotWait bounds how long a capture queues for a browser
+// slot before giving up (the agent can just retry).
+const screenshotSlotWait = 20 * time.Second
+
+// errScreenshotBusy is returned when every browser slot stayed occupied
+// for the full queue wait. The HTTP handler maps it to 503.
+var errScreenshotBusy = errors.New("screenshot capacity saturated; retry shortly")
+
 // CaptureScreenshot is the single chromedp execution path. Used by both
 // the HTTP handler (POST /api/agent/screenshot) and the MCP tool
 // wrapper (screenshot). Defaults: 1440x900 viewport, full_page=true,
-// wait_ms=800. SSRF-locked via validateScreenshotURL.
+// wait_ms=800. SSRF-locked via validateScreenshotURL. Bounded by
+// screenshotSem.
 func CaptureScreenshot(ctx context.Context, req ScreenshotRequest) (*ScreenshotResult, error) {
 	target := strings.TrimSpace(req.URL)
 	if target == "" {
@@ -120,6 +147,17 @@ func CaptureScreenshot(ctx context.Context, req ScreenshotRequest) (*ScreenshotR
 	}
 	if err := validateScreenshotURL(target); err != nil {
 		return nil, err
+	}
+
+	slotTimer := time.NewTimer(screenshotSlotWait)
+	defer slotTimer.Stop()
+	select {
+	case screenshotSem <- struct{}{}:
+		defer func() { <-screenshotSem }()
+	case <-slotTimer.C:
+		return nil, errScreenshotBusy
+	case <-ctx.Done():
+		return nil, ctx.Err()
 	}
 
 	vw := req.ViewportWidth
@@ -209,6 +247,10 @@ func (h *ScreenshotHandler) Screenshot(w http.ResponseWriter, r *http.Request) {
 	}
 	res, err := CaptureScreenshot(r.Context(), req)
 	if err != nil {
+		if errors.Is(err, errScreenshotBusy) {
+			writeError(w, http.StatusServiceUnavailable, err.Error())
+			return
+		}
 		writeError(w, http.StatusBadGateway, fmt.Sprintf("screenshot failed: %v", err))
 		return
 	}

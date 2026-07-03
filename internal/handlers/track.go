@@ -121,12 +121,12 @@ type TrackHandler struct {
 func NewTrackHandler(cfg *config.Config, queries *store.Queries, db *sql.DB) *TrackHandler {
 	crmClient := crmsync.NewClient(cfg.BrightCRMWebhookURL, cfg.BrightCRMWebhookSecret)
 	return &TrackHandler{
-		cfg:             cfg,
-		queries:         queries,
-		db:              db,
-		crmClient:       crmClient,
-		crmThrot:        crmsync.NewThrottler(cfg.CRMSyncMinInterval),
-		inboundVerifier: sharedsecret.NewVerifier(cfg.BrightCRMWebhookSecret, cfg.BrightCRMWebhookSecretPrevious),
+		cfg:               cfg,
+		queries:           queries,
+		db:                db,
+		crmClient:         crmClient,
+		crmThrot:          crmsync.NewThrottler(cfg.CRMSyncMinInterval),
+		inboundVerifier:   sharedsecret.NewVerifier(cfg.BrightCRMWebhookSecret, cfg.BrightCRMWebhookSecretPrevious),
 		consentLimiter:    newConsentRateLimiter(20, 20.0/60.0, 10*time.Minute),
 		pageviewLimiter:   newConsentRateLimiter(100, 60.0/60.0, 10*time.Minute),
 		engagementLimiter: newConsentRateLimiter(50, 30.0/60.0, 10*time.Minute),
@@ -692,11 +692,11 @@ func (h *TrackHandler) Identify(w http.ResponseWriter, r *http.Request) {
 // eventRequest is the body for POST /t/event, fired by the in-page
 // beacon when site code calls window.atomic.track(name, props).
 type eventRequest struct {
-	SiteID      string         `json:"siteId"`
-	Path        string         `json:"path"`
-	Name        string         `json:"name"`
-	ValueCents  int64          `json:"valueCents"`
-	Properties  map[string]any `json:"properties"`
+	SiteID     string         `json:"siteId"`
+	Path       string         `json:"path"`
+	Name       string         `json:"name"`
+	ValueCents int64          `json:"valueCents"`
+	Properties map[string]any `json:"properties"`
 }
 
 // EventTrack handles POST /t/event. It evaluates active event_name

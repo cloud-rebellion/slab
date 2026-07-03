@@ -4,14 +4,14 @@
 // Answers HTTP-01-style ownership probes for site_domains. Verification
 // flow:
 //
-//   1. Admin creates a site_domains row; we mint a verify_token.
-//   2. Admin points DNS at our edge IP and returns to the admin UI.
-//   3. The reconciler (or admin clicking "Refresh") fetches
-//      http://{hostname}/.well-known/atomic-verify/{token} via plain
-//      HTTP. nginx routes the bare-port-80 request to a `location
-//      /.well-known/atomic-verify/` block that proxies HERE. If we
-//      respond with the matching token, ownership is proven and the
-//      row flips to status='verified'.
+//  1. Admin creates a site_domains row; we mint a verify_token.
+//  2. Admin points DNS at our edge IP and returns to the admin UI.
+//  3. The reconciler (or admin clicking "Refresh") fetches
+//     http://{hostname}/.well-known/atomic-verify/{token} via plain
+//     HTTP. nginx routes the bare-port-80 request to a `location
+//     /.well-known/atomic-verify/` block that proxies HERE. If we
+//     respond with the matching token, ownership is proven and the
+//     row flips to status='verified'.
 //
 // Why HTTP-01-style instead of TXT records: TXT requires a second DNS
 // round-trip and can be cached for hours; the plain-HTTP probe falls

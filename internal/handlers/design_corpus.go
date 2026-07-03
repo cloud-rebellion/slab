@@ -130,10 +130,10 @@ func SearchDesignCorpus(ctx context.Context, cfg *config.Config, req SearchDesig
 	}
 
 	var (
-		matches    []CorpusMatch
-		filesSeen  int
-		truncated  bool
-		extSet     = make(map[string]bool, len(exts))
+		matches   []CorpusMatch
+		filesSeen int
+		truncated bool
+		extSet    = make(map[string]bool, len(exts))
 	)
 	for _, e := range exts {
 		extSet[e] = true

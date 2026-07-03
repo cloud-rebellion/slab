@@ -28,12 +28,12 @@ func TestEveryCheckHasOwner(t *testing.T) {
 func TestCategoryCounts(t *testing.T) {
 	counts := CountByCategory()
 	expected := map[string]int{
-		"security":      19,
-		"seo":           39,
-		"geo":           7,
+		"security":      18,
+		"seo":           38,
+		"geo":           11,
 		"performance":   8,
 		"accessibility": 18,
-		"privacy":       7,
+		"privacy":       9,
 	}
 	for cat, want := range expected {
 		if got := counts[cat]; got != want {

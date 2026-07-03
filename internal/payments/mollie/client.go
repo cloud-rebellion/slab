@@ -79,21 +79,21 @@ type LinkRef struct {
 }
 
 type Payment struct {
-	ID          string         `json:"id"`
-	Status      string         `json:"status"`
-	Amount      MoneyValue     `json:"amount"`
-	Description string         `json:"description"`
-	RedirectURL string         `json:"redirectUrl"`
-	WebhookURL  string         `json:"webhookUrl,omitempty"`
-	Method      string         `json:"method,omitempty"`
-	Metadata    map[string]any `json:"metadata,omitempty"`
-	Links       PaymentLinks   `json:"_links"`
-	CreatedAt   string         `json:"createdAt,omitempty"`
-	PaidAt      string         `json:"paidAt,omitempty"`
-	CanceledAt  string         `json:"canceledAt,omitempty"`
-	ExpiredAt   string         `json:"expiredAt,omitempty"`
-	FailedAt    string         `json:"failedAt,omitempty"`
-	IsCancelable bool          `json:"isCancelable,omitempty"`
+	ID           string         `json:"id"`
+	Status       string         `json:"status"`
+	Amount       MoneyValue     `json:"amount"`
+	Description  string         `json:"description"`
+	RedirectURL  string         `json:"redirectUrl"`
+	WebhookURL   string         `json:"webhookUrl,omitempty"`
+	Method       string         `json:"method,omitempty"`
+	Metadata     map[string]any `json:"metadata,omitempty"`
+	Links        PaymentLinks   `json:"_links"`
+	CreatedAt    string         `json:"createdAt,omitempty"`
+	PaidAt       string         `json:"paidAt,omitempty"`
+	CanceledAt   string         `json:"canceledAt,omitempty"`
+	ExpiredAt    string         `json:"expiredAt,omitempty"`
+	FailedAt     string         `json:"failedAt,omitempty"`
+	IsCancelable bool           `json:"isCancelable,omitempty"`
 }
 
 type CreatePaymentInput struct {

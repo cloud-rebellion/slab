@@ -118,3 +118,33 @@ export function totpVerify(code: string): Promise<TotpVerifyResponse> {
 export function totpDisable(currentPassword: string): Promise<StatusResponse> {
 	return apiPost<StatusResponse>('/auth/totp/disable', { current_password: currentPassword });
 }
+
+// Workspace invite redemption (the /cloud/signup/{token} flow). Unlike
+// platform invites, the invitee may already have an account: the info
+// payload says so, and redeeming then grants the membership without a
+// session (the invitee logs in normally).
+export interface WorkspaceInviteInfo {
+	email: string;
+	role: string;
+	workspace_name: string;
+	existing_account: boolean;
+}
+
+export interface WorkspaceRedeemResponse {
+	status: 'account_created' | 'membership_added';
+	existing_account: boolean;
+	message?: string;
+	user?: AuthResponse['user'];
+}
+
+export function workspaceInviteInfo(token: string): Promise<WorkspaceInviteInfo> {
+	return apiGet<WorkspaceInviteInfo>(`/cloud/signup/${token}`);
+}
+
+export function redeemWorkspaceInvite(
+	token: string,
+	name: string,
+	password: string
+): Promise<WorkspaceRedeemResponse> {
+	return apiPost<WorkspaceRedeemResponse>(`/cloud/signup/${token}`, { name, password });
+}

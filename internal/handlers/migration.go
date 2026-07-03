@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"regexp"
 	"strings"
@@ -340,9 +341,13 @@ func (h *MigrationHandler) Apply(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnprocessableEntity, err.Error())
 		return
 	}
-	_ = h.queries.UpdateMigrationStatus(r.Context(), store.UpdateMigrationStatusParams{
+	if err := h.queries.UpdateMigrationStatus(r.Context(), store.UpdateMigrationStatusParams{
 		ID: id, Status: "applied", Error: "",
-	})
+	}); err != nil {
+		// The apply itself succeeded; a stuck status would invite a
+		// second apply (duplicate pages), so be loud about it.
+		slog.Error("migration: apply succeeded but status flip to applied failed", "migration_id", id, "site_id", siteID, "err", err)
+	}
 	auditAction := "migration_apply"
 	if req.Upsert {
 		auditAction = "migration_apply_upsert"
@@ -833,12 +838,12 @@ func (h *MigrationHandler) checkPagesQuotaForApply(r *http.Request, siteID strin
 	}
 	if current+projected > limit {
 		AuditLog(r.Context(), h.queries, r, siteID, AuditActionUpdate, "migration_apply_blocked", "", map[string]any{
-			"reason":          "max_pages_per_site",
-			"current":         current,
-			"projected":       projected,
-			"limit":           limit,
-			"workspace_id":    workspaceID,
-			"upsert":          upsert,
+			"reason":       "max_pages_per_site",
+			"current":      current,
+			"projected":    projected,
+			"limit":        limit,
+			"workspace_id": workspaceID,
+			"upsert":       upsert,
 		})
 		return http.StatusPaymentRequired, quotaPagesError(siteID, current, projected, limit)
 	}

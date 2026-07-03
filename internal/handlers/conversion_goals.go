@@ -339,4 +339,3 @@ func parseSinceRange(s string, defaultDays int) time.Duration {
 	}
 	return time.Duration(defaultDays) * 24 * time.Hour
 }
-

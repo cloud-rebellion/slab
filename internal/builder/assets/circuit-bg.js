@@ -164,8 +164,19 @@
     requestAnimationFrame(loop);
   }
   function ready() {
-    document.querySelectorAll('canvas[data-circuit-canvas]').forEach(init);
+    document.querySelectorAll('canvas[data-circuit-canvas]').forEach(function (canvas) {
+      /* Per-canvas guard: under Astro's ClientRouter (showcase fidelity)
+         this module executes once per session but ready() re-runs on
+         every astro:page-load, so fresh canvases init and already-live
+         ones are left alone. */
+      if (canvas.hasAttribute('data-circuit-init')) return;
+      canvas.setAttribute('data-circuit-init', '1');
+      init(canvas);
+    });
   }
   if (document.readyState !== 'loading') ready();
   else document.addEventListener('DOMContentLoaded', ready);
+  /* Soft navigations swap the body without DOMContentLoaded; no-op on
+     sites without the ClientRouter (event never fires). */
+  document.addEventListener('astro:page-load', ready);
 })();

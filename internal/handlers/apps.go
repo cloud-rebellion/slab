@@ -18,7 +18,6 @@ package handlers
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -471,8 +470,3 @@ func resolveRequesterID(r *http.Request) string {
 	}
 	return ""
 }
-
-// errAppNotConfigured is the canonical error MCP tools surface when
-// the apps handler hasn't been wired (OSS build with the apps subset
-// disabled, test fixture without seed, etc).
-var errAppNotConfigured = errors.New("apps handler not configured on this server")
