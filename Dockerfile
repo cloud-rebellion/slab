@@ -32,7 +32,7 @@ RUN bun run build
 # external linker pulling in libduckdb statically). We force pure
 # external linking with -extldflags '-static' so the produced binary
 # can run on alpine 3.20 without dragging glibc.
-FROM golang:1.26.4-bookworm AS backend
+FROM golang:1.26.5-bookworm AS backend
 WORKDIR /app
 RUN apt-get update -qq \
     && apt-get install -y -qq --no-install-recommends \
