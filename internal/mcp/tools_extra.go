@@ -535,7 +535,8 @@ func (s *Server) registerExtraTools() {
 			},
 			"required":["domain","kind","purpose"]
 		}`),
-		RequiresWrite: true,
+		RequiresWrite:      true,
+		RequiresCapability: "security", // CSP widening is admin-only on REST; a plain write key must not reach it
 		Handler: func(ctx context.Context, agent *authmw.AgentIdentity, raw json.RawMessage) (string, error) {
 			var args struct {
 				Domain  string `json:"domain"`
@@ -572,10 +573,11 @@ func (s *Server) registerExtraTools() {
 	})
 
 	register(Tool{
-		Name:          "revoke_allowed_script",
-		Description:   "Revokes a whitelisted origin by id. The next build regenerates CSP directives without it.",
-		InputSchema:   schema(`{"type":"object","properties":{"id":{"type":"string"}},"required":["id"]}`),
-		RequiresWrite: true,
+		Name:               "revoke_allowed_script",
+		Description:        "Revokes a whitelisted origin by id. The next build regenerates CSP directives without it.",
+		InputSchema:        schema(`{"type":"object","properties":{"id":{"type":"string"}},"required":["id"]}`),
+		RequiresWrite:      true,
+		RequiresCapability: "security", // CSP allowlist mutation is admin-only on REST; a plain write key must not reach it
 		Handler: func(ctx context.Context, agent *authmw.AgentIdentity, raw json.RawMessage) (string, error) {
 			var args struct {
 				ID string `json:"id"`
@@ -716,6 +718,28 @@ func (s *Server) registerExtraTools() {
 				"status": "registered",
 				"hint":   "Call refresh_design_reference with this id to fetch the bundle from GitHub.",
 			}), nil
+		},
+	})
+
+	register(Tool{
+		Name:          "refresh_design_reference",
+		Description:   "Fetches (or re-fetches) the GitHub bundle for a registered design reference by id and stores it under fetched_json: README, tailwind config when present, sample components. Call this after add_design_reference to populate the bundle, or when the upstream repo changed. Cross-tenant guarded by site.",
+		InputSchema:   schema(`{"type":"object","properties":{"id":{"type":"string"}},"required":["id"]}`),
+		RequiresWrite: true,
+		Handler: func(ctx context.Context, agent *authmw.AgentIdentity, raw json.RawMessage) (string, error) {
+			var args struct {
+				ID string `json:"id"`
+			}
+			if err := json.Unmarshal(raw, &args); err != nil {
+				return "", err
+			}
+			if strings.TrimSpace(args.ID) == "" {
+				return "", errors.New("id is required")
+			}
+			if err := handlers.RefreshDesignReferenceBundle(ctx, s.queries, agent.SiteID, args.ID); err != nil {
+				return "", err
+			}
+			return mustJSON(map[string]string{"id": args.ID, "status": "refreshed"}), nil
 		},
 	})
 

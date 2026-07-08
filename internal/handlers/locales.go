@@ -584,22 +584,26 @@ func (h *LocalesHandler) ApplyTranslationForAgent(ctx context.Context, siteID, p
 	if err := validatePageSlug(strings.TrimSpace(pageOverlay.SlugOverride)); err != nil {
 		return err
 	}
-	// Pre-validate every block overlay's JSON before any write, so a
-	// bad payload in block #5 doesn't leave blocks #1-4 written.
+	// Pre-validate every block overlay before any write, so a bad payload in
+	// block #5 doesn't leave blocks #1-4 written. The block-ownership check runs
+	// for EVERY overlay, including empty ones (which DELETE the block_locale
+	// row): DeleteBlockLocale keys only on {block_id, locale} with no tenant
+	// scope, so skipping the check on the empty/delete path let a caller delete
+	// another tenant's block_locale rows by passing a foreign block_id.
 	for _, ov := range blockOverlays {
-		if strings.TrimSpace(ov.DataJson) == "" {
-			continue
-		}
-		var probe map[string]any
-		if err := json.Unmarshal([]byte(ov.DataJson), &probe); err != nil {
-			return errors.New("block " + ov.BlockID + " data_json is not valid JSON: " + err.Error())
-		}
 		bl, err := h.queries.GetBlockByID(ctx, ov.BlockID)
 		if err != nil {
 			return errors.New("block " + ov.BlockID + " not found")
 		}
 		if bl.PageID != pageID {
 			return errors.New("block " + ov.BlockID + " does not belong to page " + pageID)
+		}
+		if strings.TrimSpace(ov.DataJson) == "" {
+			continue // delete path: no JSON to validate
+		}
+		var probe map[string]any
+		if err := json.Unmarshal([]byte(ov.DataJson), &probe); err != nil {
+			return errors.New("block " + ov.BlockID + " data_json is not valid JSON: " + err.Error())
 		}
 	}
 	h.recordPageLocaleSnapshot(ctx, siteID, pageID, targetLocale)

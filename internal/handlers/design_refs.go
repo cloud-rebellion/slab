@@ -14,6 +14,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -154,35 +155,40 @@ func (h *DesignReferencesHandler) List(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"references": rows})
 }
 
+// RefreshDesignReferenceBundle re-fetches a design reference's GitHub bundle
+// and updates its fetched_json, org/site-scoped by refID+siteID. Shared by the
+// REST Refresh handler and the MCP refresh_design_reference tool so the fetch
+// path lives in one place. Returns a caller-safe error.
+func RefreshDesignReferenceBundle(ctx context.Context, q *store.Queries, siteID, refID string) error {
+	row, err := q.GetDesignReference(ctx, store.GetDesignReferenceParams{ID: refID, SiteID: siteID})
+	if err != nil {
+		return errors.New("design reference not found")
+	}
+	owner, repo, branch, ok := parseGitHubURL(row.Url)
+	if !ok {
+		return errors.New("stored URL is not a valid GitHub repo URL")
+	}
+	bundle, err := fetchGitHubBundle(ctx, owner, repo, branch)
+	if err != nil {
+		return fmt.Errorf("github fetch failed: %w", err)
+	}
+	bundleBytes, _ := json.Marshal(bundle)
+	now := time.Now().UTC().Format(time.RFC3339)
+	return q.UpdateDesignReferenceFetched(ctx, store.UpdateDesignReferenceFetchedParams{
+		FetchedJson: string(bundleBytes),
+		FetchedAt:   now,
+		ID:          refID,
+		SiteID:      siteID,
+	})
+}
+
 // Refresh re-fetches the bundle. Useful when the upstream repo changed.
 // POST /api/sites/{siteID}/design-references/{refID}/refresh
 func (h *DesignReferencesHandler) Refresh(w http.ResponseWriter, r *http.Request) {
 	siteID := urlParam(r, "siteID")
 	refID := urlParam(r, "refID")
-	row, err := h.queries.GetDesignReference(r.Context(), store.GetDesignReferenceParams{ID: refID, SiteID: siteID})
-	if err != nil {
-		writeError(w, http.StatusNotFound, "Design reference not found")
-		return
-	}
-	owner, repo, branch, ok := parseGitHubURL(row.Url)
-	if !ok {
-		writeError(w, http.StatusBadRequest, "Stored URL is not a valid GitHub repo URL")
-		return
-	}
-	bundle, err := fetchGitHubBundle(r.Context(), owner, repo, branch)
-	if err != nil {
-		writeError(w, http.StatusBadGateway, fmt.Sprintf("GitHub fetch failed: %v", err))
-		return
-	}
-	bundleBytes, _ := json.Marshal(bundle)
-	now := time.Now().UTC().Format(time.RFC3339)
-	if err := h.queries.UpdateDesignReferenceFetched(r.Context(), store.UpdateDesignReferenceFetchedParams{
-		FetchedJson: string(bundleBytes),
-		FetchedAt:   now,
-		ID:          refID,
-		SiteID:      siteID,
-	}); err != nil {
-		writeError(w, http.StatusInternalServerError, "Failed to update reference")
+	if err := RefreshDesignReferenceBundle(r.Context(), h.queries, siteID, refID); err != nil {
+		writeError(w, http.StatusBadGateway, err.Error())
 		return
 	}
 	updated, _ := h.queries.GetDesignReference(r.Context(), store.GetDesignReferenceParams{ID: refID, SiteID: siteID})

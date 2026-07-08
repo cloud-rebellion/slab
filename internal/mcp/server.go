@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"net/http"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -669,6 +670,15 @@ func (s *Server) handleToolsCall(r *http.Request, identity *authmw.AgentIdentity
 			Content: []Content{{Type: "text", Text: "tool " + args.Name + " requires the 'write' capability; ask the human to mint a write-enabled key"}},
 		}, nil
 	}
+	// Security-sensitive tools (CSP allowlist mutation) demand an extra named
+	// capability on top of "write": these widen XSS exposure and are admin-only
+	// on the REST side, so a plain write key must not reach them over MCP.
+	if tool.RequiresCapability != "" && !agent.ValidateCapability(identity.Capabilities, tool.RequiresCapability) {
+		return ToolCallResult{
+			IsError: true,
+			Content: []Content{{Type: "text", Text: "tool " + args.Name + " requires the '" + tool.RequiresCapability + "' capability (admin-only surface); ask the human to change the CSP allowlist from workspace settings instead"}},
+		}, nil
+	}
 
 	ctx := r.Context()
 	session, sessErr := s.beginShieldSession(r, identity)
@@ -761,7 +771,9 @@ func (s *Server) handleResourcesRead(r *http.Request, identity *authmw.AgentIden
 
 	body, err := res.Reader(ctx, identity)
 	if err != nil {
-		return nil, &ResponseError{Code: ErrInternal, Message: err.Error()}
+		// Scrub: a resource reader error is a backend/DB failure; the raw string
+		// would leak driver/schema/host detail to the LLM (logged server-side).
+		return nil, &ResponseError{Code: ErrInternal, Message: scrubError(ctx, session, err)}
 	}
 
 	if session != nil && body != "" {
@@ -857,6 +869,15 @@ func scrubError(ctx context.Context, session *shield.Session, err error) string 
 		return ""
 	}
 	msg := err.Error()
+	// Genericize internal-plumbing errors first: Shield redacts PII patterns but
+	// does not strip a raw SQL/driver string, a decrypt failure, or an internal
+	// "dial tcp host:port" hostname, all of which leak infra detail to the LLM.
+	// This runs even when Shield is off (the default). Operator validation
+	// messages (not-found, "required", bad-arg) pass through.
+	if isInternalMCPError(msg) {
+		slog.Error("mcp tool internal error", "err", err)
+		return "internal error"
+	}
 	if session == nil {
 		return msg
 	}
@@ -865,6 +886,23 @@ func scrubError(ctx context.Context, session *shield.Session, err error) string 
 		return msg
 	}
 	return scrubbed
+}
+
+// isInternalMCPError reports whether an error string is internal plumbing that
+// must never reach the agent verbatim (DB/driver, decrypt, network transport,
+// host filesystem paths).
+func isInternalMCPError(msg string) bool {
+	for _, needle := range []string{
+		"dial tcp", "connection refused", "no such host", "i/o timeout",
+		"SQLSTATE", "sql:", "database is locked", "constraint failed",
+		"no such file or directory", "permission denied", "/var/", "/opt/", "/root/",
+		"failed to decrypt", "cipher:", "x509:", "tls:",
+	} {
+		if strings.Contains(msg, needle) {
+			return true
+		}
+	}
+	return false
 }
 
 // writeJSONRPCError sends a JSON-RPC error envelope with the given fields.

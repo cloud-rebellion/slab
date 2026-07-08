@@ -180,6 +180,13 @@ type Tool struct {
 	// is read-only.
 	RequiresWrite bool `json:"-"`
 
+	// RequiresCapability, when set, gates the call on an ADDITIONAL named
+	// capability beyond "write". Used for security-sensitive surfaces that
+	// are admin-only on the REST side (e.g. CSP allowlist mutation, which
+	// widens XSS exposure): a plain write key must not reach them. Empty =
+	// no extra capability required.
+	RequiresCapability string `json:"-"`
+
 	Handler ToolHandler `json:"-"`
 }
 
