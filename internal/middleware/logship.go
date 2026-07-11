@@ -4,34 +4,51 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/url"
 	"os"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 )
 
 // logShipMinDefault is the default floor for shipping a log line to Flare.
 // warn+ keeps volume sane (info/debug stay local stderr); override with
-// FLARE_LOG_LEVEL=debug|info|warn|error.
+// FLARE_LOG_LEVEL=debug|info|warn|error (or off to disable).
 const logShipMinDefault = slog.LevelWarn
 
 const (
 	logShipBuffer    = 512             // records buffered before drop-on-full
 	logShipBatch     = 50              // flush at this many records
 	logShipFlushEach = 3 * time.Second // or at least this often
+	logShipMaxPerMin = 300             // hard per-minute cap: bounds any storm or loop
+	logShipMaxAttrs  = 8 << 10         // drop a record's attrs beyond this many bytes
 )
 
-// installLogShipper wraps the current default slog handler so that warn+ records
-// are also shipped to Flare's native logs endpoint, giving the estate a real
-// logs pillar without a new dependency. Best-effort: the app's own stderr
-// logging is untouched, and a full buffer drops rather than blocks. Called from
-// InitFlare after sentry.Init succeeds; no-op when FLARE_DSN is unset or
-// unparseable, or FLARE_LOG_LEVEL=off.
+var logShipOnce sync.Once
+
+// installLogShipper wraps the current default slog handler so warn+ records are
+// also shipped to Flare's native logs endpoint, giving the estate a real logs
+// pillar without a new dependency. Best-effort: the app's own stderr logging is
+// untouched, a full buffer drops rather than blocks, and a per-minute cap bounds
+// any storm. Called once from InitFlare after sentry.Init; no-op when FLARE_DSN
+// is unset/unparseable or FLARE_LOG_LEVEL=off.
 func installLogShipper(service string) {
+	logShipOnce.Do(func() { installLogShipperOnce(service) })
+}
+
+func installLogShipperOnce(service string) {
 	if strings.EqualFold(os.Getenv("FLARE_LOG_LEVEL"), "off") {
+		return
+	}
+	// The flare service IS the ingest endpoint; shipping its own warn+ logs back
+	// to itself risks a self-amplification loop (a batch that 401s on a stale key
+	// logs a warn, which ships, which 401s...). Flare reports its own errors to
+	// its project via sentry already, so never HTTP self-ship.
+	if service == "flare" {
 		return
 	}
 	base, key, ok := parseDSNForLogs(os.Getenv("FLARE_DSN"))
@@ -74,11 +91,12 @@ func parseDSNForLogs(dsn string) (endpoint, key string, ok bool) {
 	if err != nil || u.User == nil || u.Host == "" {
 		return "", "", false
 	}
+	k := u.User.Username()
 	id := strings.Trim(u.Path, "/")
-	if id == "" {
+	if k == "" || id == "" {
 		return "", "", false
 	}
-	return u.Scheme + "://" + u.Host + "/api/" + id + "/logs", u.User.Username(), true
+	return u.Scheme + "://" + u.Host + "/api/" + id + "/logs", k, true
 }
 
 type nativeLogLine struct {
@@ -96,10 +114,31 @@ type logShipper struct {
 	ch       chan nativeLogLine
 	dropped  atomic.Int64
 	client   *http.Client
+
+	mu          sync.Mutex
+	windowStart time.Time
+	windowCount int
+}
+
+// allow admits at most logShipMaxPerMin records per fixed minute window,
+// bounding any warn storm or self-referential loop before it does work.
+func (s *logShipper) allow() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	now := time.Now()
+	if now.Sub(s.windowStart) >= time.Minute {
+		s.windowStart = now
+		s.windowCount = 0
+	}
+	if s.windowCount >= logShipMaxPerMin {
+		return false
+	}
+	s.windowCount++
+	return true
 }
 
 // enqueue is non-blocking: a full buffer drops the line so logging never stalls
-// the app on a slow/unreachable Flare.
+// the app on a slow or unreachable Flare.
 func (s *logShipper) enqueue(l nativeLogLine) {
 	select {
 	case s.ch <- l:
@@ -128,6 +167,7 @@ func (s *logShipper) run() {
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("X-Flare-Key", s.key)
 		if resp, err := s.client.Do(req); err == nil {
+			_, _ = io.Copy(io.Discard, resp.Body) // drain for keep-alive reuse
 			_ = resp.Body.Close()
 		}
 	}
@@ -151,6 +191,7 @@ type flareSlogHandler struct {
 	shipper *logShipper
 	minLvl  slog.Level
 	attrs   []slog.Attr
+	groups  []string
 }
 
 func (h *flareSlogHandler) Enabled(ctx context.Context, l slog.Level) bool {
@@ -165,23 +206,46 @@ func (h *flareSlogHandler) Handle(ctx context.Context, r slog.Record) error {
 }
 
 func (h *flareSlogHandler) ship(r slog.Record) {
+	// Rate-cap first, before any allocation: an over-cap storm/loop pays nothing.
+	if !h.shipper.allow() {
+		h.shipper.dropped.Add(1)
+		return
+	}
 	m := make(map[string]any)
 	traceID := ""
-	add := func(a slog.Attr) bool {
-		if a.Key == "trace_id" {
-			traceID = a.Value.String()
-			return true
+	prefix := ""
+	if len(h.groups) > 0 {
+		prefix = strings.Join(h.groups, ".") + "."
+	}
+	var addAttr func(pfx string, a slog.Attr)
+	addAttr = func(pfx string, a slog.Attr) {
+		if a.Value.Kind() == slog.KindGroup {
+			gp := pfx
+			if a.Key != "" {
+				gp = pfx + a.Key + "."
+			}
+			for _, ga := range a.Value.Group() {
+				addAttr(gp, ga)
+			}
+			return
 		}
-		m[a.Key] = a.Value.Any()
-		return true
+		key := pfx + a.Key
+		if key == "trace_id" {
+			traceID = a.Value.String()
+			return
+		}
+		m[key] = a.Value.Any()
 	}
 	for _, a := range h.attrs {
-		add(a)
+		addAttr(prefix, a)
 	}
-	r.Attrs(func(a slog.Attr) bool { return add(a) })
+	r.Attrs(func(a slog.Attr) bool {
+		addAttr(prefix, a)
+		return true
+	})
 	var attrs json.RawMessage
 	if len(m) > 0 {
-		if b, err := json.Marshal(m); err == nil {
+		if b, err := json.Marshal(m); err == nil && len(b) <= logShipMaxAttrs {
 			attrs = b
 		}
 	}
@@ -198,9 +262,10 @@ func (h *flareSlogHandler) WithAttrs(as []slog.Attr) slog.Handler {
 	merged := make([]slog.Attr, 0, len(h.attrs)+len(as))
 	merged = append(merged, h.attrs...)
 	merged = append(merged, as...)
-	return &flareSlogHandler{next: h.next.WithAttrs(as), shipper: h.shipper, minLvl: h.minLvl, attrs: merged}
+	return &flareSlogHandler{next: h.next.WithAttrs(as), shipper: h.shipper, minLvl: h.minLvl, attrs: merged, groups: h.groups}
 }
 
 func (h *flareSlogHandler) WithGroup(name string) slog.Handler {
-	return &flareSlogHandler{next: h.next.WithGroup(name), shipper: h.shipper, minLvl: h.minLvl, attrs: h.attrs}
+	groups := append(append([]string{}, h.groups...), name)
+	return &flareSlogHandler{next: h.next.WithGroup(name), shipper: h.shipper, minLvl: h.minLvl, attrs: h.attrs, groups: groups}
 }
