@@ -29,6 +29,7 @@ func InitFlare(service, release string) bool {
 	}
 	slog.Info("flare: error reporting enabled", "service", service)
 	startHeartbeat(service)
+	installLogShipper(service)
 	return true
 }
 
