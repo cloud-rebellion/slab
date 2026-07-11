@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -63,7 +64,21 @@ func installLogShipperOnce(service string) {
 		client:   &http.Client{Timeout: 5 * time.Second},
 	}
 	go sh.run()
-	h := &flareSlogHandler{next: slog.Default().Handler(), shipper: sh, minLvl: logShipLevel()}
+	// slog.SetDefault re-routes the standard log package through the new default
+	// handler. slog's built-in defaultHandler itself writes VIA the standard log
+	// package, so wrapping it and then SetDefault-ing the wrapper forms a cycle
+	// (wrapper -> defaultHandler -> std log -> wrapper -> ...) that self-deadlocks
+	// the non-reentrant std log mutex on the first log line after install. A service
+	// that never installed a concrete slog handler (bare default) then hangs at
+	// startup before it binds its port. Break the cycle: when the current handler is
+	// the built-in default, pass through to a concrete stderr handler instead (it
+	// writes straight to os.Stderr, never back through the std log package). A
+	// concrete handler the app already installed is safe to wrap as-is.
+	next := slog.Default().Handler()
+	if fmt.Sprintf("%T", next) == "*slog.defaultHandler" {
+		next = slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo})
+	}
+	h := &flareSlogHandler{next: next, shipper: sh, minLvl: logShipLevel()}
 	slog.SetDefault(slog.New(h))
 }
 
