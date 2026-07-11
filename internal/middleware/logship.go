@@ -82,6 +82,25 @@ func installLogShipperOnce(service string) {
 	slog.SetDefault(slog.New(h))
 }
 
+// sensitiveLogKeyParts are case-insensitive substrings whose attribute values
+// are redacted before shipping a log record to the shared Flare logs store.
+// Bare "key" is intentionally excluded (too broad: keyboard, monkey, ...).
+var sensitiveLogKeyParts = []string{
+	"password", "passwd", "secret", "token", "authorization", "bearer",
+	"cookie", "credential", "api_key", "apikey", "access_key", "accesskey",
+	"private_key", "privatekey", "vault_key", "new_value", "jwt", "session_id", "dsn",
+}
+
+func isSensitiveLogKey(key string) bool {
+	k := strings.ToLower(key)
+	for _, s := range sensitiveLogKeyParts {
+		if strings.Contains(k, s) {
+			return true
+		}
+	}
+	return false
+}
+
 func logShipLevel() slog.Level {
 	switch strings.ToLower(strings.TrimSpace(os.Getenv("FLARE_LOG_LEVEL"))) {
 	case "debug":
@@ -247,6 +266,15 @@ func (h *flareSlogHandler) ship(r slog.Record) {
 		key := pfx + a.Key
 		if key == "trace_id" {
 			traceID = a.Value.String()
+			return
+		}
+		// Redact sensitive attribute values before they leave the process for the
+		// shared Flare logs store. Log records are an egress boundary just like the
+		// sentry event path (which BeforeSend already scrubs); a stray
+		// slog.Error("...", "token", t) must not ship the token. Key-based so it
+		// stays cheap and never touches legit values.
+		if isSensitiveLogKey(key) {
+			m[key] = "[redacted]"
 			return
 		}
 		m[key] = a.Value.Any()
