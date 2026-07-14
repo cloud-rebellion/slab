@@ -856,7 +856,7 @@ func (s *Server) registerExtraTools() {
 				waitMs = 1200
 			}
 
-			res, err := handlers.CaptureScreenshot(ctx, handlers.ScreenshotRequest{
+			res, err := handlers.CaptureLoopbackScreenshot(ctx, handlers.ScreenshotRequest{
 				URL:            previewURL,
 				ViewportWidth:  args.ViewportWidth,
 				ViewportHeight: args.ViewportHeight,

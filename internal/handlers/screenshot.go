@@ -148,7 +148,35 @@ func CaptureScreenshot(ctx context.Context, req ScreenshotRequest) (*ScreenshotR
 	if err := validateScreenshotURL(target); err != nil {
 		return nil, err
 	}
+	return captureScreenshot(ctx, target, req)
+}
 
+// CaptureLoopbackScreenshot captures a server-minted loopback URL (the
+// preview_screenshot flow, http://127.0.0.1:{port}/_preview/{token}).
+// The public allow-list + 80/443 port restriction do not apply here:
+// the URL is constructed by the server itself, never taken from agent
+// input, and validateScreenshotURL would reject both the loopback host
+// and the app port on any production instance (which silently broke
+// preview_screenshot everywhere the allow-list is configured). The
+// loopback-host check keeps the bypass unusable for anything else.
+func CaptureLoopbackScreenshot(ctx context.Context, req ScreenshotRequest) (*ScreenshotResult, error) {
+	target := strings.TrimSpace(req.URL)
+	if target == "" {
+		return nil, errors.New("url required")
+	}
+	parsed, err := url.Parse(target)
+	if err != nil {
+		return nil, fmt.Errorf("malformed url: %w", err)
+	}
+	if !isLoopbackScreenshotHost(strings.ToLower(parsed.Hostname())) {
+		return nil, errors.New("loopback capture requires a loopback host")
+	}
+	return captureScreenshot(ctx, target, req)
+}
+
+// captureScreenshot is the shared chromedp path behind both entry
+// points. target has already passed the caller's URL policy.
+func captureScreenshot(ctx context.Context, target string, req ScreenshotRequest) (*ScreenshotResult, error) {
 	slotTimer := time.NewTimer(screenshotSlotWait)
 	defer slotTimer.Stop()
 	select {
