@@ -115,6 +115,45 @@ func writeBrandIcons(src, wsDir string) error {
 	return nil
 }
 
+// CopyFonts emits every uploaded site font into the workspace public/ tree at
+// /atomicsite-fonts/{siteID}/{fontID}.woff2, the exact URL the @font-face
+// blocks in layouts.go reference on every page.
+//
+// The runtime route (FontsHandler.Serve) only exists on the admin-app origin;
+// static deploys served from dist/ (the *.atomicsite wildcard host) 404'd on
+// every font and silently fell back to system type. Same shape as
+// CopyBrandIcons: degenerate states (no fonts, file missing on disk) are
+// non-fatal, only a real IO failure while writing into the workspace errors.
+func CopyFonts(ctx context.Context, queries *store.Queries, siteID, wsDir string) error {
+	rows, err := queries.ListSiteFonts(ctx, siteID)
+	if err != nil || len(rows) == 0 {
+		return nil
+	}
+	return emitFontFiles(rows, siteID, wsDir)
+}
+
+// emitFontFiles is the store-free half of CopyFonts, split out for testing.
+func emitFontFiles(rows []store.SiteFont, siteID, wsDir string) error {
+	dstDir := filepath.Join(wsDir, "public", "atomicsite-fonts", siteID)
+	if err := os.MkdirAll(dstDir, 0o755); err != nil {
+		return fmt.Errorf("mkdir %s: %w", dstDir, err)
+	}
+	for _, f := range rows {
+		if f.FilePath == "" {
+			continue
+		}
+		if _, err := os.Stat(f.FilePath); err != nil {
+			slog.Warn("build: font skipped (file missing on disk)",
+				"site_id", siteID, "font_id", f.ID, "src", f.FilePath)
+			continue
+		}
+		if err := atomicLinkOrCopy(f.FilePath, filepath.Join(dstDir, f.ID+".woff2")); err != nil {
+			return fmt.Errorf("emit font %s: %w", f.ID, err)
+		}
+	}
+	return nil
+}
+
 // atomicLinkOrCopy writes src to dst via a temp name + rename, avoiding the
 // TOCTOU window between Remove and Link. Tries hardlink first (same filesystem),
 // falls back to a byte copy across filesystems.

@@ -120,6 +120,14 @@ func Build(ctx context.Context, queries *store.Queries, siteID string, dataDir s
 		return fail("copy brand icons: " + err.Error())
 	}
 
+	// 6d. Fonts: /atomicsite-fonts/{site}/{id}.woff2 into dist. The
+	// @font-face blocks reference this path on every page, but only the
+	// admin app served it, so static deploys 404'd on every font and
+	// rendered fallback type.
+	if err := CopyFonts(ctx, queries, siteID, wsDir); err != nil {
+		return fail("copy fonts: " + err.Error())
+	}
+
 	slog.Info("build: generated files", "pages", pageCount, "workspace", wsDir)
 
 	// 7. Compile
