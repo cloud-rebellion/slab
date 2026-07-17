@@ -9,6 +9,17 @@ import (
 	"context"
 )
 
+const countDomainsBySite = `-- name: CountDomainsBySite :one
+SELECT COUNT(*) FROM site_domains WHERE site_id = ?
+`
+
+func (q *Queries) CountDomainsBySite(ctx context.Context, siteID string) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countDomainsBySite, siteID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createDomain = `-- name: CreateDomain :exec
 INSERT INTO site_domains (id, site_id, hostname, status, verify_token, is_canonical)
 VALUES (?, ?, ?, 'pending', ?, ?)

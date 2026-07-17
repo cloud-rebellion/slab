@@ -153,6 +153,11 @@ func (h *OrderHandler) Get(w http.ResponseWriter, r *http.Request) {
 // UpdateStatus admin-side flips the order through the state machine.
 // Body: { status: "fulfilled" }. Reject illegal transitions.
 func (h *OrderHandler) UpdateStatus(w http.ResponseWriter, r *http.Request) {
+	// Order state transitions (cancel/fulfil) are money-adjacent; gate human
+	// sessions to owner/admin, leave agent callers on their site scope.
+	if authmw.GetUser(r) != nil && !authmw.RequireOwnerOrAdmin(w, r, h.queries) {
+		return
+	}
 	siteID := urlParam(r, "siteID")
 	orderID := urlParam(r, "orderID")
 	o, ok := orderInSite(r.Context(), h.queries, w, orderID, siteID)
@@ -203,6 +208,12 @@ func (h *OrderHandler) UpdateStatus(w http.ResponseWriter, r *http.Request) {
 // flips the order to status='refunded' optimistically. The webhook
 // then confirms the refund completion (Mollie can take minutes).
 func (h *OrderHandler) Refund(w http.ResponseWriter, r *http.Request) {
+	// Refund moves money; gate human sessions to owner/admin (a low-trust
+	// workspace member must not issue refunds). Agent callers keep their existing
+	// site-scoped authorization.
+	if authmw.GetUser(r) != nil && !authmw.RequireOwnerOrAdmin(w, r, h.queries) {
+		return
+	}
 	siteID := urlParam(r, "siteID")
 	orderID := urlParam(r, "orderID")
 	o, ok := orderInSite(r.Context(), h.queries, w, orderID, siteID)
@@ -402,14 +413,41 @@ func (h *OrderHandler) Checkout(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
+		// Scope: a code restricted to specific products/categories only discounts
+		// the matching lines, not the whole cart. applies_to/applies_to_ids were
+		// stored + validated on create but never enforced at redemption, so a
+		// "50% off Accessories" code discounted every item.
+		eligible := subtotal
+		if dc.AppliesTo == "products" || dc.AppliesTo == "categories" {
+			var ids []string
+			_ = json.Unmarshal([]byte(dc.AppliesToIdsJson), &ids)
+			idset := make(map[string]struct{}, len(ids))
+			for _, id := range ids {
+				idset[id] = struct{}{}
+			}
+			eligible = 0
+			for _, v := range validated {
+				key := v.Product.ID
+				if dc.AppliesTo == "categories" {
+					key = v.Product.Category
+				}
+				if _, ok := idset[key]; ok {
+					eligible += v.LineTotal
+				}
+			}
+			if eligible == 0 {
+				writeError(w, http.StatusBadRequest, "discount code does not apply to any item in the cart")
+				return
+			}
+		}
 		switch dc.Kind {
 		case "percent":
-			discountCents = subtotal * dc.Value / 10000
+			discountCents = eligible * dc.Value / 10000
 		case "fixed":
 			discountCents = dc.Value
 		}
-		if discountCents > subtotal {
-			discountCents = subtotal
+		if discountCents > eligible {
+			discountCents = eligible
 		}
 		discountID = dc.ID
 	}
@@ -440,6 +478,38 @@ func (h *OrderHandler) Checkout(w http.ResponseWriter, r *http.Request) {
 	}
 	defer tx.Rollback()
 	qtx := h.queries.WithTx(tx)
+	// Reserve inventory atomically inside the order tx. The checkout-time
+	// availability check (above) is only a fast pre-check; the guarded decrement
+	// here is the authoritative gate, so two overlapping checkouts cannot both
+	// sell the last unit (the decrement used to happen minutes later on the paid
+	// webhook, allowing silent oversell / negative stock).
+	for _, v := range validated {
+		n, rerr := qtx.ReserveVariantInventory(ctx, store.ReserveVariantInventoryParams{
+			InventoryCount: v.Quantity, ID: v.Variant.ID, InventoryCount_2: v.Quantity,
+		})
+		if rerr != nil {
+			writeError(w, http.StatusInternalServerError, "create order failed: inventory reserve")
+			return
+		}
+		if n == 0 {
+			writeError(w, http.StatusConflict, "insufficient inventory for "+v.Product.Slug)
+			return
+		}
+	}
+	// Reserve the discount use atomically, so a max_uses-capped code cannot be
+	// over-redeemed by concurrent checkouts (the count used to be bumped only on
+	// the paid webhook, so a read-check at checkout never saw it).
+	if discountID != "" {
+		n, rerr := qtx.ReserveDiscountCodeUse(ctx, store.ReserveDiscountCodeUseParams{ID: discountID, SiteID: siteID})
+		if rerr != nil {
+			writeError(w, http.StatusInternalServerError, "create order failed: discount reserve")
+			return
+		}
+		if n == 0 {
+			writeError(w, http.StatusBadRequest, "discount code has reached max uses")
+			return
+		}
+	}
 	if err := qtx.CreateOrder(ctx, store.CreateOrderParams{
 		ID:                  orderID,
 		SiteID:              siteID,
@@ -763,6 +833,13 @@ func (h *OrderHandler) Webhook(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
+		if newStatus == "failed" {
+			// Return the inventory + discount use reserved at checkout.
+			if err := h.releaseReservations(ctx, qtx, order); err != nil {
+				writeError(w, http.StatusInternalServerError, "could not release reservations")
+				return
+			}
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		writeError(w, http.StatusInternalServerError, "commit failed")
@@ -771,14 +848,14 @@ func (h *OrderHandler) Webhook(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "new_order_status": newStatus})
 }
 
-// applyPaidSideEffects runs the one-time post-payment work:
-// decrement variant inventory, write inventory_adjustments rows,
-// increment discount_codes.used_count. It takes the caller's Queries
-// (the webhook passes a tx-bound one) so the writes commit atomically
-// with the status flip + the payment_events claim, and returns an
-// error so a failure rolls the whole transaction back. Idempotency is
-// the payment_events compare-and-set; this only runs for the single
-// delivery that claims the 'paid' event.
+// applyPaidSideEffects records the confirmed sale. Inventory and the discount
+// use are already reserved at checkout (inside the order tx), so this does NOT
+// decrement stock or bump used_count again - it only writes the inventory_adjustments
+// audit rows for the sale. It takes the caller's tx-bound Queries so the writes
+// commit atomically with the status flip + the payment_events claim, and returns
+// an error so a failure rolls the whole transaction back. Idempotency is the
+// payment_events compare-and-set; this only runs for the single delivery that
+// claims the 'paid' event.
 func (h *OrderHandler) applyPaidSideEffects(ctx context.Context, q *store.Queries, order store.Order) error {
 	items, err := q.ListOrderItems(ctx, order.ID)
 	if err != nil {
@@ -787,23 +864,15 @@ func (h *OrderHandler) applyPaidSideEffects(ctx context.Context, q *store.Querie
 	for _, it := range items {
 		v, err := q.GetProductVariantByID(ctx, it.VariantID)
 		if err != nil {
-			// Variant deleted after purchase: skip its inventory write
-			// rather than fail the whole order.
+			// Variant deleted after purchase: skip its audit write.
 			continue
 		}
-		if err := q.AdjustVariantInventoryCount(ctx, store.AdjustVariantInventoryCountParams{
-			InventoryCount: -it.Quantity,
-			ID:             it.VariantID,
-		}); err != nil {
-			return err
-		}
-		newCount := v.InventoryCount - it.Quantity
 		if err := q.CreateInventoryAdjustment(ctx, store.CreateInventoryAdjustmentParams{
 			ID:        newID(),
 			VariantID: it.VariantID,
 			SiteID:    order.SiteID,
 			Delta:     -it.Quantity,
-			NewCount:  newCount,
+			NewCount:  v.InventoryCount, // already reflects the checkout reservation
 			Reason:    "sale",
 			Note:      "Order " + order.OrderNumber,
 			CreatedBy: "system:checkout",
@@ -811,8 +880,28 @@ func (h *OrderHandler) applyPaidSideEffects(ctx context.Context, q *store.Querie
 			return err
 		}
 	}
+	return nil
+}
+
+// releaseReservations returns the inventory + discount use that checkout reserved
+// when a payment ultimately fails/expires/cancels, so an abandoned checkout does
+// not permanently hold stock or a max_uses slot. Runs exactly once per order (the
+// caller gates it on the pending->failed transition).
+func (h *OrderHandler) releaseReservations(ctx context.Context, q *store.Queries, order store.Order) error {
+	items, err := q.ListOrderItems(ctx, order.ID)
+	if err != nil {
+		return err
+	}
+	for _, it := range items {
+		if err := q.AdjustVariantInventoryCount(ctx, store.AdjustVariantInventoryCountParams{
+			InventoryCount: it.Quantity, // restock
+			ID:             it.VariantID,
+		}); err != nil {
+			return err
+		}
+	}
 	if order.DiscountCodeID != "" {
-		if err := q.IncrementDiscountCodeUsedCount(ctx, store.IncrementDiscountCodeUsedCountParams{
+		if _, err := q.ReleaseDiscountCodeUse(ctx, store.ReleaseDiscountCodeUseParams{
 			ID: order.DiscountCodeID, SiteID: order.SiteID,
 		}); err != nil {
 			return err

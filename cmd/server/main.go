@@ -344,6 +344,7 @@ func applySchema(sqlDB *sql.DB) error {
 	// without ALTER migrations, so existing prod DBs failed to apply the
 	// schema (CREATE INDEX referenced country which didn't exist).
 	migrations := []struct{ table, column, spec string }{
+		{"users", "totp_last_step", "INTEGER NOT NULL DEFAULT 0"},
 		{"pages", "no_index", "INTEGER NOT NULL DEFAULT 0"},
 		{"pages", "canonical_url", "TEXT NOT NULL DEFAULT ''"},
 		{"deployments", "target_id", "TEXT NOT NULL DEFAULT ''"},

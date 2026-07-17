@@ -639,7 +639,8 @@ func safeFetchPreservingHeaders(ctx context.Context, rawURL string, opts FetchOp
 	}
 
 	client := &http.Client{
-		Timeout: opts.Timeout,
+		Timeout:   opts.Timeout,
+		Transport: safeTransport(opts.AllowPrivate),
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			if len(via) >= opts.MaxRedirects {
 				return fmt.Errorf("too many redirects (>%d)", opts.MaxRedirects)

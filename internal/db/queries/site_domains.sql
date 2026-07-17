@@ -5,6 +5,9 @@ FROM site_domains
 WHERE site_id = ?
 ORDER BY is_canonical DESC, created_at ASC;
 
+-- name: CountDomainsBySite :one
+SELECT COUNT(*) FROM site_domains WHERE site_id = ?;
+
 -- name: GetDomainByID :one
 SELECT id, site_id, hostname, status, verify_token, cert_path,
        last_check_at, last_error, is_canonical, created_at, updated_at

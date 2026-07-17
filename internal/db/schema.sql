@@ -16,6 +16,9 @@ CREATE TABLE IF NOT EXISTS users (
     totp_secret         TEXT NOT NULL DEFAULT '',
     totp_enrolled_at    TEXT NOT NULL DEFAULT '',
     totp_recovery_json  TEXT NOT NULL DEFAULT '[]',
+    -- Highest TOTP time step already accepted, so a captured code cannot be
+    -- replayed within its validity window (RFC 6238 sec 5.2). 0 = none accepted.
+    totp_last_step      INTEGER NOT NULL DEFAULT 0,
     -- GDPR Article 17 erasure cooling-off window (2026-05-09). Set
     -- when the user requests account deletion; the daily retention
     -- sweep hard-deletes rows older than the cooling-off window.

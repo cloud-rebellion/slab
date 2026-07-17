@@ -35,5 +35,22 @@ SET used_count = used_count + 1,
     updated_at = datetime('now')
 WHERE id = ? AND site_id = ?;
 
+-- name: ReserveDiscountCodeUse :execrows
+-- Atomically claim one use of a code, but only if it is still under its cap.
+-- The single SQLite writer serializes concurrent checkouts, so a max_uses code
+-- cannot be over-redeemed (the read-then-act check at checkout was a TOCTOU:
+-- the increment only happened later on the paid webhook).
+UPDATE discount_codes
+SET used_count = used_count + 1,
+    updated_at = datetime('now')
+WHERE id = ? AND site_id = ? AND (max_uses = 0 OR used_count < max_uses);
+
+-- name: ReleaseDiscountCodeUse :execrows
+-- Return a reserved use when the payment ultimately fails/expires/cancels.
+UPDATE discount_codes
+SET used_count = used_count - 1,
+    updated_at = datetime('now')
+WHERE id = ? AND site_id = ? AND used_count > 0;
+
 -- name: DeleteDiscountCode :exec
 DELETE FROM discount_codes WHERE id = ? AND site_id = ?;

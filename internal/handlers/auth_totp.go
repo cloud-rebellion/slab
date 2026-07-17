@@ -132,7 +132,8 @@ func (h *AuthHandler) TOTPVerify(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "Failed to read TOTP secret")
 		return
 	}
-	if !totp.ValidateCode(stagedSecret, strings.TrimSpace(req.Code)) {
+	enrollStep, ok := totp.ValidateCode(stagedSecret, strings.TrimSpace(req.Code))
+	if !ok {
 		writeError(w, http.StatusUnauthorized, "Invalid TOTP code")
 		return
 	}
@@ -149,6 +150,8 @@ func (h *AuthHandler) TOTPVerify(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "Failed to lock in enrollment")
 		return
 	}
+	// Consume the enrollment code so it cannot be replayed for the first login.
+	_ = h.queries.UpdateUserTOTPLastStep(r.Context(), store.UpdateUserTOTPLastStepParams{TotpLastStep: enrollStep, ID: user.ID})
 	AuditLog(r.Context(), h.queries, r, "", AuditActionUpdate, "user_mfa", user.ID, map[string]any{
 		"action": "enrolled",
 	})
@@ -234,7 +237,17 @@ func (h *AuthHandler) validateTOTPForLogin(r *http.Request, user store.User, sup
 	}
 	// Prefer fast TOTP path. The stored seed is encrypted at rest.
 	if storedSecret, err := h.secretCipher().Decrypt(user.TotpSecret); err == nil {
-		if totp.ValidateCode(storedSecret, supplied) {
+		if step, ok := totp.ValidateCode(storedSecret, supplied); ok {
+			// Reject a replay of an already-accepted code (a captured code stays
+			// valid for the ~30-60s drift window otherwise). Persist the new step
+			// BEFORE accepting, and fail closed if the persist fails, mirroring the
+			// recovery-code single-use contract below.
+			if step <= user.TotpLastStep {
+				return false
+			}
+			if err := h.queries.UpdateUserTOTPLastStep(r.Context(), store.UpdateUserTOTPLastStepParams{TotpLastStep: step, ID: user.ID}); err != nil {
+				return false
+			}
 			return true
 		}
 	}

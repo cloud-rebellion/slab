@@ -389,9 +389,13 @@ func (s *Server) Router() http.Handler {
 		// Account profile + workspace member management.
 		memh := handlers.NewMembersHandler(s.cfg, s.queries)
 		r.Patch("/api/auth/me", memh.UpdateProfile)
-		r.Get("/api/admin/members", memh.List)
 		r.Group(func(r chi.Router) {
 			r.Use(authmw.RequireAdmin)
+			// List returns the whole user directory (ListUsers has no tenant
+			// predicate), so it must be admin-gated like the sibling mutations; it
+			// was registered outside this group and leaked every user's email/role
+			// to any authenticated non-admin.
+			r.Get("/api/admin/members", memh.List)
 			r.Patch("/api/admin/members/{userID}/role", memh.UpdateRole)
 			r.Delete("/api/admin/members/{userID}", memh.Delete)
 			r.Get("/api/admin/invites", invH.List)

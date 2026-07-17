@@ -103,7 +103,13 @@ func CallUpstreamMCP(ctx context.Context, call UpstreamCall) (*UpstreamResult, e
 	}
 	client := call.HTTPClient
 	if client == nil {
-		client = http.DefaultClient
+		// A legitimate MCP tools/call endpoint has no reason to 302, and Go copies
+		// custom headers (the X-Atomic-Cred-* secrets set above) to a cross-host
+		// redirect target. Forbid redirects so a compromised/redirecting upstream
+		// cannot exfiltrate those credentials or steer the request to an internal IP.
+		client = &http.Client{
+			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+		}
 	}
 	resp, err := client.Do(req)
 	if err != nil {

@@ -94,7 +94,7 @@ func (q *Queries) DeleteUser(ctx context.Context, id string) error {
 }
 
 const getUserByEmail = `-- name: GetUserByEmail :one
-SELECT id, email, password_hash, name, role, token_version, totp_secret, totp_enrolled_at, totp_recovery_json, deletion_requested_at, created_at, updated_at FROM users WHERE email = ?
+SELECT id, email, password_hash, name, role, token_version, totp_secret, totp_enrolled_at, totp_recovery_json, totp_last_step, deletion_requested_at, created_at, updated_at FROM users WHERE email = ?
 `
 
 func (q *Queries) GetUserByEmail(ctx context.Context, email string) (User, error) {
@@ -110,6 +110,7 @@ func (q *Queries) GetUserByEmail(ctx context.Context, email string) (User, error
 		&i.TotpSecret,
 		&i.TotpEnrolledAt,
 		&i.TotpRecoveryJson,
+		&i.TotpLastStep,
 		&i.DeletionRequestedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
@@ -118,7 +119,7 @@ func (q *Queries) GetUserByEmail(ctx context.Context, email string) (User, error
 }
 
 const getUserByID = `-- name: GetUserByID :one
-SELECT id, email, password_hash, name, role, token_version, totp_secret, totp_enrolled_at, totp_recovery_json, deletion_requested_at, created_at, updated_at FROM users WHERE id = ?
+SELECT id, email, password_hash, name, role, token_version, totp_secret, totp_enrolled_at, totp_recovery_json, totp_last_step, deletion_requested_at, created_at, updated_at FROM users WHERE id = ?
 `
 
 func (q *Queries) GetUserByID(ctx context.Context, id string) (User, error) {
@@ -134,6 +135,7 @@ func (q *Queries) GetUserByID(ctx context.Context, id string) (User, error) {
 		&i.TotpSecret,
 		&i.TotpEnrolledAt,
 		&i.TotpRecoveryJson,
+		&i.TotpLastStep,
 		&i.DeletionRequestedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
@@ -152,7 +154,7 @@ func (q *Queries) IncrementTokenVersion(ctx context.Context, id string) error {
 }
 
 const listUsers = `-- name: ListUsers :many
-SELECT id, email, password_hash, name, role, token_version, totp_secret, totp_enrolled_at, totp_recovery_json, deletion_requested_at, created_at, updated_at FROM users ORDER BY created_at DESC
+SELECT id, email, password_hash, name, role, token_version, totp_secret, totp_enrolled_at, totp_recovery_json, totp_last_step, deletion_requested_at, created_at, updated_at FROM users ORDER BY created_at DESC
 `
 
 func (q *Queries) ListUsers(ctx context.Context) ([]User, error) {
@@ -174,6 +176,7 @@ func (q *Queries) ListUsers(ctx context.Context) ([]User, error) {
 			&i.TotpSecret,
 			&i.TotpEnrolledAt,
 			&i.TotpRecoveryJson,
+			&i.TotpLastStep,
 			&i.DeletionRequestedAt,
 			&i.CreatedAt,
 			&i.UpdatedAt,
@@ -302,6 +305,21 @@ type UpdateUserRoleParams struct {
 
 func (q *Queries) UpdateUserRole(ctx context.Context, arg UpdateUserRoleParams) error {
 	_, err := q.db.ExecContext(ctx, updateUserRole, arg.Role, arg.ID)
+	return err
+}
+
+const updateUserTOTPLastStep = `-- name: UpdateUserTOTPLastStep :exec
+UPDATE users SET totp_last_step = ?, updated_at = datetime('now') WHERE id = ?
+`
+
+type UpdateUserTOTPLastStepParams struct {
+	TotpLastStep int64  `json:"totp_last_step"`
+	ID           string `json:"id"`
+}
+
+// Record the highest TOTP time step accepted so the same code cannot be replayed.
+func (q *Queries) UpdateUserTOTPLastStep(ctx context.Context, arg UpdateUserTOTPLastStepParams) error {
+	_, err := q.db.ExecContext(ctx, updateUserTOTPLastStep, arg.TotpLastStep, arg.ID)
 	return err
 }
 

@@ -57,6 +57,7 @@ type Querier interface {
 	CountConsentBySite(ctx context.Context, arg CountConsentBySiteParams) (int64, error)
 	CountConsentBySiteByMethod(ctx context.Context, arg CountConsentBySiteByMethodParams) (int64, error)
 	CountConversionsByGoal(ctx context.Context, arg CountConversionsByGoalParams) (int64, error)
+	CountDomainsBySite(ctx context.Context, siteID string) (int64, error)
 	CountEntityRevisions(ctx context.Context, arg CountEntityRevisionsParams) (int64, error)
 	CountItemsByCollection(ctx context.Context, collectionID string) (int64, error)
 	// Distinct fingerprints in the last N minutes (caller passes the cutoff
@@ -213,7 +214,7 @@ type Querier interface {
 	DeleteWaitlistEntry(ctx context.Context, id string) error
 	DeleteWebhookSubscription(ctx context.Context, id string) error
 	DeleteWorkspace(ctx context.Context, id string) error
-	DeleteWorkspaceInvite(ctx context.Context, id string) error
+	DeleteWorkspaceInvite(ctx context.Context, arg DeleteWorkspaceInviteParams) error
 	EnsureMediaFolder(ctx context.Context, arg EnsureMediaFolderParams) error
 	FinishVerifyJob(ctx context.Context, arg FinishVerifyJobParams) error
 	GetAgentKeyByHash(ctx context.Context, keyHash string) (AgentKey, error)
@@ -507,6 +508,8 @@ type Querier interface {
 	RecordSchemaVersion(ctx context.Context, arg RecordSchemaVersionParams) error
 	RecordVisitEngagement(ctx context.Context, arg RecordVisitEngagementParams) error
 	RecordVisitEvent(ctx context.Context, arg RecordVisitEventParams) error
+	// Return a reserved use when the payment ultimately fails/expires/cancels.
+	ReleaseDiscountCodeUse(ctx context.Context, arg ReleaseDiscountCodeUseParams) (int64, error)
 	RemoveSiteMember(ctx context.Context, arg RemoveSiteMemberParams) error
 	RemoveWorkspaceMember(ctx context.Context, arg RemoveWorkspaceMemberParams) error
 	// Sets deletion_requested_at to now() and bumps token_version so
@@ -514,6 +517,17 @@ type Querier interface {
 	// the timestamp (useful if the user wants to refresh the cooling-
 	// off window after partially undoing).
 	RequestUserDeletion(ctx context.Context, id string) error
+	// Atomically claim one use of a code, but only if it is still under its cap.
+	// The single SQLite writer serializes concurrent checkouts, so a max_uses code
+	// cannot be over-redeemed (the read-then-act check at checkout was a TOCTOU:
+	// the increment only happened later on the paid webhook).
+	ReserveDiscountCodeUse(ctx context.Context, arg ReserveDiscountCodeUseParams) (int64, error)
+	// Atomically decrement stock at checkout, but only when backorder is allowed or
+	// there is enough on hand. The single SQLite writer serializes concurrent
+	// checkouts, so the last unit cannot be sold twice (availability was previously
+	// only checked at checkout and decremented later on the paid webhook, a window
+	// of minutes that allowed silent oversell / negative inventory).
+	ReserveVariantInventory(ctx context.Context, arg ReserveVariantInventoryParams) (int64, error)
 	ResolveClarification(ctx context.Context, arg ResolveClarificationParams) error
 	SetDefaultSiteLocale(ctx context.Context, arg SetDefaultSiteLocaleParams) error
 	SetDeployTargetDefault(ctx context.Context, id string) error
@@ -611,6 +625,8 @@ type Querier interface {
 	UpdateUserName(ctx context.Context, arg UpdateUserNameParams) error
 	UpdateUserPassword(ctx context.Context, arg UpdateUserPasswordParams) error
 	UpdateUserRole(ctx context.Context, arg UpdateUserRoleParams) error
+	// Record the highest TOTP time step accepted so the same code cannot be replayed.
+	UpdateUserTOTPLastStep(ctx context.Context, arg UpdateUserTOTPLastStepParams) error
 	// Rewrites the recovery code list (e.g. after a single-use code is
 	// consumed during a recovery login).
 	UpdateUserTOTPRecovery(ctx context.Context, arg UpdateUserTOTPRecoveryParams) error

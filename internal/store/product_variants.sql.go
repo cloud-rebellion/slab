@@ -135,6 +135,32 @@ func (q *Queries) ListProductVariants(ctx context.Context, productID string) ([]
 	return items, nil
 }
 
+const reserveVariantInventory = `-- name: ReserveVariantInventory :execrows
+UPDATE product_variants
+SET inventory_count = inventory_count - ?,
+    updated_at = datetime('now')
+WHERE id = ? AND (allow_backorder = 1 OR inventory_count >= ?)
+`
+
+type ReserveVariantInventoryParams struct {
+	InventoryCount   int64  `json:"inventory_count"`
+	ID               string `json:"id"`
+	InventoryCount_2 int64  `json:"inventory_count_2"`
+}
+
+// Atomically decrement stock at checkout, but only when backorder is allowed or
+// there is enough on hand. The single SQLite writer serializes concurrent
+// checkouts, so the last unit cannot be sold twice (availability was previously
+// only checked at checkout and decremented later on the paid webhook, a window
+// of minutes that allowed silent oversell / negative inventory).
+func (q *Queries) ReserveVariantInventory(ctx context.Context, arg ReserveVariantInventoryParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, reserveVariantInventory, arg.InventoryCount, arg.ID, arg.InventoryCount_2)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const setVariantInventoryCount = `-- name: SetVariantInventoryCount :exec
 UPDATE product_variants
 SET inventory_count = ?,

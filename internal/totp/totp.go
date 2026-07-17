@@ -81,9 +81,11 @@ func GenerateCode(secret string, t time.Time) (string, error) {
 	return fmt.Sprintf("%06d", code), nil
 }
 
-// ValidateCode checks a user-supplied code against the current and
-// previous time steps, allowing a one-step tolerance for clock drift.
-func ValidateCode(secret string, code string) bool {
+// ValidateCode checks a user-supplied code against the current and previous
+// time steps, allowing a one-step tolerance for clock drift. On a match it
+// returns the matched time step (counter) so the caller can reject a replay of
+// an already-accepted code (RFC 6238 sec 5.2); the bool is false on no match.
+func ValidateCode(secret string, code string) (int64, bool) {
 	now := time.Now()
 	for _, offset := range []int64{0, -1} {
 		t := now.Add(time.Duration(offset*timeStep) * time.Second)
@@ -92,10 +94,10 @@ func ValidateCode(secret string, code string) bool {
 			continue
 		}
 		if hmac.Equal([]byte(expected), []byte(code)) {
-			return true
+			return t.Unix() / timeStep, true
 		}
 	}
-	return false
+	return 0, false
 }
 
 // GenerateOTPAuthURI returns an otpauth:// URI that can be rendered

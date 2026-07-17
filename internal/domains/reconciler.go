@@ -186,11 +186,36 @@ func (r *Reconciler) advanceOne(ctx context.Context, d store.SiteDomain, sitesBy
 		// Steady-state, no change.
 		return false
 	case "error":
-		// Try again. The status update on success lifts the row out
-		// of the error band; failure simply re-stamps last_error.
-		return r.advancePending(ctx, d) || r.advanceVerified(ctx, d, sitesByID)
+		// Back off: re-check an error row at most every errorRetryBackoff. Every
+		// UpdateDomainStatus stamps last_check_at, so a persistently broken domain
+		// (wrong DNS, bogus hostname) cannot hammer certbot / Let's Encrypt (shared
+		// per-account rate limits) or Cloudflare on every 30s tick.
+		if !errorRetryDue(d.LastCheckAt) {
+			return false
+		}
+		// Only re-attempt OWNERSHIP verification here. Do NOT fall through to
+		// advanceVerified: the old `advancePending() || advanceVerified()` fired
+		// certbot.Issue unconditionally whenever verification FAILED (advancePending
+		// returns false), burning the shared LE account budget on a hostname that
+		// never verified. On success this promotes the row to "verified" and the
+		// next tick's verified-case issues the cert.
+		return r.advancePending(ctx, d)
 	}
 	return false
+}
+
+// errorRetryBackoff caps how often an error-state domain is retried.
+const errorRetryBackoff = 30 * time.Minute
+
+// errorRetryDue reports whether an error row (last touched at lastCheckAt, the
+// SQLite datetime('now') string) is due for another attempt. An unparseable
+// timestamp fails open to progress.
+func errorRetryDue(lastCheckAt string) bool {
+	t, err := time.Parse("2006-01-02 15:04:05", lastCheckAt)
+	if err != nil {
+		return true
+	}
+	return time.Since(t) >= errorRetryBackoff
 }
 
 func (r *Reconciler) advancePending(ctx context.Context, d store.SiteDomain) bool {

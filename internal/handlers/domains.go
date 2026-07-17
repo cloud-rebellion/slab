@@ -49,6 +49,10 @@ var reservedHostnameSuffixes = []string{
 	".local",
 }
 
+// maxDomainsPerSite caps how many custom domains a single site may attach, so a
+// tenant cannot flood the shared single-goroutine reconciler with bogus rows.
+const maxDomainsPerSite = 10
+
 // DomainHandler manages /api/sites/{siteID}/domains routes.
 type DomainHandler struct {
 	queries *store.Queries
@@ -221,6 +225,13 @@ func (h *DomainHandler) Create(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
+	}
+	// Cap custom domains per site. The reconciler is a single goroutine doing
+	// synchronous verify + certbot per row, so a tenant adding many bogus
+	// hostnames would monopolize it and delay provisioning for everyone.
+	if n, err := h.queries.CountDomainsBySite(r.Context(), siteID); err == nil && n >= maxDomainsPerSite {
+		writeError(w, http.StatusBadRequest, "This site has reached its custom-domain limit.")
+		return
 	}
 	var req struct {
 		Hostname    string `json:"hostname"`

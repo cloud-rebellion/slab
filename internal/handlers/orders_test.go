@@ -334,21 +334,25 @@ func TestOrders_WebhookPaidIdempotentAndAmountChecked(t *testing.T) {
 		return rr.Code, out
 	}
 
-	// Correct amount, paid: first delivery applies side-effects once.
+	// Inventory is now reserved at CHECKOUT (inside the order tx), not on the paid
+	// webhook, to close the oversell window. These orders are created directly
+	// (bypassing checkout), so the webhook leaves inventory_count at the seeded 10;
+	// the webhook's paid side-effect is now the inventory_adjustments audit row.
+	// Idempotency is asserted via the "already processed" duplicate-delivery check.
 	mkOrder("ord-paid-1", "tr_paid_1", 6000)
 	payStatus, payCurrency, payValue = "paid", "EUR", mollie.FormatAmount(6000)
 	if code, out := fire("tr_paid_1"); code != http.StatusOK || out["new_order_status"] != "paid" {
 		t.Fatalf("first paid delivery: code=%d out=%v; want 200 paid", code, out)
 	}
-	if v1, _ := q.GetProductVariantByID(ctx, v.ID); v1.InventoryCount != 7 {
-		t.Fatalf("inventory after first paid = %d; want 7", v1.InventoryCount)
+	if v1, _ := q.GetProductVariantByID(ctx, v.ID); v1.InventoryCount != 10 {
+		t.Fatalf("inventory after first paid = %d; want 10 (reserved at checkout, not the webhook)", v1.InventoryCount)
 	}
-	// Retried duplicate delivery: no second decrement.
+	// Retried duplicate delivery: no second side-effect.
 	if code, out := fire("tr_paid_1"); code != http.StatusOK || out["status"] != "already processed" {
 		t.Fatalf("duplicate delivery: code=%d out=%v; want 'already processed'", code, out)
 	}
-	if v2, _ := q.GetProductVariantByID(ctx, v.ID); v2.InventoryCount != 7 {
-		t.Fatalf("inventory after duplicate = %d; want still 7 (no double decrement)", v2.InventoryCount)
+	if v2, _ := q.GetProductVariantByID(ctx, v.ID); v2.InventoryCount != 10 {
+		t.Fatalf("inventory after duplicate = %d; want still 10", v2.InventoryCount)
 	}
 
 	// Wrong amount: order must NOT be marked paid.
@@ -360,7 +364,7 @@ func TestOrders_WebhookPaidIdempotentAndAmountChecked(t *testing.T) {
 	if ord, _ := q.GetOrderByPaymentID(ctx, "tr_bad_amt"); ord.Status != "pending" {
 		t.Errorf("order with wrong paid amount = %q; want still pending", ord.Status)
 	}
-	if v3, _ := q.GetProductVariantByID(ctx, v.ID); v3.InventoryCount != 7 {
-		t.Errorf("inventory after mismatch = %d; want unchanged 7", v3.InventoryCount)
+	if v3, _ := q.GetProductVariantByID(ctx, v.ID); v3.InventoryCount != 10 {
+		t.Errorf("inventory after mismatch = %d; want unchanged 10", v3.InventoryCount)
 	}
 }

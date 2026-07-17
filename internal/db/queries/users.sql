@@ -43,6 +43,10 @@ UPDATE users SET totp_enrolled_at = datetime('now'),
                  updated_at = datetime('now')
 WHERE id = ?;
 
+-- name: UpdateUserTOTPLastStep :exec
+-- Record the highest TOTP time step accepted so the same code cannot be replayed.
+UPDATE users SET totp_last_step = ?, updated_at = datetime('now') WHERE id = ?;
+
 -- name: ClearUserTOTP :exec
 -- Disables MFA and bumps token_version so any session that thought
 -- it had MFA is invalidated. Only callable by the user themselves

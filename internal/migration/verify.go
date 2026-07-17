@@ -135,7 +135,8 @@ func verifyOne(ctx context.Context, raw, deployedDomain string, opts VerifyOptio
 	}
 
 	client := &http.Client{
-		Timeout: opts.Timeout,
+		Timeout:   opts.Timeout,
+		Transport: safeTransport(opts.AllowPrivate),
 		// Disable auto-follow; we count + log hops manually.
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			return http.ErrUseLastResponse

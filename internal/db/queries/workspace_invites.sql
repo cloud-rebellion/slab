@@ -16,7 +16,7 @@ ORDER BY created_at DESC;
 UPDATE workspace_invites SET used_at = datetime('now') WHERE id = ?;
 
 -- name: DeleteWorkspaceInvite :exec
-DELETE FROM workspace_invites WHERE id = ?;
+DELETE FROM workspace_invites WHERE id = ? AND workspace_id = ?;
 
 -- name: ListSitesByWorkspace :many
 SELECT id, workspace_id, name, slug, status, created_at, updated_at

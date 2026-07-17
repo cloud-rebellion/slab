@@ -193,6 +193,51 @@ func (q *Queries) ListDiscountCodesBySite(ctx context.Context, arg ListDiscountC
 	return items, nil
 }
 
+const releaseDiscountCodeUse = `-- name: ReleaseDiscountCodeUse :execrows
+UPDATE discount_codes
+SET used_count = used_count - 1,
+    updated_at = datetime('now')
+WHERE id = ? AND site_id = ? AND used_count > 0
+`
+
+type ReleaseDiscountCodeUseParams struct {
+	ID     string `json:"id"`
+	SiteID string `json:"site_id"`
+}
+
+// Return a reserved use when the payment ultimately fails/expires/cancels.
+func (q *Queries) ReleaseDiscountCodeUse(ctx context.Context, arg ReleaseDiscountCodeUseParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, releaseDiscountCodeUse, arg.ID, arg.SiteID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const reserveDiscountCodeUse = `-- name: ReserveDiscountCodeUse :execrows
+UPDATE discount_codes
+SET used_count = used_count + 1,
+    updated_at = datetime('now')
+WHERE id = ? AND site_id = ? AND (max_uses = 0 OR used_count < max_uses)
+`
+
+type ReserveDiscountCodeUseParams struct {
+	ID     string `json:"id"`
+	SiteID string `json:"site_id"`
+}
+
+// Atomically claim one use of a code, but only if it is still under its cap.
+// The single SQLite writer serializes concurrent checkouts, so a max_uses code
+// cannot be over-redeemed (the read-then-act check at checkout was a TOCTOU:
+// the increment only happened later on the paid webhook).
+func (q *Queries) ReserveDiscountCodeUse(ctx context.Context, arg ReserveDiscountCodeUseParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, reserveDiscountCodeUse, arg.ID, arg.SiteID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const updateDiscountCode = `-- name: UpdateDiscountCode :exec
 UPDATE discount_codes
 SET code = ?,

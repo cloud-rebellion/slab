@@ -121,6 +121,9 @@ func normaliseDiscountInput(in *DiscountCodeInput) {
 }
 
 func (h *DiscountCodeHandler) Create(w http.ResponseWriter, r *http.Request) {
+	if authmw.GetUser(r) != nil && !authmw.RequireOwnerOrAdmin(w, r, h.queries) {
+		return
+	}
 	siteID := urlParam(r, "siteID")
 	var in DiscountCodeInput
 	if err := parseJSON(r, &in); err != nil {
@@ -173,6 +176,9 @@ func (h *DiscountCodeHandler) Create(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *DiscountCodeHandler) Update(w http.ResponseWriter, r *http.Request) {
+	if authmw.GetUser(r) != nil && !authmw.RequireOwnerOrAdmin(w, r, h.queries) {
+		return
+	}
 	siteID := urlParam(r, "siteID")
 	id := urlParam(r, "codeID")
 	existing, ok := discountCodeInSite(r.Context(), h.queries, w, id, siteID)
@@ -265,6 +271,9 @@ func (h *DiscountCodeHandler) Update(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *DiscountCodeHandler) Delete(w http.ResponseWriter, r *http.Request) {
+	if authmw.GetUser(r) != nil && !authmw.RequireOwnerOrAdmin(w, r, h.queries) {
+		return
+	}
 	siteID := urlParam(r, "siteID")
 	id := urlParam(r, "codeID")
 	if _, ok := discountCodeInSite(r.Context(), h.queries, w, id, siteID); !ok {

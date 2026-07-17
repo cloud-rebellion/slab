@@ -300,11 +300,16 @@ func renderCollectionItem(c store.Collection, fields []collectionFieldDef, item 
 	}
 	b.WriteString("  </article>\n")
 
-	// JSON-LD.
+	// JSON-LD. Emit as plain <script> text, NOT set:html={`...`}: inside an Astro
+	// template literal the < escapes that json.Marshal produces are decoded
+	// back to raw < at build time, so an item Title of </script><script>... would
+	// break out and execute (stored XSS on the published page), and a ${...} would
+	// be interpolated in the build process. As raw script text the json.Marshal
+	// escaping holds, exactly like the Organization JSON-LD in layouts.go.
 	if jsonld := buildJSONLD(c, fields, item, data, mediaByID, site); jsonld != "" {
-		b.WriteString("  <script type=\"application/ld+json\" set:html={`")
+		b.WriteString("  <script type=\"application/ld+json\">")
 		b.WriteString(jsonld)
-		b.WriteString("`}></script>\n")
+		b.WriteString("</script>\n")
 	}
 
 	if cond, _ := data["condition"].(string); cond != "" {

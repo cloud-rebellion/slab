@@ -793,6 +793,7 @@ type User struct {
 	TotpSecret          string `json:"totp_secret"`
 	TotpEnrolledAt      string `json:"totp_enrolled_at"`
 	TotpRecoveryJson    string `json:"totp_recovery_json"`
+	TotpLastStep        int64  `json:"totp_last_step"`
 	DeletionRequestedAt string `json:"deletion_requested_at"`
 	CreatedAt           string `json:"created_at"`
 	UpdatedAt           string `json:"updated_at"`

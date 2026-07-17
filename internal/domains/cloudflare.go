@@ -91,17 +91,33 @@ func (c *CloudflareClient) EnsureA(ctx context.Context, hostname, edgeIP string)
 			if r.Content == edgeIP {
 				return nil
 			}
+			// Only ever overwrite a record atomicsite itself created (createRecord
+			// tags them). A pre-existing UNMANAGED A record - an operator service
+			// (auth/crm/svar) or a co-tenant's externally-managed name that happens
+			// to sit in this zone - must NOT be repointed at our edge, or any tenant
+			// that adds that hostname as a custom domain would hijack it before any
+			// ownership proof. Refuse, so the reconciler marks the domain error and
+			// the DNS/verify/cert chain never proceeds.
+			if r.Comment != managedComment {
+				return fmt.Errorf("hostname %s already resolves to an unmanaged DNS record; refusing to overwrite", hostname)
+			}
 			return c.updateRecord(ctx, zoneID, r.ID, hostname, edgeIP)
 		}
 	}
 	return c.createRecord(ctx, zoneID, hostname, edgeIP)
 }
 
+// managedComment tags the A records atomicsite provisions, so EnsureA can tell
+// its own records apart from pre-existing operator/co-tenant infrastructure and
+// never overwrite the latter.
+const managedComment = "managed by atomicsite"
+
 type cfRecord struct {
 	ID      string `json:"id"`
 	Name    string `json:"name"`
 	Type    string `json:"type"`
 	Content string `json:"content"`
+	Comment string `json:"comment"`
 }
 
 type cfListResp struct {
@@ -147,7 +163,7 @@ func (c *CloudflareClient) createRecord(ctx context.Context, zoneID, hostname, i
 		"content": ip,
 		"proxied": false,
 		"ttl":     300,
-		"comment": "managed by atomicsite",
+		"comment": managedComment,
 	})
 	url := fmt.Sprintf("https://api.cloudflare.com/client/v4/zones/%s/dns_records", zoneID)
 	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))

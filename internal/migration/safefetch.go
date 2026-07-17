@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -84,7 +85,8 @@ func SafeFetch(ctx context.Context, rawURL string, opts FetchOptions) (*FetchRes
 	}
 
 	client := &http.Client{
-		Timeout: opts.Timeout,
+		Timeout:   opts.Timeout,
+		Transport: safeTransport(opts.AllowPrivate),
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			if len(via) >= opts.MaxRedirects {
 				return fmt.Errorf("too many redirects (>%d)", opts.MaxRedirects)
@@ -132,6 +134,43 @@ func SafeFetch(ctx context.Context, rawURL string, opts FetchOptions) (*FetchRes
 		ContentType: resp.Header.Get("Content-Type"),
 		Body:        body,
 	}, nil
+}
+
+// safeTransport builds an http.Transport whose dialer re-checks the ACTUAL
+// resolved IP at connect time. The pre-flight checkHostPublic alone is a TOCTOU:
+// the transport resolves DNS a second time when it dials, so a hostname with a
+// ~0s TTL can pass the pre-flight (public IP) and then dial a private/metadata
+// IP (DNS rebinding). The Control hook runs against the real dial address right
+// before connect, on the initial request AND every redirect, closing that gap.
+// Mirrors the estate's domains/ssrf.go ssrfDialControl shape. allowPrivate (tests
+// only) disables the hook so httptest loopback servers work.
+func safeTransport(allowPrivate bool) *http.Transport {
+	d := &net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}
+	if !allowPrivate {
+		d.Control = safeDialControl
+	}
+	return &http.Transport{
+		DialContext:           d.DialContext,
+		ForceAttemptHTTP2:     true,
+		MaxIdleConns:          100,
+		IdleConnTimeout:       90 * time.Second,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ExpectContinueTimeout: 1 * time.Second,
+	}
+}
+
+// safeDialControl rejects a connection whose resolved address is a
+// private/loopback/link-local/metadata IP. Runs after DNS resolution, immediately
+// before the socket connects, so it sees the IP actually being dialed.
+func safeDialControl(_, address string, _ syscall.RawConn) error {
+	host, _, err := net.SplitHostPort(address)
+	if err != nil {
+		return err
+	}
+	if ip := net.ParseIP(host); ip != nil && isPrivateOrLocal(ip) {
+		return fmt.Errorf("refusing to connect to private address %s", ip)
+	}
+	return nil
 }
 
 // checkHostPublic resolves a hostname and refuses if any returned IP is in a

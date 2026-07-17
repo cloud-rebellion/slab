@@ -459,7 +459,11 @@ func (h *WorkspaceHandler) DeleteInvite(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	inviteID := urlParam(r, "inviteID")
-	if err := h.queries.DeleteWorkspaceInvite(r.Context(), inviteID); err != nil {
+	// Scope the delete to the workspace the caller is authorized for. Without the
+	// workspace_id predicate an admin of workspace A could revoke another tenant's
+	// pending invite by id (cross-workspace write / onboarding griefing).
+	workspaceID := urlParam(r, "workspaceID")
+	if err := h.queries.DeleteWorkspaceInvite(r.Context(), store.DeleteWorkspaceInviteParams{ID: inviteID, WorkspaceID: workspaceID}); err != nil {
 		writeError(w, http.StatusInternalServerError, "Failed to delete invite")
 		return
 	}

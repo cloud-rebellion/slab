@@ -127,7 +127,17 @@ func CrawlSitemap(ctx context.Context, sitemapURL string, opts CrawlOptions) (*M
 		return nil, fmt.Errorf("parse sitemap: %w", err)
 	}
 
-	// Recurse one level into any sitemap-index entries.
+	// Recurse one level into any sitemap-index entries. Bound the number of
+	// child-sitemap fetches independently of MaxURLs: a malicious index of many
+	// entries each returning an empty <urlset> keeps pageURLs at 0, so the
+	// per-page cap never trips and every entry gets a full SafeFetch (outbound
+	// request amplification / self-DoS). The sitemaps.org protocol caps an index
+	// at 50k entries; real CMSes use far fewer.
+	const maxChildSitemaps = 500
+	if len(indexedURLs) > maxChildSitemaps {
+		manifest.Warnings = append(manifest.Warnings, fmt.Sprintf("sitemap index has %d entries; capping child fetches at %d", len(indexedURLs), maxChildSitemaps))
+		indexedURLs = indexedURLs[:maxChildSitemaps]
+	}
 	if len(indexedURLs) > 0 {
 		for _, sub := range indexedURLs {
 			subResp, err := SafeFetch(ctx, sub, opts.FetchOpts)
