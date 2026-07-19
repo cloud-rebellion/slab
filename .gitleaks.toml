@@ -1,14 +1,22 @@
-# gitleaks config for Pare (used by the public-mirror publish gate and any local
-# scan). Extends the default ruleset, then allowlists documentation/config-example
-# PLACEHOLDERS: .env.example uses obvious change-me markers, never real secrets. A
-# real leaked credential would not carry these markers, so it is still caught.
-title = "pare"
+# gitleaks config for Slab/atomicsite (used by the public-mirror publish gate and
+# any local scan). Extends the default ruleset, then allowlists documentation/config
+# PLACEHOLDERS and TEST FIXTURES. A real leaked credential would not carry these
+# obvious markers, so it is still caught.
+title = "slab"
 
 [extend]
 useDefault = true
 
 [allowlist]
-description = "Config placeholders use obvious markers, not real secrets"
+description = "Config placeholders + test fixtures use obvious markers, not real secrets"
+# Test files never carry real secrets by policy; their JWT/e2e fixtures are
+# deliberately fake. Allowlist the test paths plus the specific fixture strings.
+paths = [
+  '''.*_test\.go''',
+  '''.*\.spec\.ts''',
+  '''.*/e2e/.*''',
+  '''.*\.test\.ts''',
+]
 regexes = [
   '''changeme''',
   '''change[_-]?me''',
@@ -17,4 +25,11 @@ regexes = [
   '''min_16_char_org_key''',
   '''_from_vault''',
   '''EXAMPLE''',
+  # Slab test fixtures (deliberately fake JWT/session secrets):
+  '''test[-_]jwt[-_]secret''',
+  '''e2e-jwt-secret-not-for-production''',
+  '''this-is-a-strong-32-byte-secret-value-here''',
+  '''secret-32-bytes(-x)+''',
+  '''invitee-pw-[0-9]+''',
+  '''DefaultJWTSecret''',
 ]
