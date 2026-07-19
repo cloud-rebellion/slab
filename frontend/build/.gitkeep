@@ -1,1 +1,0 @@
-keep (go:embed all:frontend/build needs >=1 tracked file; real assets are built by the frontend pipeline)
