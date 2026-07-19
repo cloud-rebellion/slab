@@ -1,201 +1,120 @@
-                                 Apache License
-                           Version 2.0, January 2004
-                        http://www.apache.org/licenses/
+Slab Sustainable Use License
 
-   TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION
+Version 1.0
 
-   1. Definitions.
+This is a "fair-code" license (https://faircode.io). The source is open
+and free to read, run, and modify. It is NOT an OSI "open source" license,
+because it places one limit on commercial use: you may not resell Slab
+itself or run it as a service for third parties. The plain-English summary
+below is not part of the legal terms; the terms that follow it govern.
 
-      "License" shall mean the terms and conditions for use, reproduction,
-      and distribution as defined by Sections 1 through 9 of this document.
+------------------------------------------------------------------------
+Plain-English summary (informational, not the license)
 
-      "Licensor" shall mean the copyright owner or entity authorized by
-      the copyright owner that is granting the License.
+You CAN:
+  - Run Slab on your own servers / VPS, for free, forever.
+  - Use it for your own business, internally and commercially.
+  - Use it to build and host websites for your own clients (e.g. an
+    agency or consultancy delivering a customer's site).
+  - Read, modify, and self-distribute the source, keeping this license.
 
-      "Legal Entity" shall mean the union of the acting entity and all
-      other entities that control, are controlled by, or are under common
-      control with that entity. For the purposes of this definition,
-      "control" means (i) the power, direct or indirect, to cause the
-      direction or management of such entity, whether by contract or
-      otherwise, or (ii) ownership of fifty percent (50%) or more of the
-      outstanding shares, or (iii) beneficial ownership of such entity.
+You CANNOT, without a separate commercial agreement from the Licensor:
+  - Sell Slab, or offer it to third parties as a hosted or managed
+    service whose value derives substantially from Slab's own
+    functionality (i.e. a competing "Slab cloud" / SaaS).
+  - Remove or obscure the licensing, copyright, or attribution notices,
+    or use the "Slab" or "Bright Interaction" names or logos for a
+    fork without permission.
+------------------------------------------------------------------------
 
-      "You" (or "Your") shall mean an individual or Legal Entity
-      exercising permissions granted by this License.
+1. Definitions
 
-      "Source" form shall mean the preferred form for making modifications,
-      including but not limited to software source code, documentation
-      source, and configuration files.
+   "Software" means the Slab source code, binaries, and documentation
+   distributed under this license.
 
-      "Object" form shall mean any form resulting from mechanical
-      transformation or translation of a Source form, including but
-      not limited to compiled object code, generated documentation,
-      and conversions to other media types.
+   "Licensor" means Bright Interaction, the copyright holder.
 
-      "Work" shall mean the work of authorship, whether in Source or
-      Object form, made available under the License, as indicated by a
-      copyright notice that is included in or attached to the work
-      (an example is provided in the Appendix below).
+   "You" means the individual or entity exercising the rights below.
 
-      "Derivative Works" shall mean any work, whether in Source or Object
-      form, that is based on (or derived from) the Work and for which the
-      editorial revisions, annotations, elaborations, or other modifications
-      represent, as a whole, an original work of authorship. For the purposes
-      of this License, Derivative Works shall not include works that remain
-      separable from, or merely link (or bind by name) to the interfaces of,
-      the Work and Derivative Works thereof.
+   "Your Customers" means third parties to whom You provide professional
+   services (such as consulting, integration, or managed automation) where
+   the primary thing You provide is Your service, not the Software itself.
 
-      "Contribution" shall mean any work of authorship, including
-      the original version of the Work and any modifications or additions
-      to that Work or Derivative Works thereof, that is intentionally
-      submitted to Licensor for inclusion in the Work by the copyright owner
-      or by an individual or Legal Entity authorized to submit on behalf of
-      the copyright owner. For the purposes of this definition, "submitted"
-      means any form of electronic, verbal, or written communication sent
-      to the Licensor or its representatives, including but not limited to
-      communication on electronic mailing lists, source code control systems,
-      and issue tracking systems that are managed by, or on behalf of, the
-      Licensor for the purpose of discussing and improving the Work, but
-      excluding communication that is conspicuously marked or otherwise
-      designated in writing by the copyright owner as "Not a Contribution."
+   "Provide a Competing Service" means making the Software, or a modified
+   version of it, available to third parties as a hosted, managed, or
+   white-labeled product or service whose value derives substantially from
+   the Software's own functionality, including any offering that competes
+   with a hosted Slab product offered by the Licensor.
 
-      "Contributor" shall mean Licensor and any individual or Legal Entity
-      on behalf of whom a Contribution has been received by Licensor and
-      subsequently incorporated within the Work.
+2. Grant
 
-   2. Grant of Copyright License. Subject to the terms and conditions of
-      this License, each Contributor hereby grants to You a perpetual,
-      worldwide, non-exclusive, no-charge, royalty-free, irrevocable
-      copyright license to reproduce, prepare Derivative Works of,
-      publicly display, publicly perform, sublicense, and distribute the
-      Work and such Derivative Works in Source or Object form.
+   Subject to the conditions in Sections 3 and 4, the Licensor grants You
+   a worldwide, royalty-free, non-exclusive, non-sublicensable license to
+   use, copy, modify, and distribute the Software for any purpose,
+   including commercial purposes.
 
-   3. Grant of Patent License. Subject to the terms and conditions of
-      this License, each Contributor hereby grants to You a perpetual,
-      worldwide, non-exclusive, no-charge, royalty-free, irrevocable
-      (except as stated in this section) patent license to make, have made,
-      use, offer to sell, sell, import, and otherwise transfer the Work,
-      where such license applies only to those patent claims licensable
-      by such Contributor that are necessarily infringed by their
-      Contribution(s) alone or by combination of their Contribution(s)
-      with the Work to which such Contribution(s) was submitted. If You
-      institute patent litigation against any entity (including a
-      cross-claim or counterclaim in a lawsuit) alleging that the Work
-      or a Contribution incorporated within the Work constitutes direct
-      or contributory patent infringement, then any patent licenses
-      granted to You under this License for that Work shall terminate
-      as of the date such litigation is filed.
+3. Permitted commercial use
 
-   4. Redistribution. You may reproduce and distribute copies of the
-      Work or Derivative Works thereof in any medium, with or without
-      modifications, and in Source or Object form, provided that You
-      meet the following conditions:
+   For the avoidance of doubt, the following are expressly permitted:
 
-      (a) You must give any other recipients of the Work or
-          Derivative Works a copy of this License; and
+   (a) running the Software for Your own internal business operations;
 
-      (b) You must cause any modified files to carry prominent notices
-          stating that You changed the files; and
+   (b) using the Software to build, operate, or deliver websites for
+       Your Customers as part of a professional service, including hosting
+       a Customer-specific deployment on their behalf;
 
-      (c) You must retain, in the Source form of any Derivative Works
-          that You distribute, all copyright, patent, trademark, and
-          attribution notices from the Source form of the Work,
-          excluding those notices that do not pertain to any part of
-          the Derivative Works; and
+   (c) distributing the Software, modified or unmodified, free of charge,
+       provided this license and all notices travel with it.
 
-      (d) If the Work includes a "NOTICE" text file as part of its
-          distribution, then any Derivative Works that You distribute must
-          include a readable copy of the attribution notices contained
-          within such NOTICE file, excluding those notices that do not
-          pertain to any part of the Derivative Works, in at least one
-          of the following places: within a NOTICE text file distributed
-          as part of the Derivative Works; within the Source form or
-          documentation, if provided along with the Derivative Works; or,
-          within a display generated by the Derivative Works, if and
-          wherever such third-party notices normally appear. The contents
-          of the NOTICE file are for informational purposes only and
-          do not modify the License. You may add Your own attribution
-          notices within Derivative Works that You distribute, alongside
-          or as an addendum to the NOTICE text from the Work, provided
-          that such additional attribution notices cannot be construed
-          as modifying the License.
+4. Conditions and limitations
 
-      You may add Your own copyright statement to Your modifications and
-      may provide additional or different license terms and conditions
-      for use, reproduction, or distribution of Your modifications, or
-      for any such Derivative Works as a whole, provided Your use,
-      reproduction, and distribution of the Work otherwise complies with
-      the conditions stated in this License.
+   (a) You may not Provide a Competing Service without a separate
+       commercial license from the Licensor.
 
-   5. Submission of Contributions. Unless You explicitly state otherwise,
-      any Contribution intentionally submitted for inclusion in the Work
-      by You to the Licensor shall be under the terms and conditions of
-      this License, without any additional terms or conditions.
-      Notwithstanding the above, nothing herein shall supersede or modify
-      the terms of any separate license agreement you may have executed
-      with Licensor regarding such Contributions.
+   (b) You may not sell the Software as a product where the value of the
+       sale derives substantially from the Software's own functionality.
 
-   6. Trademarks. This License does not grant permission to use the trade
-      names, trademarks, service marks, or product names of the Licensor,
-      except as required for describing the origin of the Work and
-      reproducing the content of the NOTICE file.
+   (c) You may not remove, alter, or obscure any licensing, copyright, or
+       attribution notice in the Software, and You must ensure that anyone
+       who receives any part of the Software from You also receives a copy
+       of this license.
 
-   7. Disclaimer of Warranty. Unless required by applicable law or
-      agreed to in writing, Licensor provides the Work (and each
-      Contributor provides its Contributions) on an "AS IS" BASIS,
-      WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or
-      implied, including, without limitation, any warranties or conditions
-      of TITLE, NON-INFRINGEMENT, MERCHANTABILITY, or FITNESS FOR A
-      PARTICULAR PURPOSE. You are solely responsible for determining the
-      appropriateness of using or redistributing the Work and assume any
-      risks associated with Your exercise of permissions under this License.
+   (d) "Slab" and "Bright Interaction", and associated logos, are
+       trademarks of the Licensor. This license grants no rights to use
+       those marks. A fork must be clearly renamed and must not imply
+       endorsement by or affiliation with the Licensor.
 
-   8. Limitation of Liability. In no event and under no legal theory,
-      whether in tort (including negligence), contract, or otherwise,
-      unless required by applicable law (such as deliberate and grossly
-      negligent acts) or agreed to in writing, shall any Contributor be
-      liable to You for damages, including any direct, indirect, special,
-      incidental, or consequential damages of any character arising as a
-      result of this License or out of the use or inability to use the
-      Work (including but not limited to damages for loss of goodwill,
-      work stoppage, computer failure or malfunction, or any and all
-      other commercial damages or losses), even if such Contributor
-      has been advised of the possibility of such damages.
+5. Patents
 
-   9. Accepting Warranty or Additional Liability. While redistributing
-      the Work or Derivative Works thereof, You may accept and charge a
-      fee for, or grant additional warranty, support, indemnity, or other
-      liability obligations and/or rights consistent with this License.
-      However, in accepting such obligations, You may act only on Your
-      own behalf and on Your sole responsibility, not on behalf of any
-      other Contributor, and only if You agree to indemnify, defend, and
-      hold each Contributor harmless for any liability incurred by, or
-      claims asserted against, such Contributor by reason of your accepting
-      any such warranty or additional liability.
+   The Licensor grants You a license to any patent claims it can license
+   that are necessarily infringed by the Software, limited to the rights
+   granted in Section 2. This patent license terminates if You bring a
+   patent claim alleging the Software infringes a patent.
 
-   END OF TERMS AND CONDITIONS
+6. Termination
 
-   APPENDIX: How to apply the Apache License to your work.
+   If You violate this license, Your rights under it terminate
+   automatically. They may be reinstated by the Licensor in writing. On
+   termination You must stop using and distributing the Software, though
+   copies already distributed in compliance remain licensed.
 
-      To apply the Apache License to your work, attach the following
-      boilerplate notice, with the fields enclosed by brackets "[]"
-      replaced with your own identifying information. (Don't include
-      the brackets!)  The text should be enclosed in the appropriate
-      comment syntax for the file format. We also recommend that a
-      file or class name and description of purpose be included on the
-      same "printed page" as the copyright notice for easier
-      identification within third-party archives.
+7. Commercial licenses
 
-   Copyright 2026 Bright Interaction AB and Atomic Site contributors
+   If You want to do something this license does not permit, including
+   Providing a Competing Service, contact the Licensor at
+   licensing@brightinteraction.com for a separate commercial license.
 
-   Licensed under the Apache License, Version 2.0 (the "License");
-   you may not use this file except in compliance with the License.
-   You may obtain a copy of the License at
+8. Disclaimer of warranty
 
-       http://www.apache.org/licenses/LICENSE-2.0
+   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+   OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+   MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, AND NONINFRINGEMENT.
 
-   Unless required by applicable law or agreed to in writing, software
-   distributed under the License is distributed on an "AS IS" BASIS,
-   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-   See the License for the specific language governing permissions and
-   limitations under the License.
+9. Limitation of liability
+
+   IN NO EVENT SHALL THE LICENSOR BE LIABLE FOR ANY CLAIM, DAMAGES, OR
+   OTHER LIABILITY, WHETHER IN CONTRACT, TORT, OR OTHERWISE, ARISING FROM,
+   OUT OF, OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
+   IN THE SOFTWARE.
+
+Copyright (c) Bright Interaction. All rights reserved.

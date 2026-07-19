@@ -1,0 +1,20 @@
+# gitleaks config for Pare (used by the public-mirror publish gate and any local
+# scan). Extends the default ruleset, then allowlists documentation/config-example
+# PLACEHOLDERS: .env.example uses obvious change-me markers, never real secrets. A
+# real leaked credential would not carry these markers, so it is still caught.
+title = "pare"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Config placeholders use obvious markers, not real secrets"
+regexes = [
+  '''changeme''',
+  '''change[_-]?me''',
+  '''your_[a-z0-9_]*''',
+  '''base64_32_bytes_here''',
+  '''min_16_char_org_key''',
+  '''_from_vault''',
+  '''EXAMPLE''',
+]
