@@ -2,6 +2,13 @@ module github.com/bright-interaction/slab
 
 go 1.26.3
 
+// Pinned to the toolchain the container image already builds with. Without this,
+// go.mod permits an older Go and govulncheck reports the standard-library
+// vulnerabilities fixed in 1.26.5 (crypto/tls Encrypted Client Hello leak,
+// net/textproto, crypto/x509, net/http/httputil) as reachable. The pin makes the
+// version that keeps this safe a guarantee rather than a property of the base image.
+toolchain go1.26.5
+
 require (
 	github.com/HugoSmits86/nativewebp v1.2.1
 	github.com/alicebob/miniredis/v2 v2.38.0
