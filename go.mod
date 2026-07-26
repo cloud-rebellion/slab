@@ -8,7 +8,7 @@ require (
 	github.com/buckket/go-blurhash v1.1.0
 	github.com/chromedp/chromedp v0.15.1
 	github.com/getsentry/sentry-go v0.47.0
-	github.com/go-chi/chi/v5 v5.2.5
+	github.com/go-chi/chi/v5 v5.3.0
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/marcboeker/go-duckdb/v2 v2.4.3
 	github.com/microcosm-cc/bluemonday v1.0.27

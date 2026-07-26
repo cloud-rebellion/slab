@@ -25,5 +25,9 @@
   "dependencies": {
     "bits-ui": "^2.18.1",
     "qrcode": "^1.5.4"
+  },
+  "overrides": {
+    "postcss": "^8.5.18",
+    "picomatch": "^2.3.2"
   }
 }
