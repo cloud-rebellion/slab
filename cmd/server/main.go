@@ -21,8 +21,8 @@ import (
 	"syscall"
 	"time"
 
-	_ "modernc.org/sqlite"
 	"golang.org/x/crypto/bcrypt"
+	_ "modernc.org/sqlite"
 
 	"github.com/bright-interaction/slab/internal/analytics"
 	"github.com/bright-interaction/slab/internal/analyticsdb"
@@ -732,8 +732,8 @@ func seedAdminUser(cfg *config.Config, queries *store.Queries, sqlDB *sql.DB) {
 //     and plan "oss". The workspace id flows into the sites backfill
 //     in step 3 so every existing site lands inside it.
 //  3. Backfill: every user with role='admin' becomes a workspace owner;
-//     every site with workspace_id='' is moved into the new workspace.
-//     Both queries are idempotent (NOT EXISTS / WHERE = '').
+//     every site with workspace_id=” is moved into the new workspace.
+//     Both queries are idempotent (NOT EXISTS / WHERE = ”).
 //
 // Phase 30, Cloud Tier MVP, 2026-05-05.
 func ensureDefaultWorkspace(queries *store.Queries) {
@@ -917,10 +917,11 @@ func parseZoneMap(s string) map[string]string {
 // SQLite docs: https://sqlite.org/lang_vacuum.html#vacuuminto
 //
 // Usage:
-//   atomicsite backup-db                        # /data/backups/atomicsite-{ts}.db
-//   atomicsite backup-db --output=/path/file.db
-//   atomicsite backup-db --gzip                 # appends .gz, gzip stream
-//   atomicsite backup-db --output=/dev/stdout   # pipe to S3, B2, age, gpg
+//
+//	atomicsite backup-db                        # /data/backups/atomicsite-{ts}.db
+//	atomicsite backup-db --output=/path/file.db
+//	atomicsite backup-db --gzip                 # appends .gz, gzip stream
+//	atomicsite backup-db --output=/dev/stdout   # pipe to S3, B2, age, gpg
 func backupDBCLI(args []string) {
 	cfg := config.Load()
 
