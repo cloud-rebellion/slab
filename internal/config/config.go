@@ -243,9 +243,8 @@ type Config struct {
 
 	// OIDC SSO (#5, 2026-05-10). Optional: when OIDCEnabled is false,
 	// /auth/oidc/login + callback return 404 and the existing password
-	// flow is the only path. Production stack uses Zitadel at
-	// auth.example.com per [[zitadel]] in Hive; the same code
-	// works against any OIDC-compliant issuer (Authentik, Auth0, Keycloak)
+	// flow is the only path. It works against any OIDC-compliant issuer
+	// (Zitadel, Authentik, Auth0, Keycloak); the same code
 	// because we go through /.well-known/openid-configuration.
 	//
 	// OIDCAllowDomains is a comma-separated list of email domains that

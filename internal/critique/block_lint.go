@@ -299,7 +299,7 @@ func lintCustomDuplicateEyebrow(data map[string]any) []LintFinding {
 		Severity: "warning",
 		Field:    "eyebrow",
 		Message:  "data.eyebrow is set AND the markup already contains its own eyebrow markup; the renderer will emit both, producing a duplicate eyebrow line.",
-		Fix:      "Drop data.eyebrow from the create_block / update_block call when the markup ships its own eyebrow. Documented in Hive concept atomicsite-mcp-mistakes item 1.",
+		Fix:      "Drop data.eyebrow from the create_block / update_block call when the markup ships its own eyebrow.",
 	}}
 }
 

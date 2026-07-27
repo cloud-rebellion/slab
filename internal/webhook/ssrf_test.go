@@ -21,7 +21,7 @@ func TestIsPrivateIP(t *testing.T) {
 		"0.0.0.0":         true,  // unspecified
 		"fd00::1":         true,  // IPv6 ULA
 		"8.8.8.8":         false, // public
-		"203.0.113.10": false, // public (prod host)
+		"203.0.113.10":    false, // public (RFC5737 documentation range)
 		"1.1.1.1":         false, // public
 	}
 	for s, want := range cases {
