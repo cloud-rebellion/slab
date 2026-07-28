@@ -354,8 +354,23 @@ func buildTestableNginxConf(snippet, prefixDir string) string {
 		}
 		kept = append(kept, line)
 	}
-	return "events {}\n" +
+	// Point every runtime path nginx wants to open at the test's own temp dir.
+	// `nginx -t` validates the config AND opens the pid file, so as an
+	// unprivileged user it reports "syntax is ok" and then fails anyway with
+	// open() "/run/nginx.pid" failed (13: Permission denied). That is the test
+	// tripping over a path it does not care about, not a bad config: it failed
+	// the slab CI run on 2026-07-28 with the syntax line reading ok directly
+	// above the error. GitHub's ubuntu-latest ships nginx, so this only shows up
+	// where the test actually runs rather than skipping.
+	return "pid " + filepath.Join(prefixDir, "nginx.pid") + ";\n" +
+		"error_log " + filepath.Join(prefixDir, "error.log") + ";\n" +
+		"events {}\n" +
 		"http {\n" +
+		"  client_body_temp_path " + filepath.Join(prefixDir, "client_body") + ";\n" +
+		"  proxy_temp_path " + filepath.Join(prefixDir, "proxy") + ";\n" +
+		"  fastcgi_temp_path " + filepath.Join(prefixDir, "fastcgi") + ";\n" +
+		"  uwsgi_temp_path " + filepath.Join(prefixDir, "uwsgi") + ";\n" +
+		"  scgi_temp_path " + filepath.Join(prefixDir, "scgi") + ";\n" +
 		"  server {\n" +
 		"    listen 8080;\n" +
 		"    server_name _;\n" +
