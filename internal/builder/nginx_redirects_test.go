@@ -366,6 +366,10 @@ func buildTestableNginxConf(snippet, prefixDir string) string {
 		"error_log " + filepath.Join(prefixDir, "error.log") + ";\n" +
 		"events {}\n" +
 		"http {\n" +
+		// access_log too, not just error_log. nginx's compiled-in default is
+		// /var/log/nginx/access.log, which an unprivileged runner cannot open,
+		// and `nginx -t` opens it. Fixing only the pid moved the failure here.
+		"  access_log " + filepath.Join(prefixDir, "access.log") + ";\n" +
 		"  client_body_temp_path " + filepath.Join(prefixDir, "client_body") + ";\n" +
 		"  proxy_temp_path " + filepath.Join(prefixDir, "proxy") + ";\n" +
 		"  fastcgi_temp_path " + filepath.Join(prefixDir, "fastcgi") + ";\n" +
