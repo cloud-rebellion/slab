@@ -26,7 +26,10 @@ func seedAgentKey(t *testing.T, queries *store.Queries, siteID, raw string, acti
 		t.Fatalf("create agent key: %v", err)
 	}
 	if active == 0 {
-		if err := queries.DeactivateAgentKey(t.Context(), id); err != nil {
+		if _, err := queries.DeactivateAgentKey(t.Context(), store.DeactivateAgentKeyParams{
+			ID:     id,
+			SiteID: siteID,
+		}); err != nil {
 			t.Fatalf("deactivate: %v", err)
 		}
 	}
@@ -70,7 +73,10 @@ func TestAgentAuth_Revoked(t *testing.T) {
 	}
 
 	// Revoke and replay.
-	if err := queries.DeactivateAgentKey(t.Context(), "k_"+rawKey[:8]); err != nil {
+	if _, err := queries.DeactivateAgentKey(t.Context(), store.DeactivateAgentKeyParams{
+		ID:     "k_" + rawKey[:8],
+		SiteID: siteID,
+	}); err != nil {
 		t.Fatalf("revoke: %v", err)
 	}
 	called = false

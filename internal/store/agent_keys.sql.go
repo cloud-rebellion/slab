@@ -33,13 +33,21 @@ func (q *Queries) CreateAgentKey(ctx context.Context, arg CreateAgentKeyParams) 
 	return err
 }
 
-const deactivateAgentKey = `-- name: DeactivateAgentKey :exec
-UPDATE agent_keys SET is_active = 0 WHERE id = ?
+const deactivateAgentKey = `-- name: DeactivateAgentKey :execrows
+UPDATE agent_keys SET is_active = 0 WHERE id = ? AND site_id = ?
 `
 
-func (q *Queries) DeactivateAgentKey(ctx context.Context, id string) error {
-	_, err := q.db.ExecContext(ctx, deactivateAgentKey, id)
-	return err
+type DeactivateAgentKeyParams struct {
+	ID     string `json:"id"`
+	SiteID string `json:"site_id"`
+}
+
+func (q *Queries) DeactivateAgentKey(ctx context.Context, arg DeactivateAgentKeyParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, deactivateAgentKey, arg.ID, arg.SiteID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 const deleteAgentKey = `-- name: DeleteAgentKey :exec

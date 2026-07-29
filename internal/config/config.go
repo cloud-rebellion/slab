@@ -250,12 +250,21 @@ type Config struct {
 	// OIDCAllowDomains is a comma-separated list of email domains that
 	// are allowed to log in via SSO when no matching local user exists.
 	// Empty = SSO requires a pre-existing user (shipping default).
+	//
+	// OIDCDefaultRole is the role given to an auto-provisioned SSO user.
+	// This used to be hardcoded to "admin", which is a global superuser:
+	// site_access and workspace_access both short-circuit on role ==
+	// "admin", so every auto-created SSO user got access to every site and
+	// every workspace in the deployment. Defaults to "editor" and only
+	// "admin" or "editor" are accepted, matching the roles the members API
+	// allows an operator to set by hand.
 	OIDCEnabled      bool
 	OIDCIssuerURL    string
 	OIDCClientID     string
 	OIDCClientSecret string
 	OIDCRedirectURL  string
 	OIDCAllowDomains string
+	OIDCDefaultRole  string
 }
 
 func Load() *Config {
@@ -317,6 +326,7 @@ func Load() *Config {
 		OIDCClientSecret: strings.TrimSpace(envOr("OIDC_CLIENT_SECRET", "")),
 		OIDCRedirectURL:  strings.TrimSpace(envOr("OIDC_REDIRECT_URL", "")),
 		OIDCAllowDomains: strings.TrimSpace(envOr("OIDC_ALLOW_DOMAINS", "")),
+		OIDCDefaultRole:  oidcDefaultRole(envOr("OIDC_DEFAULT_ROLE", "")),
 	}
 }
 
@@ -438,6 +448,20 @@ func (c *Config) IsLocalDev() bool {
 	return strings.HasPrefix(c.BaseURL, "http://localhost") ||
 		strings.HasPrefix(c.BaseURL, "http://127.0.0.1") ||
 		strings.HasPrefix(c.BaseURL, "http://0.0.0.0")
+}
+
+// oidcDefaultRole resolves OIDC_DEFAULT_ROLE, failing closed to the
+// least-privileged role. Anything unrecognised (including a typo like
+// "Admin " or "owner", which is a workspace role and not a user role)
+// becomes "editor" rather than silently granting more than the operator
+// asked for.
+func oidcDefaultRole(raw string) string {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "admin":
+		return "admin"
+	default:
+		return "editor"
+	}
 }
 
 func envOr(key, fallback string) string {

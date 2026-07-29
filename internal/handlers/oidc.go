@@ -62,9 +62,16 @@ type oidcTokenResponse struct {
 }
 
 type oidcUserInfo struct {
-	Sub           string `json:"sub"`
+	Sub string `json:"sub"`
+	// Email is the identity we key the whole session on, so whether the
+	// issuer actually verified it matters. A pointer, not a bool: absent
+	// and false are different answers. Plenty of issuers omit the claim
+	// entirely, and treating that omission as "unverified" would lock out
+	// working deployments, but an issuer that explicitly says false is
+	// telling us the address is attacker-choosable. Same tri-state the
+	// mesh hub uses.
+	EmailVerified *bool  `json:"email_verified"`
 	Email         string `json:"email"`
-	EmailVerified bool   `json:"email_verified"`
 	Name          string `json:"name"`
 	GivenName     string `json:"given_name"`
 	FamilyName    string `json:"family_name"`
@@ -178,6 +185,18 @@ func (h *OIDCHandler) Callback(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/login?error=sso_no_email", http.StatusFound)
 		return
 	}
+	// An issuer that explicitly reports email_verified=false is telling us
+	// the address is attacker-choosable at that IdP. Since email is the
+	// only thing we match a local account on, honouring it would let anyone
+	// who can set an unverified address to a real user's email take over
+	// that account, or auto-provision one on an allowlisted domain they do
+	// not control. Refuse before resolveUser, so this covers both the
+	// existing-user and the auto-create path.
+	if info.EmailVerified != nil && !*info.EmailVerified {
+		slog.Warn("oidc: issuer reports email not verified, refusing login", "email", strings.ToLower(info.Email), "sub", info.Sub)
+		http.Redirect(w, r, "/login?error=sso_email_unverified", http.StatusFound)
+		return
+	}
 
 	email := strings.ToLower(info.Email)
 	user, err := h.resolveUser(r.Context(), email, info.Name)
@@ -213,6 +232,14 @@ func (h *OIDCHandler) Callback(w http.ResponseWriter, r *http.Request) {
 // them; only the OIDC path can issue a session). This matches the
 // "SSO-only user" pattern used by Zitadel-fronted deployments where
 // user provisioning is delegated to the IdP.
+//
+// The role comes from OIDCDefaultRole and defaults to "editor". It was
+// hardcoded to "admin", which is a global superuser here: both
+// site_access and workspace_access short-circuit on role == "admin", so
+// every auto-provisioned SSO user silently held access to every site and
+// workspace in the deployment. Auto-provisioning is a convenience, so it
+// gets the least privilege that still makes the account usable, and an
+// operator promotes deliberately through the members API.
 func (h *OIDCHandler) resolveUser(ctx context.Context, email, name string) (store.User, error) {
 	user, err := h.queries.GetUserByEmail(ctx, email)
 	if err == nil {
@@ -225,12 +252,16 @@ func (h *OIDCHandler) resolveUser(ctx context.Context, email, name string) (stor
 	if name == "" {
 		name = email
 	}
+	role := h.cfg.OIDCDefaultRole
+	if role == "" {
+		role = "editor"
+	}
 	if err := h.queries.CreateUser(ctx, store.CreateUserParams{
 		ID:           id,
 		Email:        email,
 		PasswordHash: "",
 		Name:         name,
-		Role:         "admin",
+		Role:         role,
 	}); err != nil {
 		return store.User{}, fmt.Errorf("create sso user: %w", err)
 	}

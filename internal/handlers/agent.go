@@ -1174,11 +1174,27 @@ func (h *AgentHandler) ListAgentKeys(w http.ResponseWriter, r *http.Request) {
 }
 
 // RevokeAgentKey deactivates an agent key (admin endpoint).
+//
+// The site predicate is load-bearing, not decorative. The route is
+// site-scoped by RequireSiteAccess, but the query used to match on keyID
+// alone, so a caller authorised for their own site could revoke any other
+// tenant's agent key just by putting its id in the path: a cross-tenant
+// denial of service against someone else's agent integrations. Scoping the
+// UPDATE means a foreign keyID matches zero rows, and zero rows is a 404 so
+// the response does not reveal whether the key exists elsewhere.
 func (h *AgentHandler) RevokeAgentKey(w http.ResponseWriter, r *http.Request) {
 	siteID := urlParam(r, "siteID")
 	keyID := urlParam(r, "keyID")
-	if err := h.queries.DeactivateAgentKey(r.Context(), keyID); err != nil {
+	n, err := h.queries.DeactivateAgentKey(r.Context(), store.DeactivateAgentKeyParams{
+		ID:     keyID,
+		SiteID: siteID,
+	})
+	if err != nil {
 		writeError(w, http.StatusInternalServerError, "Failed to revoke key")
+		return
+	}
+	if n == 0 {
+		writeError(w, http.StatusNotFound, "Key not found")
 		return
 	}
 	AuditLog(r.Context(), h.queries, r, siteID, AuditActionRevoke, "agent_key", keyID, nil)

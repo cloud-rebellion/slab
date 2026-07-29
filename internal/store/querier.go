@@ -137,7 +137,7 @@ type Querier interface {
 	CreateWebhookSubscription(ctx context.Context, arg CreateWebhookSubscriptionParams) error
 	CreateWorkspace(ctx context.Context, arg CreateWorkspaceParams) error
 	CreateWorkspaceInvite(ctx context.Context, arg CreateWorkspaceInviteParams) error
-	DeactivateAgentKey(ctx context.Context, id string) error
+	DeactivateAgentKey(ctx context.Context, arg DeactivateAgentKeyParams) (int64, error)
 	DeactivateApp(ctx context.Context, id string) error
 	DeleteAgentKey(ctx context.Context, id string) error
 	DeleteAllowedScript(ctx context.Context, id string) error

@@ -20,8 +20,8 @@ VALUES (?, ?, ?, ?, ?, 1, datetime('now'));
 -- name: UpdateAgentKeyLastUsed :exec
 UPDATE agent_keys SET last_used_at = datetime('now') WHERE id = ?;
 
--- name: DeactivateAgentKey :exec
-UPDATE agent_keys SET is_active = 0 WHERE id = ?;
+-- name: DeactivateAgentKey :execrows
+UPDATE agent_keys SET is_active = 0 WHERE id = ? AND site_id = ?;
 
 -- name: DeleteAgentKey :exec
 DELETE FROM agent_keys WHERE id = ?;

@@ -206,3 +206,26 @@ func goodConfig() *Config {
 		DeploymentMode: DeploymentModeSingle,
 	}
 }
+
+// OIDC_DEFAULT_ROLE decides what an auto-provisioned SSO user gets. "admin"
+// here is a global superuser: site_access and workspace_access both
+// short-circuit on it. So anything the operator did not clearly ask for must
+// resolve to the least-privileged role rather than the most privileged one.
+func TestOIDCDefaultRoleFailsClosed(t *testing.T) {
+	tests := []struct{ raw, want string }{
+		{"", "editor"},
+		{"editor", "editor"},
+		{"admin", "admin"},
+		{"ADMIN", "admin"},
+		{"  admin  ", "admin"},
+		{"superuser", "editor"},
+		{"owner", "editor"},
+		{"root", "editor"},
+		{"admin,editor", "editor"},
+	}
+	for _, tt := range tests {
+		if got := oidcDefaultRole(tt.raw); got != tt.want {
+			t.Errorf("oidcDefaultRole(%q) = %q, want %q", tt.raw, got, tt.want)
+		}
+	}
+}
