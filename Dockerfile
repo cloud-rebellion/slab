@@ -11,7 +11,12 @@
 #   cd atomicsite && docker build -f Dockerfile -t atomicsite .
 
 # Stage 1: SvelteKit admin SPA.
-FROM oven/bun:1-alpine AS frontend
+# Pinned by digest, not by the floating `1-alpine` tag, so a rebuild cannot
+# silently pick up a different bun. This must be the multi-arch INDEX digest
+# from `docker buildx imagetools inspect oven/bun:1-alpine`, not a per-platform
+# manifest digest: pinning a platform manifest forces every build to that one
+# architecture. Pinned 2026-07-29 = bun 1.3.14.
+FROM oven/bun:1-alpine@sha256:5acc90a93e91ff07bf72aa90a7c9f0fa189765aec90b47bdbf2152d2196383c0 AS frontend
 WORKDIR /app/frontend
 COPY frontend/package.json frontend/bun.lock ./
 RUN --mount=type=cache,target=/root/.bun/install/cache \
@@ -73,13 +78,35 @@ RUN apt-get update -qq \
 # canonical path (no Debian package). v0.3.13 is the last stable as
 # of 2026-05-06; bump when upstream cuts a new release. The binary
 # is statically linked, ~25MB, no runtime deps.
-RUN ARCH=$(dpkg --print-architecture) \
-    && wget -q -O /tmp/litestream.deb "https://github.com/benbjohnson/litestream/releases/download/v0.3.13/litestream-v0.3.13-linux-${ARCH}.deb" \
-    && dpkg -i /tmp/litestream.deb \
-    && rm /tmp/litestream.deb
+#
+# The download is checksum-gated. Upstream publishes no checksums file and
+# the GitHub release predates the API's asset digest field, so these hashes
+# were computed from the artifacts on 2026-07-29 and pinned. That is
+# trust-on-first-use: it does not prove the artifact was authentic that day,
+# but it does mean any later substitution, re-upload or MITM fails the build
+# instead of silently installing a different binary as root. To bump the
+# version, download the new .deb, verify it by hand, then update both hashes.
+ARG LITESTREAM_VERSION=0.3.13
+ARG LITESTREAM_SHA256_AMD64=9b05043523c1fb1c4f9800623adf0015683da7fdd55e19b9fe5d28f63fae96b4
+ARG LITESTREAM_SHA256_ARM64=073aceebd2bbd58213aad2e05fdf4667ff4ca1140d0be6df308859798c74e8e8
+RUN set -eu; \
+    ARCH=$(dpkg --print-architecture); \
+    case "$ARCH" in \
+      amd64) EXPECTED="$LITESTREAM_SHA256_AMD64" ;; \
+      arm64) EXPECTED="$LITESTREAM_SHA256_ARM64" ;; \
+      *) echo "no pinned litestream checksum for arch $ARCH" >&2; exit 1 ;; \
+    esac; \
+    wget -q -O /tmp/litestream.deb "https://github.com/benbjohnson/litestream/releases/download/v${LITESTREAM_VERSION}/litestream-v${LITESTREAM_VERSION}-linux-${ARCH}.deb"; \
+    echo "${EXPECTED}  /tmp/litestream.deb" | sha256sum -c -; \
+    dpkg -i /tmp/litestream.deb; \
+    rm /tmp/litestream.deb
 ENV CHROMEDP_HEADLESS_FLAGS="" \
     CHROMEDP_NO_SANDBOX=1
-COPY --from=oven/bun:1 /usr/local/bin/bun /usr/local/bin/bun
+# Digest-pinned for the same reason as the frontend stage, and it matters more
+# here: this is the bun that executes tenant-influenced build scripts
+# (bun install + astro build) in production. Index digest, not a platform
+# manifest. Pinned 2026-07-29 = bun 1.3.14.
+COPY --from=oven/bun:1@sha256:e10577f0db68676a7024391c6e5cb4b879ebd17188ab750cf10024a6d700e5c4 /usr/local/bin/bun /usr/local/bin/bun
 # Run as a stable non-root UID:GID 1000:1000. The existing
 # atomicsite_atomicsite-data named volume was originally written by an
 # alpine system user (100:101); operators upgrading from the alpine
