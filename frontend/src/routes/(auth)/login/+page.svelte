@@ -15,17 +15,25 @@
 	let error = $state('');
 	let loading = $state(false);
 	let oidcEnabled = $state(false);
+	// SSO sign-in that still owes a second factor. The OIDC callback sends
+	// TOTP-enrolled users here instead of issuing a session, holding a
+	// short-lived pending cookie. In this mode email and password are
+	// irrelevant (the issuer already authenticated them) so we ask for the
+	// code and nothing else.
+	let ssoMfaPending = $state(false);
 
 	const ssoErrorMessages: Record<string, string> = {
 		sso_denied: 'SSO sign-in was cancelled.',
 		sso_invalid: 'SSO session expired. Please try again.',
 		sso_no_email: 'SSO provider did not return an email address.',
 		sso_no_account: 'No matching account for this SSO email.',
+		sso_email_unverified: 'Your SSO provider reports this email address as unverified.',
 		sso_inactive: 'Account is inactive.',
 		sso_error: 'SSO sign-in failed. Please try again.'
 	};
 
 	onMount(async () => {
+		ssoMfaPending = page.url.searchParams.get('mfa') === 'oidc';
 		const ssoError = page.url.searchParams.get('error');
 		if (ssoError && ssoErrorMessages[ssoError]) {
 			error = ssoErrorMessages[ssoError];
@@ -47,7 +55,9 @@
 		error = '';
 		loading = true;
 		try {
-			const res = await authApi.login(email, password, totpRequired ? totpCode : undefined);
+			const res = ssoMfaPending
+				? await authApi.completeOidcMfa(totpCode)
+				: await authApi.login(email, password, totpRequired ? totpCode : undefined);
 			setUser(res.user);
 			await goto('/');
 		} catch (err) {
@@ -67,30 +77,38 @@
 
 <div class="rounded-2xl border border-border-light bg-bg-surface p-8">
 	<div class="mb-6 space-y-1">
-		<h1 class="font-display text-2xl font-extralight tracking-tight text-text-primary">Admin sign in</h1>
-		<p class="text-[13px] text-text-secondary">Atomicsite is invite-only. Ask your workspace admin for an invite link.</p>
+		<h1 class="font-display text-2xl font-extralight tracking-tight text-text-primary">
+			{ssoMfaPending ? 'Two-factor authentication' : 'Admin sign in'}
+		</h1>
+		<p class="text-[13px] text-text-secondary">
+			{ssoMfaPending
+				? 'Your SSO provider signed you in. Enter your authentication code to finish.'
+				: 'Atomicsite is invite-only. Ask your workspace admin for an invite link.'}
+		</p>
 	</div>
 
 	<form class="space-y-4" onsubmit={handleSubmit}>
-		<Input
-			label="Email"
-			type="email"
-			autocomplete="email"
-			required
-			bind:value={email}
-			disabled={loading}
-			placeholder="you@company.com"
-		/>
-		<Input
-			label="Password"
-			type="password"
-			autocomplete="current-password"
-			required
-			bind:value={password}
-			disabled={loading || totpRequired}
-		/>
+		{#if !ssoMfaPending}
+			<Input
+				label="Email"
+				type="email"
+				autocomplete="email"
+				required
+				bind:value={email}
+				disabled={loading}
+				placeholder="you@company.com"
+			/>
+			<Input
+				label="Password"
+				type="password"
+				autocomplete="current-password"
+				required
+				bind:value={password}
+				disabled={loading || totpRequired}
+			/>
+		{/if}
 
-		{#if totpRequired}
+		{#if totpRequired || ssoMfaPending}
 			<Input
 				label="Authentication code"
 				type="text"
@@ -112,17 +130,23 @@
 		{/if}
 
 		<Button type="submit" variant="primary" {loading} disabled={loading} class="w-full">
-			{loading ? 'Signing in.' : totpRequired ? 'Verify' : 'Sign in'}
+			{loading ? 'Signing in.' : totpRequired || ssoMfaPending ? 'Verify' : 'Sign in'}
 		</Button>
 
 		<p class="text-center text-[12px] text-text-muted">
-			<a href="/forgot-password" class="text-accent underline-offset-2 hover:underline">
-				Forgot password?
-			</a>
+			{#if ssoMfaPending}
+				<a href="/login" class="text-accent underline-offset-2 hover:underline">
+					Start over
+				</a>
+			{:else}
+				<a href="/forgot-password" class="text-accent underline-offset-2 hover:underline">
+					Forgot password?
+				</a>
+			{/if}
 		</p>
 	</form>
 
-	{#if oidcEnabled}
+	{#if oidcEnabled && !ssoMfaPending}
 		<div class="mt-6 flex items-center gap-3">
 			<div class="h-px flex-1 bg-border-light"></div>
 			<span class="text-[11px] uppercase tracking-wider text-text-muted">or</span>

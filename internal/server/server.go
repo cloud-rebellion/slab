@@ -310,6 +310,12 @@ func (s *Server) Router() http.Handler {
 	r.Get("/api/auth/oidc/config", oidcH.Config)
 	r.Get("/auth/oidc/login", oidcH.Login)
 	r.Get("/auth/oidc/callback", oidcH.Callback)
+	// SSO second factor. Public like the rest of the login surface: the
+	// credential is the short-lived HMAC-signed MFA-pending cookie the
+	// callback set, plus a valid TOTP code. Handled by AuthHandler so it
+	// reuses the password path's replay-guarded TOTP validation and rate
+	// limiter rather than a second copy of either.
+	r.Post("/api/auth/oidc/mfa", ah.CompleteOIDCMFA)
 
 	// Sprint 3 (2026-05-04): public form-submission endpoint.
 	// Cross-origin from `*.<BuiltSiteSuffix>` inherits the existing

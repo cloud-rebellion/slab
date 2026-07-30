@@ -206,6 +206,29 @@ func (h *OIDCHandler) Callback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// MFA gate, mirroring the password path in auth.go. A user who enrolled
+	// TOTP had it enforced there and skipped entirely here, so SSO was a way
+	// around the second factor they deliberately turned on. We cannot lean on
+	// the issuer to have enforced its own MFA: Slab is self-hosted, and the
+	// issuer is whatever the operator pointed it at.
+	//
+	// This is a redirect flow, so instead of the password path's JSON
+	// totp_required we park the user in a short-lived pending state and let
+	// the login screen collect the code (see CompleteOIDCMFA). No session
+	// cookie is issued on this branch.
+	if user.TotpEnrolledAt != "" {
+		if err := setOIDCMFACookie(w, h.cfg, user.ID); err != nil {
+			slog.Error("oidc: set mfa cookie", "error", err)
+			http.Redirect(w, r, "/login?error=sso_error", http.StatusFound)
+			return
+		}
+		AuditLog(r.Context(), h.queries, r, "", AuditActionCreate, "auth_oidc_mfa_required", user.ID, map[string]any{
+			"email": email, "sub": info.Sub,
+		})
+		http.Redirect(w, r, "/login?mfa=oidc", http.StatusFound)
+		return
+	}
+
 	authUser := &authmw.AuthUser{
 		ID:           user.ID,
 		Email:        user.Email,

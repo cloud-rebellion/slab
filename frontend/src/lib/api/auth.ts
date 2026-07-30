@@ -25,6 +25,17 @@ export function login(email: string, password: string, totpCode?: string): Promi
 	return apiPost<AuthResponse>('/auth/login', body);
 }
 
+/**
+ * Completes an SSO sign-in for a user who has TOTP enrolled. The OIDC
+ * callback stops short of issuing a session for those users and redirects to
+ * /login?mfa=oidc holding a short-lived MFA-pending cookie; this trades a
+ * valid code for the real session. The pending cookie is the credential, so
+ * there is nothing else to send.
+ */
+export function completeOidcMfa(totpCode: string): Promise<AuthResponse> {
+	return apiPost<AuthResponse>('/auth/oidc/mfa', { totp_code: totpCode });
+}
+
 export function logout(): Promise<StatusResponse> {
 	return apiPost<StatusResponse>('/auth/logout');
 }
