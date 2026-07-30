@@ -15,6 +15,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -110,6 +111,30 @@ func validateGeneral(key, value string) error {
 				return fmt.Errorf("general.%s contains an empty entry; check the comma list", key)
 			}
 		}
+
+	// Everything below declares a constraint in the agent settings catalog
+	// (MinInt/MaxInt/EnumValues) that nothing enforced, so the constraint was
+	// decorative. Seven of the ten constrained agent-writable settings were in
+	// that state. The breakpoints are the sharp ones: css.go interpolates them
+	// into `--bp-mobile: <value>px;` inside the :root block, so a value like
+	// `0px } html{display:none!important} :root{--x: 0` closes the rule and
+	// blanks the site with its own stylesheet, which no CSP can stop.
+	// TestCatalogConstraintsAreEnforced in internal/agent fails if a future
+	// catalog entry declares a constraint and this switch does not honour it.
+	case "mobile_breakpoint":
+		return intInRange("general.mobile_breakpoint", value, 320, 960)
+	case "tablet_breakpoint":
+		return intInRange("general.tablet_breakpoint", value, 640, 1280)
+	case "analytics_retention_days":
+		return intInRange("general.analytics_retention_days", value, 7, 3650)
+	case "consent_retention_days":
+		return intInRange("general.consent_retention_days", value, 7, 3650)
+	case "engagement_retention_days":
+		return intInRange("general.engagement_retention_days", value, 7, 3650)
+	case "container_width":
+		return enumIn("general.container_width", value, "narrow", "default", "wide", "fluid")
+	case "hero_layout":
+		return enumIn("general.hero_layout", value, "centered", "split")
 	}
 	return nil
 }
@@ -143,6 +168,12 @@ func validateAnalytics(key, value string) error {
 		}
 	case "umami_url", "crm_webhook_url":
 		return mustBeAbsoluteURL("analytics."+key, value)
+	case "umami_site_id":
+		// Had NO validator at all, and it is interpolated into a
+		// data-website-id attribute in <head> on every published page. Umami
+		// ids are uuids, so this is generous already.
+		return matchesPattern("analytics.umami_site_id", value, umamiSiteIDPattern,
+			"must be letters, digits or hyphens (max 64)")
 	case "identity_max_age_days":
 		return intInRange("analytics.identity_max_age_days", value, 1, 3650)
 	case "cookie_banner_position":
@@ -289,6 +320,21 @@ func intInRange(field, value string, min, max int64) error {
 	return nil
 }
 
+// umamiSiteIDPattern is the shape of an Umami website id.
+var umamiSiteIDPattern = regexp.MustCompile(`^[A-Za-z0-9-]{1,64}$`)
+
+// attrBreakingChars are characters that can terminate an HTML attribute or a
+// tag. url.Parse accepts all of them inside a path, so an "absolute URL" check
+// alone is not enough for a value that gets interpolated into markup.
+const attrBreakingChars = "\"'<>`\n\r\t"
+
+func matchesPattern(field, value string, re *regexp.Regexp, want string) error {
+	if !re.MatchString(value) {
+		return fmt.Errorf("%s %s", field, want)
+	}
+	return nil
+}
+
 func mustBeAbsoluteURL(field, value string) error {
 	u, err := url.Parse(value)
 	if err != nil || u.Scheme == "" || u.Host == "" {
@@ -296,6 +342,14 @@ func mustBeAbsoluteURL(field, value string) error {
 	}
 	if u.Scheme != "http" && u.Scheme != "https" {
 		return fmt.Errorf("%s must use http or https", field)
+	}
+	// Reject attribute-breaking characters. These settings are interpolated
+	// into <head> markup, and url.Parse is happy with
+	// https://x/a"></script><script>alert(1)</script> as a "valid" URL. The
+	// sink escapes as well; this is the other half, so a future sink that
+	// forgets does not become an injection on every published page.
+	if strings.ContainsAny(value, attrBreakingChars) {
+		return fmt.Errorf("%s contains characters that are not allowed in a URL setting", field)
 	}
 	return nil
 }

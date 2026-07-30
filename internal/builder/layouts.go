@@ -202,7 +202,13 @@ func RenderLayouts(ctx context.Context, queries *store.Queries, siteID string, w
 	if analytics.UmamiEnabled && analytics.UmamiURL != "" && analytics.UmamiSiteID != "" {
 		// is:inline keeps Astro from rewriting the tag into a module
 		// (which would defer it past CookieProof's expectations).
-		b.WriteString(fmt.Sprintf("  <script is:inline defer src=\"%s/script.js\" data-website-id=\"%s\"></script>\n", analytics.UmamiURL, analytics.UmamiSiteID))
+		// escapeAttr on BOTH, like the GA4 sink twelve lines down. These two
+		// were the only unescaped values in the head, and `analytics` is an
+		// agent-writable settings category, so an agent could store
+		// `https://x/a"></script><script>...` as umami_url and land a real
+		// inline script in the <head> of every published page.
+		b.WriteString(fmt.Sprintf("  <script is:inline defer src=\"%s/script.js\" data-website-id=\"%s\"></script>\n",
+			escapeAttr(analytics.UmamiURL), escapeAttr(analytics.UmamiSiteID)))
 	}
 	if analytics.GA4Enabled && analytics.GA4ID != "" {
 		// gtag.js + GA4 config. Emitted as an honest static snippet (no consent
