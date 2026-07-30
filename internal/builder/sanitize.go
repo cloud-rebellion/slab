@@ -63,3 +63,19 @@ var rawHTMLPolicy = func() *bluemonday.Policy {
 func sanitizeRawHTML(s string) string {
 	return rawHTMLPolicy.Sanitize(s)
 }
+
+// astroExpressionReplacer neutralises Astro's build-time expression syntax.
+//
+// The raw_astro block's output is written into a generated .astro file, so
+// `{...}` there is a JavaScript expression Astro evaluates in Node during the
+// build, with access to the build process environment. That makes it a code
+// sink, not a markup sink, and sanitizing HTML alone does not close it:
+// bluemonday has no reason to strip braces from text.
+//
+// Entities render as literal braces in the finished page and mean nothing to
+// the Astro compiler, so tenant text still displays as written.
+var astroExpressionReplacer = strings.NewReplacer("{", "&#123;", "}", "&#125;")
+
+func neutraliseAstroExpressions(s string) string {
+	return astroExpressionReplacer.Replace(s)
+}

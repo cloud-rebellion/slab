@@ -1120,7 +1120,14 @@ func (s *Server) Router() http.Handler {
 			// per box without distributed coordination.
 			shieldStore, storeKind, err := buildShieldStore(s.cfg, s.db)
 			if err != nil {
-				slog.Error("atomicsite: shield store init failed; shield disabled", "err", err)
+				// Reachable in local dev only. In production a malformed
+				// ATOMICSITE_SHIELD_REDIS_URL is refused by config.Validate at
+				// boot, because degrading to shield-disabled here would forward
+				// real buyer names and emails to the model for the life of the
+				// container with one log line as the only signal, and that
+				// contradicts the "a missing crypto key must refuse to start,
+				// not fail open" rule the key guard already states.
+				slog.Error("atomicsite: shield store init failed; shield disabled (local dev only)", "err", err)
 			} else {
 				mcpServer.WithShield(shieldStore, []byte(s.cfg.ShieldKey), 24*time.Hour, level)
 				slog.Info("atomicsite: shield enabled on MCP boundary",

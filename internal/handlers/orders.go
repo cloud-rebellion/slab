@@ -181,7 +181,28 @@ func (h *OrderHandler) UpdateStatus(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, fmt.Sprintf("cannot transition from %q to %q", o.Status, next))
 		return
 	}
-	if err := h.queries.UpdateOrderStatus(r.Context(), store.UpdateOrderStatusParams{
+	// Releasing the reservation is part of leaving `pending`, not something
+	// only the Mollie `failed` webhook does. pending -> cancelled is a legal
+	// transition here and used to write the status and nothing else, so an
+	// operator cancelling an unpaid order left the stock decremented and the
+	// discount use burned, with no inventory_adjustments row to explain it.
+	// The last unit of a variant became permanently unsellable and the
+	// discrepancy was invisible in the audit view.
+	//
+	// Gated on the FROM state, so this cannot double-release: once the row is
+	// not `pending` the branch cannot be taken again, and `paid -> failed` is
+	// not an edge in orderTransitions.
+	releasing := o.Status == "pending" && (next == "cancelled" || next == "failed")
+
+	tx, err := h.db.BeginTx(r.Context(), nil)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "update status failed")
+		return
+	}
+	defer tx.Rollback()
+	qtx := h.queries.WithTx(tx)
+
+	if err := qtx.UpdateOrderStatus(r.Context(), store.UpdateOrderStatusParams{
 		Status:        next,
 		PaymentStatus: o.PaymentStatus,
 		Column3:       next,
@@ -192,6 +213,18 @@ func (h *OrderHandler) UpdateStatus(w http.ResponseWriter, r *http.Request) {
 		SiteID:        siteID,
 	}); err != nil {
 		writeError(w, http.StatusInternalServerError, "update status failed")
+		return
+	}
+	if releasing {
+		if err := h.releaseReservations(r.Context(), qtx, o); err != nil {
+			// Same tx, so the status write rolls back with it. Better to fail
+			// the cancel than to record a cancel that silently ate the stock.
+			writeError(w, http.StatusInternalServerError, "update status failed: could not release reservations")
+			return
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		writeError(w, http.StatusInternalServerError, "update status failed: could not commit")
 		return
 	}
 	if req.Notes != "" {

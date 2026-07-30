@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/bright-interaction/slab/ee"
+	"net/url"
 )
 
 // Default sentinel values. The Validate() guard refuses to start in
@@ -394,6 +395,21 @@ func (c *Config) Validate() error {
 	// refuse to start, not fail open.
 	if len(c.ShieldKey) != 32 {
 		problems = append(problems, "ATOMICSITE_SHIELD_KEY is unset or not 32 bytes; production must set a 32-byte key or at-rest encryption (TOTP seeds, app credentials) and MCP PII redaction are silently disabled. Generate one with: head -c 24 /dev/urandom | base64")
+	}
+
+	// The key guard above is not sufficient on its own. buildShieldStore also
+	// fails when ATOMICSITE_SHIELD_REDIS_URL is set but malformed, and the
+	// server logged that and carried on with the shield DISABLED. So a typo'd
+	// Redis URL booted healthy, satisfied the key guard, and then forwarded
+	// real buyer names and emails to the model for the life of the container.
+	// Validate the URL here so the same "refuse to start" rule covers the
+	// store, not just the key.
+	if c.ShieldRedisURL != "" {
+		if _, err := url.Parse(c.ShieldRedisURL); err != nil {
+			problems = append(problems, fmt.Sprintf("ATOMICSITE_SHIELD_REDIS_URL is set but unparseable (%v); a bad value disables MCP PII redaction entirely, so production refuses to start rather than fail open", err))
+		} else if s := strings.ToLower(c.ShieldRedisURL); !strings.HasPrefix(s, "redis://") && !strings.HasPrefix(s, "rediss://") {
+			problems = append(problems, "ATOMICSITE_SHIELD_REDIS_URL must start with redis:// or rediss://; a bad value disables MCP PII redaction entirely")
+		}
 	}
 
 	// HTTPS scheme guard. The auth cookie's Secure attribute is gated on

@@ -84,6 +84,15 @@ var piiFieldKinds = map[string]Kind{
 	"billing_name":          KindName,
 	"shipping_address_json": KindFreeform,
 	"billing_address_json":  KindFreeform,
+	// Site collaborators are people too. The members resource used to emit
+	// the raw `name` column, which fell through untokenized: there is no name
+	// regex in the bank (a name is not pattern-matchable), and bare "name" is
+	// deliberately NOT a key here because it would tokenize every product,
+	// page and block name in the estate. So the reader projects to these
+	// explicit keys instead. Email survived only because the regex bank
+	// happens to catch it; do not rely on that for a new field.
+	"member_name":  KindName,
+	"member_email": KindEmail,
 }
 
 // defaultHintKeys is the ordered hint-key list used when tokenizing a

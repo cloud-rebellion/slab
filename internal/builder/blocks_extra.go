@@ -1627,8 +1627,14 @@ func renderCustomBlock(data map[string]any) string {
 	if eyebrow := dataString(data, "eyebrow"); eyebrow != "" {
 		b.WriteString(fmt.Sprintf("    <p class=\"eyebrow\">%s</p>\n", escapeHTML(eyebrow)))
 	}
+	// Sanitized, like the raw_html sink in pages.go. This used to emit the
+	// tenant string verbatim, so <script> in a custom block executed on every
+	// published page. The block-time guardrail is not a substitute: it only
+	// runs on the agent and MCP surfaces, never on the REST block API, and
+	// guardrails.go itself names this render pass as the authoritative
+	// defense. The two comments pointed at each other and neither ran here.
 	if markup := dataString(data, "markup"); markup != "" {
-		b.WriteString("    " + markup + "\n")
+		b.WriteString("    " + sanitizeRawHTML(markup) + "\n")
 	}
 	b.WriteString("  </section>\n")
 	return b.String()
@@ -1657,6 +1663,19 @@ func renderRawAstroBlock(data map[string]any) string {
 	code := dataString(data, "code")
 	if code == "" {
 		return "  <!-- raw_astro block: empty code -->\n"
+	}
+	// This output lands in the page's .astro SOURCE, where `{expr}` is a
+	// build-time JavaScript expression evaluated by Astro in Node, not inert
+	// markup. So an unsanitized value here was strictly worse than stored
+	// XSS: `{process.env.SOMETHING}` printed a server secret onto the public
+	// page, and CSP does not apply to build-time evaluation.
+	//
+	// Sanitize first, then neutralise the brace syntax so nothing surviving
+	// sanitization can still be evaluated. Braces are replaced with their
+	// HTML entities, which render as literal braces and are inert to Astro.
+	code = neutraliseAstroExpressions(sanitizeRawHTML(code))
+	if code == "" {
+		return "  <!-- raw_astro block: content removed by sanitizer -->\n"
 	}
 	trimmed := strings.TrimLeft(code, " \t\n")
 	// If author already opens with a section/div/header/footer, emit

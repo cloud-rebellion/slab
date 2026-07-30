@@ -117,7 +117,25 @@ func (s *Server) registerServiceContextResources() {
 			if err != nil {
 				return "", err
 			}
-			return mustJSON(map[string]any{"members": rows}), nil
+			// Project rather than emitting the row verbatim. The raw column is
+			// `name`, and the shield's key-aware pass keys on a fixed map that
+			// deliberately excludes bare "name" (or every product and page name
+			// in the estate would be tokenized). There is also no name regex in
+			// the bank, because a name is not pattern-matchable. So the raw row
+			// sent every collaborator's real name to the model in the clear,
+			// while the sibling order resource tokenized the same value under
+			// customer_name. member_name/member_email are in piiFieldKinds.
+			out := make([]map[string]any, 0, len(rows))
+			for _, r := range rows {
+				out = append(out, map[string]any{
+					"user_id":      r.UserID,
+					"role":         r.Role,
+					"created_at":   r.CreatedAt,
+					"member_name":  r.Name,
+					"member_email": r.Email,
+				})
+			}
+			return mustJSON(map[string]any{"members": out}), nil
 		},
 	})
 

@@ -39,25 +39,67 @@ func isSecretEnvName(name string) bool {
 	return false
 }
 
-// buildEnv returns the server environment with secrets stripped, so the build
-// (and any transitive dependency script) cannot read server secrets to
-// exfiltrate them. A denylist preserves the toolchain variables the build
-// legitimately needs (PATH/HOME/caches/locale) while removing anything
-// secret-shaped.
+// buildAllowedEnvNames is the exact set of variables a build subprocess gets.
+//
+// This used to be a denylist (a name list plus a secret-shaped suffix
+// heuristic), and it lost. LITESTREAM_SECRET_ACCESS_KEY ends in _ACCESS_KEY,
+// which is not one of the checked suffixes (_API_KEY and _APIKEY are),
+// LITESTREAM_ACCESS_KEY_ID ends in _ID, and both are set on the server process
+// by docker-compose.yml:43-44. So the credentials for the object-storage
+// replica of the entire multi-tenant SQLite database were readable by any code
+// running in a tenant's build. BRIGHTCRM_WEBHOOK_SECRET_PREVIOUS (_PREVIOUS),
+// FLARE_DSN and ATOMICSITE_SHIELD_REDIS_URL leaked the same way.
+//
+// A denylist over an environment that grows cannot be made correct: every new
+// variable is exposed until someone remembers to name it. An allowlist is
+// wrong in the safe direction, and a build that needs another variable fails
+// loudly instead of leaking silently.
+var buildAllowedEnvNames = map[string]bool{
+	"PATH": true, "HOME": true, "USER": true, "LOGNAME": true, "SHELL": true,
+	"TMPDIR": true, "TMP": true, "TEMP": true,
+	"LANG": true, "LC_ALL": true, "LC_CTYPE": true, "TZ": true,
+	"TERM": true, "CI": true,
+	"XDG_CACHE_HOME": true, "XDG_CONFIG_HOME": true, "XDG_DATA_HOME": true,
+	"BUN_INSTALL": true, "BUN_INSTALL_CACHE_DIR": true,
+	"npm_config_cache": true,
+	"ASTRO_TELEMETRY_DISABLED": true, "DO_NOT_TRACK": true,
+}
+
+// buildAllowedEnvPrefixes covers the toolchain families where the exact names
+// are not fixed. Keep these narrow: a broad prefix reopens the hole.
+var buildAllowedEnvPrefixes = []string{"NODE_", "BUN_"}
+
+// buildEnv returns the environment a build subprocess may see. `bun install`
+// and `astro build` execute tenant-influenced JavaScript (component templates,
+// dependency install scripts), so anything left in here is readable by a
+// tenant.
 func buildEnv() []string {
 	src := os.Environ()
-	env := make([]string, 0, len(src))
+	env := make([]string, 0, 16)
 	for _, kv := range src {
 		name := kv
 		if i := strings.IndexByte(kv, '='); i >= 0 {
 			name = kv[:i]
 		}
-		if isSecretEnvName(name) {
-			continue
+		if buildEnvAllowed(name) {
+			env = append(env, kv)
 		}
-		env = append(env, kv)
 	}
 	return env
+}
+
+func buildEnvAllowed(name string) bool {
+	if buildAllowedEnvNames[name] {
+		return true
+	}
+	for _, p := range buildAllowedEnvPrefixes {
+		if strings.HasPrefix(name, p) {
+			// Belt and braces: a NODE_/BUN_ variable that is itself
+			// secret-shaped (someone's NODE_AUTH_TOKEN) still gets dropped.
+			return !isSecretEnvName(name)
+		}
+	}
+	return false
 }
 
 // BuildTimeout caps a single end-to-end Compile() (bun install + bun run

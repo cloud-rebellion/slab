@@ -63,3 +63,23 @@ SET payment_id = ?,
     payment_checkout_url = ?,
     updated_at = datetime('now')
 WHERE id = ? AND site_id = ?;
+
+-- name: ListStaleUnpaidOrders :many
+-- Reaper feed: orders that committed their inventory + discount
+-- reservations and then never acquired a payment. Checkout commits the
+-- reservation tx BEFORE calling Mollie, so a Mollie outage, a missing API
+-- key or an unresolvable public URL all leave the row at 'pending' with an
+-- empty payment_id. No webhook will ever arrive for those, so the release
+-- path was unreachable and the stock stayed consumed forever.
+--
+-- payment_id = '' is the load-bearing predicate: an order that DID reach
+-- Mollie has one, and its reservation is legitimately held while the
+-- customer sits on the payment page. Only the never-got-that-far rows are
+-- safe to reap, so a slow customer is never false-reaped.
+SELECT id, site_id, status, payment_status, payment_id, discount_code_id, total_cents, currency, created_at
+FROM orders
+WHERE status = 'pending'
+  AND payment_id = ''
+  AND created_at < ?
+ORDER BY created_at
+LIMIT ?;
