@@ -450,6 +450,30 @@ func (q *Queries) ListStaleUnpaidOrders(ctx context.Context, arg ListStaleUnpaid
 	return items, nil
 }
 
+const purgePaymentEventPayloadsOlderThan = `-- name: PurgePaymentEventPayloadsOlderThan :execrows
+UPDATE payment_events
+SET raw_json = '{}'
+WHERE site_id = ? AND created_at < ? AND raw_json != '{}'
+`
+
+type PurgePaymentEventPayloadsOlderThanParams struct {
+	SiteID    string `json:"site_id"`
+	CreatedAt string `json:"created_at"`
+}
+
+// Blanks the stored provider payload past the window WITHOUT deleting the row.
+// The row is the webhook idempotency key (UNIQUE on provider,payment_id,
+// event_type), so deleting it would let a replayed Mollie delivery re-run the
+// side effects. raw_json is the whole marshalled payment object and is not the
+// accounting record, so it is the part that should not be kept forever.
+func (q *Queries) PurgePaymentEventPayloadsOlderThan(ctx context.Context, arg PurgePaymentEventPayloadsOlderThanParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, purgePaymentEventPayloadsOlderThan, arg.SiteID, arg.CreatedAt)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const updateOrderNotes = `-- name: UpdateOrderNotes :exec
 UPDATE orders
 SET notes = ?,

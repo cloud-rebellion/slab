@@ -77,6 +77,29 @@ func (q *Queries) CreateGoal(ctx context.Context, arg CreateGoalParams) error {
 	return err
 }
 
+const deleteConversionEventsBySiteOlderThan = `-- name: DeleteConversionEventsBySiteOlderThan :execrows
+DELETE FROM conversion_events
+WHERE site_id = ? AND ts < ?
+`
+
+type DeleteConversionEventsBySiteOlderThanParams struct {
+	SiteID string `json:"site_id"`
+	Ts     string `json:"ts"`
+}
+
+// Per-site retention sweep. conversion_events was created without one, so
+// every row survived the analytics window indefinitely while the sessions and
+// events it references were deleted on schedule. Each row carries the visitor
+// `fingerprint` plus `path`, so a "deleted" visitor stayed re-identifiable
+// here and a DSAR erasure could not be satisfied by any code path.
+func (q *Queries) DeleteConversionEventsBySiteOlderThan(ctx context.Context, arg DeleteConversionEventsBySiteOlderThanParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, deleteConversionEventsBySiteOlderThan, arg.SiteID, arg.Ts)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const deleteGoal = `-- name: DeleteGoal :exec
 DELETE FROM conversion_goals WHERE id = ?
 `

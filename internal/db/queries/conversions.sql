@@ -76,3 +76,12 @@ SELECT * FROM conversion_events
 WHERE site_id = ? AND fingerprint = ?
 ORDER BY ts DESC
 LIMIT ?;
+
+-- name: DeleteConversionEventsBySiteOlderThan :execrows
+-- Per-site retention sweep. conversion_events was created without one, so
+-- every row survived the analytics window indefinitely while the sessions and
+-- events it references were deleted on schedule. Each row carries the visitor
+-- `fingerprint` plus `path`, so a "deleted" visitor stayed re-identifiable
+-- here and a DSAR erasure could not be satisfied by any code path.
+DELETE FROM conversion_events
+WHERE site_id = ? AND ts < ?;

@@ -165,6 +165,14 @@ type PerSiteSweepResult struct {
 	EngagementDeleted  int64  `json:"engagement_deleted"`
 	SessionsDeleted    int64  `json:"sessions_deleted"`
 	ConsentDeleted     int64  `json:"consent_deleted"`
+	// ConversionsDeleted, FormSubmissionsDeleted and PaymentPayloadsPurged
+	// cover three tables that were created WITHOUT a retention sweep, so their
+	// rows outlived every window the tenant configured. Each was the same
+	// omission: a new table shipped and purgeSite was not updated. See the
+	// comment at the call sites.
+	ConversionsDeleted     int64 `json:"conversions_deleted"`
+	FormSubmissionsDeleted int64 `json:"form_submissions_deleted"`
+	PaymentPayloadsPurged  int64 `json:"payment_payloads_purged"`
 	// CWVDeleted is the count of cwv_events rows purged in this sweep.
 	// Shares the analytics retention window.
 	CWVDeleted int64 `json:"cwv_deleted"`
@@ -492,6 +500,47 @@ func (m *Manager) purgeSite(ctx context.Context, siteID string) PerSiteSweepResu
 		slog.Warn("retention: delete cwv events", "site_id", siteID, "err", err)
 	} else {
 		res.CWVDeleted = n
+	}
+
+	// The three below were each created without a sweep, which is the estate's
+	// incomplete-migration pattern landing on data retention three times in one
+	// package: a table ships and purgeSite is not updated, so "retention" is
+	// silently partial. TestPurgeSiteCoversEveryRetainedTable now fails if a
+	// fourth appears.
+
+	// conversion_events carries the visitor fingerprint plus path, so leaving
+	// it made a "deleted" visitor re-identifiable against any older session
+	// backup, and no code path could satisfy a DSAR erasure for it. Keyed on
+	// `ts`, not created_at, and deleted BEFORE sessions so the ordering comment
+	// at the top of this function still holds.
+	if n, err := m.queries.DeleteConversionEventsBySiteOlderThan(ctx, store.DeleteConversionEventsBySiteOlderThanParams{
+		SiteID: siteID, Ts: tsCutoff,
+	}); err != nil {
+		slog.Warn("retention: delete conversion events", "site_id", siteID, "err", err)
+	} else {
+		res.ConversionsDeleted = n
+	}
+
+	// form_submissions.data_json is the raw submitted payload (name, email,
+	// phone, free text). The only delete that existed was single-row by id.
+	if n, err := m.queries.DeleteFormSubmissionsBySiteOlderThan(ctx, store.DeleteFormSubmissionsBySiteOlderThanParams{
+		SiteID: siteID, CreatedAt: tsCutoff,
+	}); err != nil {
+		slog.Warn("retention: delete form submissions", "site_id", siteID, "err", err)
+	} else {
+		res.FormSubmissionsDeleted = n
+	}
+
+	// payment_events keeps the ROW (it is the webhook idempotency key, and
+	// dropping it would let a replayed delivery re-run the side effects) and
+	// blanks only raw_json, the full provider payload, which is not the
+	// accounting record.
+	if n, err := m.queries.PurgePaymentEventPayloadsOlderThan(ctx, store.PurgePaymentEventPayloadsOlderThanParams{
+		SiteID: siteID, CreatedAt: tsCutoff,
+	}); err != nil {
+		slog.Warn("retention: purge payment event payloads", "site_id", siteID, "err", err)
+	} else {
+		res.PaymentPayloadsPurged = n
 	}
 
 	return res

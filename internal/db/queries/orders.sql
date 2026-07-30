@@ -98,3 +98,13 @@ LIMIT ?;
 UPDATE orders
 SET status = 'refunded', updated_at = datetime('now')
 WHERE id = ? AND site_id = ? AND status IN ('paid', 'fulfilled');
+
+-- name: PurgePaymentEventPayloadsOlderThan :execrows
+-- Blanks the stored provider payload past the window WITHOUT deleting the row.
+-- The row is the webhook idempotency key (UNIQUE on provider,payment_id,
+-- event_type), so deleting it would let a replayed Mollie delivery re-run the
+-- side effects. raw_json is the whole marshalled payment object and is not the
+-- accounting record, so it is the part that should not be kept forever.
+UPDATE payment_events
+SET raw_json = '{}'
+WHERE site_id = ? AND created_at < ? AND raw_json != '{}';
