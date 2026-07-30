@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"syscall"
 	"time"
+
+	"github.com/bright-interaction/slab/internal/netguard"
 )
 
 // allowPrivateTargets disables the private-IP rejection. It is false in
@@ -17,11 +19,14 @@ var allowPrivateTargets = false
 // isPrivateIP reports whether ip is loopback, link-local, multicast,
 // unspecified, or in a private (RFC1918 / IPv6 ULA) range. Such addresses must
 // never be the target of a tenant-controlled webhook delivery.
+// isPrivateIP delegates to netguard, which is the single definition of "an
+// address a tenant-supplied URL must not reach". Four packages used to carry
+// their own copy of this predicate, and all four shared one hole: net.IP's
+// IsPrivate covers RFC1918 and fc00::/7 but NOT RFC 6598 carrier-grade NAT,
+// 100.64.0.0/10, which is the Tailscale range this estate actually runs on.
+// Keep this a thin wrapper; do not reintroduce a local range list.
 func isPrivateIP(ip net.IP) bool {
-	if ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsMulticast() || ip.IsUnspecified() {
-		return true
-	}
-	return ip.IsPrivate()
+	return netguard.IsForbidden(ip)
 }
 
 // ssrfSafeClient returns an http.Client whose dialer refuses to connect to a

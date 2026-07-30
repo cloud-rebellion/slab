@@ -48,6 +48,13 @@ type agentBootstrapResponse struct {
 // POST /api/sites/{siteID}/agent-bootstrap
 // Body: { "name": "optional-key-name" }
 func (h *AgentHandler) AgentBootstrap(w http.ResponseWriter, r *http.Request) {
+	// This mints a real agent key (read+write) and returns it in the bundle,
+	// so it carries the same trust as GenerateAgentKey and needs the same
+	// gate. The capabilities are hardcoded here, so there is nothing to
+	// validate, but handing out the credential still is not a member action.
+	if !authmw.RequireOwnerOrAdmin(w, r, h.queries) {
+		return
+	}
 	siteID := urlParam(r, "siteID")
 	if siteID == "" {
 		writeError(w, http.StatusBadRequest, "siteID is required")

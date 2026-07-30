@@ -764,7 +764,16 @@ func (s *Server) handleResourcesRead(r *http.Request, identity *authmw.AgentIden
 	}
 
 	ctx := r.Context()
-	session, _ := s.beginShieldSession(r, identity)
+	// Fail CLOSED on a session-construction error, the same way tools/call
+	// does. Discarding it left session nil, which turned the shield block
+	// below into a no-op and forwarded the body to the model unredacted. That
+	// is the worst possible failure mode: the redaction-error path a few lines
+	// down deliberately withholds content, so silently skipping redaction
+	// entirely because the session could not be built contradicts it.
+	session, sessErr := s.beginShieldSession(r, identity)
+	if sessErr != nil {
+		return nil, &ResponseError{Code: ErrInternal, Message: "shield session error; request refused"}
+	}
 	if session != nil {
 		ctx = shield.WithSession(ctx, session)
 	}
@@ -827,7 +836,16 @@ func (s *Server) handlePromptsGet(r *http.Request, identity *authmw.AgentIdentit
 	}
 
 	ctx := r.Context()
-	session, _ := s.beginShieldSession(r, identity)
+	// Fail CLOSED on a session-construction error, the same way tools/call
+	// does. Discarding it left session nil, which turned the shield block
+	// below into a no-op and forwarded the body to the model unredacted. That
+	// is the worst possible failure mode: the redaction-error path a few lines
+	// down deliberately withholds content, so silently skipping redaction
+	// entirely because the session could not be built contradicts it.
+	session, sessErr := s.beginShieldSession(r, identity)
+	if sessErr != nil {
+		return nil, &ResponseError{Code: ErrInternal, Message: "shield session error; request refused"}
+	}
 	if session != nil {
 		ctx = shield.WithSession(ctx, session)
 	}

@@ -660,6 +660,34 @@ func ValidateCapability(caps []string, required string) bool {
 	return false
 }
 
+// KnownCapabilities is the closed set a minted agent key may carry.
+//
+// This exists because the capability list is an authorization set, not a
+// label: the MCP dispatcher reads it to decide whether a call may proceed
+// (RequiresWrite, and RequiresCapability for CSP-widening tools). The mint
+// endpoint used to store whatever strings the request body contained, so a
+// caller could name a capability the UI never offers and hand it to
+// themselves. An unknown string must be refused at the door rather than
+// stored and later trusted.
+//
+// "security" gates CSP allowlist mutation. It is deliberately absent from the
+// key-mint UI, and minting is owner/admin-only, so reaching it takes a
+// deliberate act by someone already trusted with the site's CSP.
+var KnownCapabilities = []string{"read", "write", "build", "deploy", "media", "security"}
+
+// UnknownCapabilities returns the members of caps that are not in
+// KnownCapabilities, so a caller can reject the request and name what was
+// wrong instead of silently dropping the entries.
+func UnknownCapabilities(caps []string) []string {
+	var unknown []string
+	for _, c := range caps {
+		if !ValidateCapability(KnownCapabilities, c) {
+			unknown = append(unknown, c)
+		}
+	}
+	return unknown
+}
+
 // HasErrors returns true if any violation has "error" severity.
 func HasErrors(violations []Violation) bool {
 	for _, v := range violations {

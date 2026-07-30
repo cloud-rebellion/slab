@@ -22,6 +22,8 @@ import (
 	authmw "github.com/bright-interaction/slab/internal/middleware"
 	"github.com/bright-interaction/slab/internal/storage"
 	"github.com/bright-interaction/slab/internal/store"
+
+	"github.com/bright-interaction/slab/internal/netguard"
 )
 
 // MediaHandler handles media CRUD + upload + public serving.
@@ -838,15 +840,14 @@ func fetchWithSSRFGuard(ctx context.Context, rawURL string, maxSize int64) ([]by
 	return raw, filename, nil
 }
 
+// isPrivateIP delegates to netguard, which is the single definition of "an
+// address a tenant-supplied URL must not reach". Four packages used to carry
+// their own copy of this predicate, and all four shared one hole: net.IP's
+// IsPrivate covers RFC1918 and fc00::/7 but NOT RFC 6598 carrier-grade NAT,
+// 100.64.0.0/10, which is the Tailscale range this estate actually runs on.
+// Keep this a thin wrapper; do not reintroduce a local range list.
 func isPrivateIP(ip net.IP) bool {
-	if ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsMulticast() || ip.IsUnspecified() {
-		return true
-	}
-	// IsPrivate covers RFC1918 and IPv6 ULA
-	if ip.IsPrivate() {
-		return true
-	}
-	return false
+	return netguard.IsForbidden(ip)
 }
 
 func parseIntDefault(s string, def int) int {

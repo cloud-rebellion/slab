@@ -577,7 +577,13 @@ func (s *Server) registerExtraTools() {
 		Description:        "Revokes a whitelisted origin by id. The next build regenerates CSP directives without it.",
 		InputSchema:        schema(`{"type":"object","properties":{"id":{"type":"string"}},"required":["id"]}`),
 		RequiresWrite:      true,
-		RequiresCapability: "security", // CSP allowlist mutation is admin-only on REST; a plain write key must not reach it
+		// CSP allowlist mutation is owner/admin-only on REST (enforced in
+		// handlers/allowed_scripts.go), and "security" is not offered by the
+		// key-mint UI and can only be minted by an owner/admin, so a plain
+		// write key cannot reach this. All three of those are load-bearing:
+		// this comment previously asserted the REST half while the REST
+		// handlers had no role check at all.
+		RequiresCapability: "security",
 		Handler: func(ctx context.Context, agent *authmw.AgentIdentity, raw json.RawMessage) (string, error) {
 			var args struct {
 				ID string `json:"id"`

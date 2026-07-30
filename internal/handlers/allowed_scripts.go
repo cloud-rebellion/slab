@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/bright-interaction/slab/internal/config"
+	authmw "github.com/bright-interaction/slab/internal/middleware"
 	"github.com/bright-interaction/slab/internal/store"
 )
 
@@ -85,7 +86,17 @@ func (h *AllowedScriptHandler) List(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, rows)
 }
 
+// Mutating the allowlist widens the site's CSP script-src, which is the
+// difference between "attacker-controlled JS cannot run here" and "it can". The
+// MCP side already treats this as an admin surface and gates its equivalent
+// tool behind an extra named capability, justifying itself with "CSP allowlist
+// mutation is admin-only on REST". That was not true: these three handlers were
+// registered on the plain site router with no role check, so any site member
+// could widen the CSP directly. Now the code matches the claim.
 func (h *AllowedScriptHandler) Create(w http.ResponseWriter, r *http.Request) {
+	if !authmw.RequireOwnerOrAdmin(w, r, h.queries) {
+		return
+	}
 	siteID := urlParam(r, "siteID")
 	var req struct {
 		Domain  string `json:"domain"`
@@ -121,6 +132,9 @@ func (h *AllowedScriptHandler) Create(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *AllowedScriptHandler) Update(w http.ResponseWriter, r *http.Request) {
+	if !authmw.RequireOwnerOrAdmin(w, r, h.queries) {
+		return
+	}
 	id := urlParam(r, "scriptID")
 	var req struct {
 		Domain   *string `json:"domain"`
@@ -187,6 +201,9 @@ func (h *AllowedScriptHandler) Update(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *AllowedScriptHandler) Delete(w http.ResponseWriter, r *http.Request) {
+	if !authmw.RequireOwnerOrAdmin(w, r, h.queries) {
+		return
+	}
 	siteID := urlParam(r, "siteID")
 	id := urlParam(r, "scriptID")
 	// Defence against cross-tenant deletes: scan the site's own list

@@ -1109,7 +1109,19 @@ func validMediaFolderName(name string) bool {
 // --- Admin: Agent Key Management ---
 
 // GenerateAgentKey creates a new API key for a site (admin endpoint).
+// Minting an agent key hands out a credential, and the capability list on that
+// credential IS the authorization set the MCP dispatcher later reads. So this
+// endpoint needs both gates it was missing: only an owner or admin may mint,
+// and the capability list must come from a closed vocabulary.
+//
+// Without them any site member could POST a capability the UI never offers
+// (notably "security", which gates CSP allowlist mutation) and hand it to
+// themselves, then use it over MCP to add an attacker-controlled origin to the
+// site's script-src.
 func (h *AgentHandler) GenerateAgentKey(w http.ResponseWriter, r *http.Request) {
+	if !authmw.RequireOwnerOrAdmin(w, r, h.queries) {
+		return
+	}
 	siteID := urlParam(r, "siteID")
 
 	var req struct {
@@ -1126,6 +1138,10 @@ func (h *AgentHandler) GenerateAgentKey(w http.ResponseWriter, r *http.Request) 
 	}
 	if len(req.Capabilities) == 0 {
 		req.Capabilities = []string{"read", "write"}
+	}
+	if unknown := agent.UnknownCapabilities(req.Capabilities); len(unknown) > 0 {
+		writeError(w, http.StatusBadRequest, "Unknown capabilities: "+strings.Join(unknown, ", "))
+		return
 	}
 
 	rawBytes := make([]byte, 32)
@@ -1183,6 +1199,12 @@ func (h *AgentHandler) ListAgentKeys(w http.ResponseWriter, r *http.Request) {
 // UPDATE means a foreign keyID matches zero rows, and zero rows is a 404 so
 // the response does not reveal whether the key exists elsewhere.
 func (h *AgentHandler) RevokeAgentKey(w http.ResponseWriter, r *http.Request) {
+	// Revoking is credential lifecycle management, same trust level as
+	// minting. Ungated, any site member could disable their own tenant's
+	// automations as well.
+	if !authmw.RequireOwnerOrAdmin(w, r, h.queries) {
+		return
+	}
 	siteID := urlParam(r, "siteID")
 	keyID := urlParam(r, "keyID")
 	n, err := h.queries.DeactivateAgentKey(r.Context(), store.DeactivateAgentKeyParams{
