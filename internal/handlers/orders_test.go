@@ -481,3 +481,105 @@ func TestOrders_CancellingPendingOrderReleasesReservation(t *testing.T) {
 		t.Errorf("inventory = %d after cancelling an unpaid order, want 1: the last unit is unsellable and no adjustment row explains it", after.InventoryCount)
 	}
 }
+
+// From the edge-case lens, which PROVED this on the pre-fix tree:
+// "NEGATIVE LINE ACCEPTED: subtotal_cents=-4000 total_cents=0". Update rejected
+// base_price_cents < 0 and create did not, so a negative line drove the cart
+// total down and the buyer got free goods. Both create paths now share one
+// validator so the guard cannot land on one twin again.
+func TestProducts_CreateRejectsNegativeMoneyOnBothPaths(t *testing.T) {
+	_, q := setupDeployTestDB(t)
+	siteID := "ositea0000000000negpx1"
+	seedSite(t, q, siteID)
+	ph := NewProductHandler(nil, q)
+
+	if _, err := ph.CreateForAgent(t.Context(), siteID, ProductInput{
+		Name: "Bad", Slug: "badhat", Status: "active", BasePriceCents: -5000, Currency: "EUR",
+	}); err == nil {
+		t.Error("agent create accepted base_price_cents=-5000")
+	}
+	if _, err := ph.CreateForAgent(t.Context(), siteID, ProductInput{
+		Name: "Bad2", Slug: "badhat2", Status: "active", BasePriceCents: 100, WeightGrams: -1, Currency: "EUR",
+	}); err == nil {
+		t.Error("agent create accepted weight_grams=-1")
+	}
+	// A legitimate product must still be creatable.
+	if _, err := ph.CreateForAgent(t.Context(), siteID, ProductInput{
+		Name: "Good", Slug: "goodhat", Status: "active", BasePriceCents: 1000, Currency: "EUR",
+	}); err != nil {
+		t.Errorf("a valid product was rejected: %v", err)
+	}
+}
+
+// The lens proved a long-expired 100%-off code redeemable because the window
+// check was `err == nil && after`, so an unparseable value SKIPPED the check.
+// The two values that trip it are what plain HTML inputs submit.
+func TestDiscount_MalformedWindowIsRefusedAtWriteAndFailsClosedAtRedemption(t *testing.T) {
+	_, q := setupDeployTestDB(t)
+	siteID := "ositea0000000000dcwin1"
+	seedSite(t, q, siteID)
+	dh := NewDiscountCodeHandler(nil, q)
+
+	for _, ends := range []string{"2020-01-01T00:00", "2020-01-01", "not-a-date", "31/01/2026"} {
+		raw, _ := json.Marshal(map[string]any{
+			"code": "EXPIRED", "kind": "percent", "value": 10000,
+			"is_active": true, "ends_at": ends,
+		})
+		if _, err := dh.CreateForAgent(t.Context(), siteID, raw); err == nil {
+			t.Errorf("ends_at=%q was accepted at write; a stored unparseable window is unusable", ends)
+		}
+	}
+	// RFC3339 must still work, or no operator can set an expiry.
+	raw, _ := json.Marshal(map[string]any{
+		"code": "GOOD10", "kind": "percent", "value": 1000,
+		"is_active": true, "ends_at": "2030-01-31T23:59:59Z",
+	})
+	if _, err := dh.CreateForAgent(t.Context(), siteID, raw); err != nil {
+		t.Errorf("a valid RFC3339 ends_at was rejected: %v", err)
+	}
+}
+
+// canTransition returned `from == to`, so refunded -> refunded passed the refund
+// gate and Mollie's own remaining-balance check was the only guard against a
+// second full payout.
+func TestOrders_SelfTransitionFromTerminalStateIsRefused(t *testing.T) {
+	for _, st := range []string{"refunded", "cancelled", "fulfilled", "failed"} {
+		if canTransition(st, st) {
+			t.Errorf("canTransition(%q, %q) = true; a terminal self-transition passes every gate that asks", st, st)
+		}
+	}
+	// Real edges must still work.
+	if !canTransition("pending", "paid") {
+		t.Error("canTransition(pending, paid) = false; a legitimate edge was broken")
+	}
+	if !canTransition("paid", "refunded") {
+		t.Error("canTransition(paid, refunded) = false; a legitimate edge was broken")
+	}
+}
+
+// The release hook was added to the REST UpdateStatus and MISSED on the agent
+// twin, which is the incomplete-migration pattern inside the fix for it.
+func TestOrders_AgentCancelAlsoReleasesReservation(t *testing.T) {
+	db, q := setupDeployTestDB(t)
+	siteID := "ositea0000000000agcan1"
+	seedSite(t, q, siteID)
+	_, v := seedActiveProductWithVariant(t, q, siteID, "agenthat", 10)
+	h := NewOrderHandler(nil, q, db)
+
+	_, body := postJSON(t, checkoutRouter(h), "/api/sites/"+siteID+"/checkout", map[string]any{
+		"items":    []map[string]any{{"variant_id": v.ID, "quantity": 4}},
+		"customer": map[string]any{"email": "buyer@example.com"},
+	})
+	orderID := body["order"].(map[string]any)["id"].(string)
+
+	if _, err := h.UpdateStatusForAgent(t.Context(), siteID, orderID, "cancelled", ""); err != nil {
+		t.Fatalf("agent cancel: %v", err)
+	}
+	final, err := q.GetProductVariantByID(t.Context(), v.ID)
+	if err != nil {
+		t.Fatalf("read variant: %v", err)
+	}
+	if final.InventoryCount != 10 {
+		t.Errorf("inventory_count = %d after an AGENT cancel of a pending order, want 10", final.InventoryCount)
+	}
+}

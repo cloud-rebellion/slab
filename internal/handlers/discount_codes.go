@@ -18,12 +18,31 @@ import (
 	"regexp"
 	"strings"
 
+	"fmt"
 	"github.com/bright-interaction/slab/internal/config"
 	authmw "github.com/bright-interaction/slab/internal/middleware"
 	"github.com/bright-interaction/slab/internal/store"
+	"time"
 )
 
 var discountCodeRE = regexp.MustCompile(`^[A-Z0-9][A-Z0-9_-]{1,49}$`)
+
+// validateDiscountWindow rejects a non-RFC3339 starts_at/ends_at at write time.
+// Redemption now fails CLOSED on an unparseable value, so storing one would make
+// the code permanently unusable; refusing it here tells the admin immediately
+// instead. The two values that motivated this are what plain HTML inputs submit:
+// datetime-local gives "2026-01-01T00:00" and date gives "2026-01-01".
+func validateDiscountWindow(startsAt, endsAt string) error {
+	for name, v := range map[string]string{"starts_at": startsAt, "ends_at": endsAt} {
+		if strings.TrimSpace(v) == "" {
+			continue
+		}
+		if _, err := time.Parse(time.RFC3339, v); err != nil {
+			return fmt.Errorf("%s must be an RFC3339 timestamp such as 2026-01-31T23:59:59Z (got %q)", name, v)
+		}
+	}
+	return nil
+}
 
 func validateDiscountCode(c string) error {
 	c = strings.ToUpper(strings.TrimSpace(c))
@@ -132,6 +151,10 @@ func (h *DiscountCodeHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 	normaliseDiscountInput(&in)
 	if err := validateDiscountCode(in.Code); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := validateDiscountWindow(in.StartsAt, in.EndsAt); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}

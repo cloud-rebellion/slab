@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/bright-interaction/slab/internal/store"
+	"sync"
 )
 
 // Reconciler drives every site_domains row from 'pending' to 'live'.
@@ -40,6 +41,48 @@ type Reconciler struct {
 	tick   time.Duration
 	signal chan struct{}
 	done   chan struct{}
+
+	// liveFailures counts CONSECUTIVE live-probe failures per domain id.
+	//
+	// The doc comment at the top of this file and the one on the "live" case
+	// both promised "demote to error on three consecutive failures", and no
+	// counter existed anywhere: not in this struct, not in the schema, not in
+	// the query set. So a single transient blip demoted a healthy customer
+	// domain, and errorRetryDue then locked it out of retry for 30 minutes, so
+	// the admin UI showed "Error" on a working domain for at least half an hour.
+	// The reconciler reloads nginx in the same sweep that probes live domains,
+	// which makes a self-inflicted blip likely rather than theoretical.
+	//
+	// In-memory rather than a schema column on purpose: this is a debounce, not
+	// a durable fact, and a restart simply grants three fresh chances. Only the
+	// reconciler goroutine touches it, but the mutex keeps that honest if a
+	// second caller ever appears.
+	failMu       sync.Mutex
+	liveFailures map[string]int
+}
+
+// liveProbeFailureThreshold is how many CONSECUTIVE failures demote a live
+// domain to error. Matches what the docs already claimed.
+const liveProbeFailureThreshold = 3
+
+// recordLiveFailure increments the consecutive-failure count and reports
+// whether the domain has now earned a demotion.
+func (r *Reconciler) recordLiveFailure(id string) int {
+	r.failMu.Lock()
+	defer r.failMu.Unlock()
+	if r.liveFailures == nil {
+		r.liveFailures = map[string]int{}
+	}
+	r.liveFailures[id]++
+	return r.liveFailures[id]
+}
+
+// clearLiveFailures resets the count after a successful probe, so only
+// CONSECUTIVE failures accumulate.
+func (r *Reconciler) clearLiveFailures(id string) {
+	r.failMu.Lock()
+	defer r.failMu.Unlock()
+	delete(r.liveFailures, id)
 }
 
 // Config bundles the reconciler's dependencies. Each field is
@@ -176,14 +219,26 @@ func (r *Reconciler) advanceOne(ctx context.Context, d store.SiteDomain, sitesBy
 	case "cert_ready":
 		return r.advanceCertReady(ctx, d)
 	case "live":
-		// Periodic re-check; demote to error on repeated failures.
-		// One failure flip is fine (admin sees it, nginx config
-		// stays in place, next tick attempts recovery).
+		// Periodic re-check. Demote only after liveProbeFailureThreshold
+		// CONSECUTIVE failures, which is what this file has always claimed and
+		// never implemented.
 		if err := VerifyHostnameLive(ctx, d.Hostname); err != nil {
-			r.markError(ctx, d, "live probe failed: "+err.Error())
+			n := r.recordLiveFailure(d.ID)
+			if n < liveProbeFailureThreshold {
+				slog.Warn("domains.reconcile: live probe failed, not demoting yet",
+					"hostname", d.Hostname, "consecutive_failures", n,
+					"threshold", liveProbeFailureThreshold, "err", err)
+				// No status write, so last_check_at is untouched and the next
+				// tick probes again immediately instead of hitting the
+				// error-state backoff.
+				return false
+			}
+			r.markError(ctx, d, fmt.Sprintf("live probe failed %d times consecutively: %v", n, err))
+			r.clearLiveFailures(d.ID)
 			return true
 		}
-		// Steady-state, no change.
+		// Steady-state. Reset the counter so only CONSECUTIVE failures count.
+		r.clearLiveFailures(d.ID)
 		return false
 	case "error":
 		// Back off: re-check an error row at most every errorRetryBackoff. Every

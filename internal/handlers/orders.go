@@ -59,13 +59,26 @@ func validOrderStatus(s string) bool {
 	return false
 }
 
+// canTransition reports whether `from -> to` is a legal edge.
+//
+// The `return from == to` fallback is gone. It made every self-transition legal,
+// including from a TERMINAL state, so `refunded -> refunded` passed the refund
+// gate: o.PaymentID is still populated on a refunded order, so Refund called
+// mollie.CreateRefund a second time for the full amount and Mollie's own
+// remaining-balance check was the only thing between that and a double payout.
+// An upstream API contract is not an acceptable place to keep our money guard.
+// It also let `fulfilled -> fulfilled` and `cancelled -> cancelled` through
+// every gate that asks this question.
+//
+// Callers that genuinely want idempotency should compare states themselves
+// before asking, which is clearer than encoding it here for everyone.
 func canTransition(from, to string) bool {
 	for _, t := range orderTransitions[from] {
 		if t == to {
 			return true
 		}
 	}
-	return from == to
+	return false
 }
 
 type OrderHandler struct {
@@ -469,15 +482,30 @@ func (h *OrderHandler) Checkout(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, fmt.Sprintf("discount code requires min subtotal of %d cents", dc.MinSubtotalCents))
 			return
 		}
-		// Date window check.
+		// Date window check. Fails CLOSED on an unparseable value: the `err == nil`
+		// conjunct used to mean a malformed timestamp SKIPPED the window entirely,
+		// so a long-expired 100%-off code was honoured. That is not a hypothetical
+		// value either, it is exactly what the two obvious HTML inputs submit:
+		// datetime-local gives "2026-01-01T00:00" and date gives "2026-01-01",
+		// neither of which is RFC3339. Both were proven redeemable after expiry.
 		if dc.StartsAt != "" {
-			if t, err := time.Parse(time.RFC3339, dc.StartsAt); err == nil && time.Now().Before(t) {
+			t, err := time.Parse(time.RFC3339, dc.StartsAt)
+			if err != nil {
+				writeError(w, http.StatusBadRequest, "discount code has an unreadable start date; ask an admin to re-save it")
+				return
+			}
+			if time.Now().Before(t) {
 				writeError(w, http.StatusBadRequest, "discount code is not yet active")
 				return
 			}
 		}
 		if dc.EndsAt != "" {
-			if t, err := time.Parse(time.RFC3339, dc.EndsAt); err == nil && time.Now().After(t) {
+			t, err := time.Parse(time.RFC3339, dc.EndsAt)
+			if err != nil {
+				writeError(w, http.StatusBadRequest, "discount code has an unreadable end date; ask an admin to re-save it")
+				return
+			}
+			if time.Now().After(t) {
 				writeError(w, http.StatusBadRequest, "discount code has expired")
 				return
 			}
@@ -879,6 +907,31 @@ func (h *OrderHandler) Webhook(w http.ResponseWriter, r *http.Request) {
 		}
 		if canTransition(order.Status, "paid") {
 			newStatus = "paid"
+		} else {
+			// A CAPTURED payment we cannot apply. This branch used to fall
+			// through silently: newStatus stayed as-is, the `newStatus !=
+			// order.Status` guard below skipped the whole update block so
+			// payment_status was never written either, and the handler returned
+			// a bare 200 {"status":"ok"}. Money had moved at Mollie and the only
+			// trace anywhere in the database was the payment_events row. No log
+			// line, no operator signal.
+			//
+			// Reachable whenever a `paid` event lands late on an order that has
+			// since gone terminal: cancelled (empty transition set) or failed
+			// (after releaseReservations already restocked). Loud is the whole
+			// point here, so this logs at ERROR and says so in the response.
+			slog.Error("mollie webhook: PAID event for an order that cannot accept it; payment captured but not applied, needs manual reconciliation",
+				"order_id", order.ID, "site_id", siteID, "order_status", order.Status,
+				"payment_id", paymentID, "amount", pay.Amount.Value+" "+pay.Amount.Currency)
+			if err := tx.Commit(); err != nil {
+				writeError(w, http.StatusInternalServerError, "commit failed")
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]string{
+				"status":           "payment captured but order is not in a state that can accept it; flagged for reconciliation",
+				"new_order_status": order.Status,
+			})
+			return
 		}
 	case "failed", "expired", "canceled":
 		if canTransition(order.Status, "failed") {

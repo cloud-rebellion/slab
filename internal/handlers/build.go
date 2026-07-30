@@ -259,9 +259,29 @@ func (h *BuildHandler) CancelBuild(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "Build not found")
 		return
 	}
+	// Read the cancel func and apply the status in ONE critical section, and
+	// only when the build is not already terminal.
+	//
+	// These were two separate h.mu acquisitions, and clearCancel is deferred so
+	// it runs AFTER the build lock is released and well after finalizeBuild has
+	// written "success" to both memory and the DB. So an operator cancel landing
+	// in that window found the cancel entry still present and overwrote
+	// st.Status with "cancelled": the DB said success, memory said cancelled,
+	// Deploy then refused the build forever, and GetBuildStatus reported a
+	// cancellation that never happened.
 	h.mu.Lock()
 	cancel, ok := h.cancels[buildID]
-	st, _ := h.builds[buildID]
+	st := h.builds[buildID]
+	terminal := false
+	if ok && st != nil {
+		switch st.Status {
+		case "success", "failed", "cancelled":
+			terminal = true
+		default:
+			st.Status = "cancelled"
+			st.Error = "build cancelled by admin"
+		}
+	}
 	h.mu.Unlock()
 	if !ok {
 		// Either already finished or never tracked. Returning 200 keeps
@@ -270,13 +290,16 @@ func (h *BuildHandler) CancelBuild(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "not running"})
 		return
 	}
-	cancel()
-	if st != nil {
-		h.mu.Lock()
-		st.Status = "cancelled"
-		st.Error = "build cancelled by admin"
-		h.mu.Unlock()
+	if terminal {
+		// The build finished while the cancel was in flight. Do NOT rewrite its
+		// status: it really did succeed or fail, and saying otherwise strands a
+		// good build as undeployable.
+		slog.Info("build: cancel arrived after the build reached a terminal state; leaving it alone",
+			"build_id", buildID, "site_id", siteID, "status", st.Status)
+		writeJSON(w, http.StatusOK, map[string]string{"status": "already finished"})
+		return
 	}
+	cancel()
 	slog.Info("build: cancelled by admin", "build_id", buildID, "site_id", siteID)
 	writeJSON(w, http.StatusOK, map[string]string{"status": "cancelling"})
 }
@@ -741,6 +764,45 @@ func (h *BuildHandler) Deploy(w http.ResponseWriter, r *http.Request) {
 	buildLock := h.lockForSite(siteID)
 	buildLock.Lock()
 	defer buildLock.Unlock()
+
+	// RE-READ the build state now that we hold the lock. The check above ran on
+	// a VALUE COPY taken before the lock, which was not enough: between the copy
+	// and here, a second build of the same site can win the lock, and
+	// InitWorkspace does os.RemoveAll on the workspace, which is per-SITE, so
+	// every build of a site shares one DistDir string. The sequence:
+	//
+	//   1. Deploy(B1) copies state: success, DistDir=/data/workspaces/S/dist
+	//   2. TriggerBuild(B2) wins lockForSite(S)
+	//   3. B2's InitWorkspace deletes B1's dist
+	//   4. Deploy(B1) blocks on the lock
+	//   5. B2 finishes; finalizeBuild EVICTS B1 from h.builds, invisible to the
+	//      value copy Deploy is holding
+	//   6. Deploy(B1) ships B2's bytes and records the deploy against B1
+	//
+	// So unreviewed content publishes under a different build's identity, and if
+	// B2 failed late leaving a partial tree, rsync --delete propagates the
+	// truncation and deletes the good remote files. Re-reading closes the window
+	// because finalizeBuild's eviction and status write both happen under h.mu.
+	h.mu.Lock()
+	livePtr, stillPresent := h.builds[req.BuildID]
+	var live buildState
+	if stillPresent && livePtr != nil {
+		live = *livePtr
+	}
+	h.mu.Unlock()
+	if !stillPresent {
+		writeError(w, http.StatusConflict, "Another build for this site started while this deploy was queued; trigger a fresh build before deploying")
+		return
+	}
+	if live.Status != "success" || live.DistDir == "" {
+		writeError(w, http.StatusConflict, "This build is no longer deployable (a concurrent build replaced its workspace); trigger a fresh build")
+		return
+	}
+	if live.DistDir != state.DistDir {
+		writeError(w, http.StatusConflict, "This build's dist path changed while the deploy was queued; trigger a fresh build")
+		return
+	}
+	state = live
 
 	cfg := map[string]any{}
 	if strings.TrimSpace(targetRow.ConfigJson) != "" {

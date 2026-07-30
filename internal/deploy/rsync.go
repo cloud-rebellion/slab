@@ -244,6 +244,21 @@ func (d *RsyncDeployer) Deploy(ctx context.Context, distDir string, target Targe
 	if !info.IsDir() {
 		return Result{}, fmt.Errorf("rsync deploy: dist path %q is not a directory", distDir)
 	}
+	// Refuse an EMPTY dist. This deploy runs rsync with --delete, so syncing an
+	// empty or index-less tree does not just publish nothing, it DELETES the
+	// live site's files. The stat above only caught a MISSING dist, and a build
+	// that exits 0 without emitting anything, or a workspace another build
+	// deleted mid-deploy, both produce a present-but-empty directory. There is
+	// no legitimate reason to --delete-sync an empty tree, so refusing costs
+	// nothing and the failure mode it prevents is unrecoverable without a
+	// restore.
+	entries, err := os.ReadDir(distDir)
+	if err != nil {
+		return Result{}, fmt.Errorf("rsync deploy: read dist dir: %w", err)
+	}
+	if len(entries) == 0 {
+		return Result{}, fmt.Errorf("rsync deploy: dist dir %q is empty; refusing to --delete-sync an empty tree over the live site", distDir)
+	}
 
 	keyfile, cleanup, err := writeKeyfile(cfg.PrivateKeyPEM)
 	if err != nil {

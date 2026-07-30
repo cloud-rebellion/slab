@@ -61,7 +61,7 @@ var buildAllowedEnvNames = map[string]bool{
 	"TERM": true, "CI": true,
 	"XDG_CACHE_HOME": true, "XDG_CONFIG_HOME": true, "XDG_DATA_HOME": true,
 	"BUN_INSTALL": true, "BUN_INSTALL_CACHE_DIR": true,
-	"npm_config_cache": true,
+	"npm_config_cache":         true,
 	"ASTRO_TELEMETRY_DISABLED": true, "DO_NOT_TRACK": true,
 }
 
@@ -242,6 +242,23 @@ func Compile(ctx context.Context, wsDir string) *CompileResult {
 	}
 
 	distDir := filepath.Join(wsDir, "dist")
+
+	// A zero exit from `bun run build` is not proof that anything was emitted.
+	// Compile reported Success: true without ever looking at distDir, so a build
+	// that exits 0 with no output produced a "successful" build pointing at a
+	// missing or empty directory. That matters because the deployer runs rsync
+	// with --delete: publishing that result would delete the live site's files.
+	// The deployer now refuses an empty dist as well; this is the earlier and
+	// more informative of the two checks, because here we still have the build
+	// log to attach.
+	entries, derr := os.ReadDir(distDir)
+	if derr != nil {
+		return failureResult(&logBuf, start, fmt.Sprintf("astro build exited 0 but produced no dist directory: %v", derr))
+	}
+	if len(entries) == 0 {
+		return failureResult(&logBuf, start, "astro build exited 0 but the dist directory is empty")
+	}
+
 	duration := time.Since(start).Milliseconds()
 
 	slog.Info("build: complete", "duration_ms", duration, "dist", distDir)

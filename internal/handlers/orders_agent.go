@@ -30,13 +30,36 @@ func (h *OrderHandler) UpdateStatusForAgent(ctx context.Context, siteID, orderID
 	if !canTransition(o.Status, next) {
 		return nil, fmt.Errorf("cannot transition from %q to %q", o.Status, next)
 	}
-	if err := h.queries.UpdateOrderStatus(ctx, store.UpdateOrderStatusParams{
+
+	// Release the reservation when leaving `pending`, exactly as the REST
+	// UpdateStatus does. This path was MISSED when that fix was written, which
+	// is the incomplete-migration pattern (a guard added to one surface and not
+	// its twin) reappearing inside the fix for it. An agent cancelling an unpaid
+	// order left the stock decremented and the discount max_uses slot burned.
+	releasing := o.Status == "pending" && (next == "cancelled" || next == "failed")
+
+	tx, err := h.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	qtx := h.queries.WithTx(tx)
+
+	if err := qtx.UpdateOrderStatus(ctx, store.UpdateOrderStatusParams{
 		Status:        next,
 		PaymentStatus: o.PaymentStatus,
 		Column3:       next, Column4: next, Column5: next, Column6: next,
 		ID:     orderID,
 		SiteID: siteID,
 	}); err != nil {
+		return nil, err
+	}
+	if releasing {
+		if err := h.releaseReservations(ctx, qtx, o); err != nil {
+			return nil, fmt.Errorf("could not release reservations: %w", err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
 	if strings.TrimSpace(notes) != "" {

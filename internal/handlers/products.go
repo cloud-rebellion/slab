@@ -23,6 +23,7 @@ import (
 	"regexp"
 	"strings"
 
+	"errors"
 	"github.com/bright-interaction/slab/internal/config"
 	authmw "github.com/bright-interaction/slab/internal/middleware"
 	"github.com/bright-interaction/slab/internal/store"
@@ -135,6 +136,26 @@ type ProductInput struct {
 	SortOrder        int64    `json:"sort_order"`
 }
 
+// validateProductMoney enforces the money invariants on a create. Update already
+// rejected base_price_cents < 0 and create did not, which is the same
+// one-surface-not-its-twin shape as the rest of this audit and it was directly
+// exploitable: create a product at -5000, add a variant priced 0 so checkout
+// falls back to the base price, and the negative line drives the cart subtotal
+// down. Proven by the edge-case lens: "NEGATIVE LINE ACCEPTED:
+// subtotal_cents=-4000 total_cents=0 (good item alone is 1000)".
+//
+// Called from normaliseProductInput's caller in BOTH the REST and agent create
+// paths, so it cannot be added to one and missed on the other.
+func validateProductMoney(in *ProductInput) error {
+	if in.BasePriceCents < 0 {
+		return errors.New("base_price_cents must be >= 0")
+	}
+	if in.WeightGrams < 0 {
+		return errors.New("weight_grams must be >= 0")
+	}
+	return nil
+}
+
 func normaliseProductInput(in *ProductInput) {
 	in.Name = strings.TrimSpace(in.Name)
 	in.Slug = strings.ToLower(strings.TrimSpace(in.Slug))
@@ -168,6 +189,10 @@ func (h *ProductHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := validateProductSlug(in.Slug); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := validateProductMoney(&in); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}

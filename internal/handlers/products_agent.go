@@ -27,6 +27,9 @@ func (h *ProductHandler) CreateForAgent(ctx context.Context, siteID string, in P
 	if err := validateProductSlug(in.Slug); err != nil {
 		return store.Product{}, err
 	}
+	if err := validateProductMoney(&in); err != nil {
+		return store.Product{}, err
+	}
 	if !validProductStatus(in.Status) {
 		return store.Product{}, errors.New("status must be draft, active, or archived")
 	}
@@ -345,6 +348,9 @@ func (h *DiscountCodeHandler) CreateForAgent(ctx context.Context, siteID string,
 	}
 	normaliseDiscountInput(&in)
 	if err := validateDiscountCode(in.Code); err != nil {
+		return store.DiscountCode{}, err
+	}
+	if err := validateDiscountWindow(in.StartsAt, in.EndsAt); err != nil {
 		return store.DiscountCode{}, err
 	}
 	if !validDiscountKind(in.Kind) {
