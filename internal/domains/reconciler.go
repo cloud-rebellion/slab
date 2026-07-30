@@ -219,10 +219,29 @@ func errorRetryDue(lastCheckAt string) bool {
 }
 
 func (r *Reconciler) advancePending(ctx context.Context, d store.SiteDomain) bool {
-	// Best-effort Cloudflare A-record creation when the hostname
-	// falls under a zone we control.
+	// Cloudflare A-record creation, when the hostname falls under a zone we
+	// control AND the tenant has proven they control the name.
+	//
+	// The TXT gate is what stops this from being a hostname takeover. Inside a
+	// managed zone we can create DNS for any name, and the HTTP proof below
+	// would then succeed against a record we just created ourselves, on a token
+	// handler that does not bind the token to a hostname. So a tenant could
+	// claim a name with no existing A record (not-yet-existing, AAAA-only, or
+	// wildcard-covered), we would point it at our edge, "verify" it, and hand
+	// them a real certificate plus content control on an operator hostname.
+	// Requiring a TXT record they can only create if they already hold the name
+	// breaks that loop before any DNS is written.
+	//
+	// Only managed zones reach this. For a tenant's own domain MatchZone
+	// returns nothing, so the ordinary flow is unaffected.
 	if r.cloudflare.Enabled() && r.edgeIP != "" {
 		if zoneID, _ := r.cloudflare.MatchZone(d.Hostname); zoneID != "" {
+			if err := VerifyDNSTXTOwnership(ctx, d.Hostname, d.VerifyToken); err != nil {
+				// Fatal, unlike the EnsureA error below. Failing open here is
+				// the whole vulnerability.
+				r.markError(ctx, d, "dns-proof: "+err.Error())
+				return false
+			}
 			if err := r.cloudflare.EnsureA(ctx, d.Hostname, r.edgeIP); err != nil {
 				slog.Warn("domains.reconcile: cloudflare ensure A", "host", d.Hostname, "err", err)
 				// non-fatal: maybe DNS is already correct, or admin

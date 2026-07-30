@@ -79,16 +79,22 @@
 	// instead of a "[your edge IP]" placeholder.
 	let edgeIP = $state('');
 	let cloudflareZones = $state<string[]>([]);
+	let dnsProofTemplate = $state('_atomic-verify.{hostname}');
 
 	async function loadHelp() {
 		try {
 			const help = await domainsApi.help(siteID);
 			edgeIP = help.edge_ip || '';
 			cloudflareZones = help.cloudflare_zones || [];
+			dnsProofTemplate = help.dns_proof_name_template || '_atomic-verify.{hostname}';
 		} catch {
 			edgeIP = '';
 			cloudflareZones = [];
 		}
+	}
+
+	function dnsProofName(host: string): string {
+		return dnsProofTemplate.replace('{hostname}', host.toLowerCase());
 	}
 
 	function isAutoZone(host: string): boolean {
@@ -287,7 +293,10 @@
 							your edge IP (ask your operator; <code class="font-mono text-[11px]">ATOMICSITE_EDGE_IP</code> isn't configured on this server).
 						{/if}
 						{#if cloudflareZones.length > 0}
-							For zones we control ({cloudflareZones.join(', ')}) we auto-create the record.
+							For zones we control ({cloudflareZones.join(', ')}) we create the record for
+							you, but only after you add a
+							<code class="font-mono text-[11px]">TXT</code> record proving the hostname is
+							yours. Otherwise we would be verifying DNS we wrote ourselves.
 						{/if}
 					</li>
 					<li>We probe <code class="font-mono text-[11px]">/.well-known/atomic-verify/&lt;token&gt;</code>
@@ -341,10 +350,32 @@
 
 								{#if d.status === 'pending'}
 									{#if isAutoZone(d.hostname)}
-										<p class="mt-2 text-[12px] text-text-secondary">
-											We're auto-creating the A record on Cloudflare. Should
-											flip to verified within a minute.
-										</p>
+										<!-- We auto-create the A record here, which means we cannot
+										     also be the ones who prove the hostname is yours: we
+										     would just be verifying our own record. So this zone
+										     needs an out-of-band TXT proof first. -->
+										<div class="mt-2 space-y-2">
+											<p class="text-[12px] text-text-secondary">
+												This hostname is in a zone we manage, so add a
+												<code class="font-mono text-[11px]">TXT</code> record to prove it's
+												yours. We create the
+												<code class="font-mono text-[11px]">A</code> record once it resolves,
+												then verify and issue the certificate.
+											</p>
+											<div class="flex items-center gap-2">
+												<code class="block flex-1 truncate rounded-md border border-border-light bg-bg-elevated px-2 py-1 font-mono text-[11px] text-text-secondary">
+													{dnsProofName(d.hostname)} TXT {d.verify_token}
+												</code>
+												<button
+													type="button"
+													class="inline-flex h-7 w-7 items-center justify-center rounded-md border border-border-light text-text-secondary hover:bg-bg-elevated"
+													onclick={() => copy(`${dnsProofName(d.hostname)} TXT ${d.verify_token}`)}
+													aria-label="Copy the TXT proof record"
+												>
+													<Copy size={12} strokeWidth={1.5} />
+												</button>
+											</div>
+										</div>
 									{:else}
 										<p class="mt-2 text-[12px] text-text-secondary">
 											Add an <code class="font-mono text-[11px]">A</code> record:

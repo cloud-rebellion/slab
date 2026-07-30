@@ -104,6 +104,18 @@ func (c *CloudflareClient) EnsureA(ctx context.Context, hostname, edgeIP string)
 			return c.updateRecord(ctx, zoneID, r.ID, hostname, edgeIP)
 		}
 	}
+	// No A record of ours. Before creating one, refuse if ANY untagged record
+	// of any type already occupies the name. Previously listRecords filtered to
+	// type=A, so an AAAA-only or CNAME'd operator host looked empty here and we
+	// happily added an A record beside it, partially hijacking the name for
+	// IPv4 clients. The primary guard against claiming a name at all is the
+	// DNS-TXT proof the reconciler now requires before calling EnsureA; this is
+	// the second layer.
+	for _, r := range existing {
+		if strings.EqualFold(r.Name, hostname) && r.Comment != managedComment {
+			return fmt.Errorf("hostname %s already has an unmanaged %s record; refusing to add an A record beside it", hostname, r.Type)
+		}
+	}
 	return c.createRecord(ctx, zoneID, hostname, edgeIP)
 }
 
@@ -138,7 +150,11 @@ type cfErr struct {
 }
 
 func (c *CloudflareClient) listRecords(ctx context.Context, zoneID, name string) ([]cfRecord, error) {
-	url := fmt.Sprintf("https://api.cloudflare.com/client/v4/zones/%s/dns_records?type=A&name=%s", zoneID, name)
+	// Deliberately NOT type-filtered. With ?type=A an existing AAAA or CNAME at
+	// the name was invisible, so EnsureA fell through to createRecord and added
+	// an A record alongside foreign infrastructure it never saw. Fetch every
+	// type so the caller can refuse on any untagged record.
+	url := fmt.Sprintf("https://api.cloudflare.com/client/v4/zones/%s/dns_records?name=%s", zoneID, name)
 	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	req.Header.Set("Authorization", "Bearer "+c.APIToken)
 	resp, err := c.httpClient().Do(req)

@@ -34,6 +34,14 @@ export interface DomainsHelp {
 	edge_ip: string;
 	cloudflare_zones: string[];
 	verify_url_template: string;
+	/**
+	 * TXT record template a hostname inside cloudflare_zones must carry before
+	 * we touch DNS for it. In those zones we create the A record ourselves, so
+	 * the HTTP probe would only be verifying our own handiwork; a TXT record
+	 * can only be set by whoever already holds the name.
+	 */
+	dns_proof_name_template: string;
+	dns_proof_value: string;
 }
 
 export function list(siteID: string): Promise<ListDomainsResponse> {

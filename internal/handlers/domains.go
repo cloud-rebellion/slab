@@ -33,6 +33,8 @@ import (
 	"github.com/bright-interaction/slab/internal/billing"
 	authmw "github.com/bright-interaction/slab/internal/middleware"
 	"github.com/bright-interaction/slab/internal/store"
+
+	"github.com/bright-interaction/slab/internal/domains"
 )
 
 // hostnamePattern matches RFC 1123 hostnames for the admin "Add domain"
@@ -121,6 +123,19 @@ type HelpResponse struct {
 	// admin can curl this once DNS propagates to confirm wiring before
 	// waiting for the next sweep.
 	VerifyURLTemplate string `json:"verify_url_template"`
+	// DNSProofNameTemplate is the TXT record a hostname inside one of
+	// CloudflareZones must carry before we will touch DNS for it. Without
+	// it we would be creating the record ourselves and then verifying our
+	// own handiwork, which let a tenant claim an operator hostname and get
+	// a real certificate for it. A TXT record can only be created by
+	// whoever already holds the name, which is the thing being proven.
+	//
+	// This applies ONLY inside CloudflareZones. For a tenant's own domain
+	// there is nothing to prove out of band: pointing the A record at
+	// EdgeIP already requires holding the zone.
+	DNSProofNameTemplate string `json:"dns_proof_name_template"`
+	// DNSProofValue names what goes in that record.
+	DNSProofValue string `json:"dns_proof_value"`
 }
 
 // Help returns the edge IP + Cloudflare zones the admin needs to know
@@ -135,9 +150,11 @@ func (h *DomainHandler) Help(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	resp := HelpResponse{
-		EdgeIP:            h.edgeIP,
-		CloudflareZones:   h.cloudflareZones,
-		VerifyURLTemplate: "http://{hostname}/.well-known/atomic-verify/{token}",
+		EdgeIP:               h.edgeIP,
+		CloudflareZones:      h.cloudflareZones,
+		VerifyURLTemplate:    "http://{hostname}/.well-known/atomic-verify/{token}",
+		DNSProofNameTemplate: domains.TXTChallengeName("{hostname}"),
+		DNSProofValue:        "the domain's verify_token",
 	}
 	writeJSON(w, http.StatusOK, resp)
 }
