@@ -349,7 +349,7 @@ func validateScreenshotURL(raw string) error {
 	// fail), and blocking on a transient DNS hiccup would break legitimate
 	// screenshots, so only reject when the host actually resolves to a
 	// private/loopback/link-local address (the DNS-rebind case).
-	if ips, err := net.LookupIP(host); err == nil {
+	if ips, err := screenshotLookupIP(host); err == nil {
 		for _, ip := range ips {
 			if isPrivateIP(ip) {
 				return fmt.Errorf("screenshot host %q resolves to a non-public address", host)
@@ -358,6 +358,20 @@ func validateScreenshotURL(raw string) error {
 	}
 	return nil
 }
+
+// screenshotLookupIP is net.LookupIP behind a seam so the allow-list tests do
+// not depend on the machine's resolver. It is a var, not a parameter, because
+// the DNS-rebind check is a security property of validateScreenshotURL and
+// threading a resolver through every caller would invite one of them to pass
+// nil and quietly opt out.
+//
+// The seam was added after the real thing bit: in a sandbox whose resolver
+// answers example.com with 127.0.0.1, the two pure allow-list subtests failed
+// with "resolves to a non-public address" for a reason that had nothing to do
+// with the allow-list, and the failure surfaced as a REFUSING verdict from the
+// public-mirror publish gate rather than as a test bug. A unit test that reaches
+// the network is a test that fails for reasons unrelated to the code under it.
+var screenshotLookupIP = net.LookupIP
 
 // isLoopbackScreenshotHost returns true for localhost / 127.x / ::1.
 // Lets dev contributors point the screenshot tool at their local

@@ -1,14 +1,35 @@
 package handlers
 
 import (
+	"net"
 	"strings"
 	"testing"
 )
+
+// stubScreenshotResolver replaces the DNS seam for the duration of a test.
+// Hosts in override resolve to the given addresses; everything else resolves to
+// a public address, which isolates the allow-list assertions from what the
+// machine's resolver happens to say. Without this, the subtests below passed or
+// failed depending on whether example.com answered publicly, in a sandbox, or
+// not at all.
+func stubScreenshotResolver(t *testing.T, override map[string][]net.IP) {
+	t.Helper()
+	prev := screenshotLookupIP
+	public := []net.IP{net.ParseIP("93.184.216.34")}
+	screenshotLookupIP = func(host string) ([]net.IP, error) {
+		if ips, ok := override[host]; ok {
+			return ips, nil
+		}
+		return public, nil
+	}
+	t.Cleanup(func() { screenshotLookupIP = prev })
+}
 
 func TestValidateScreenshotURL(t *testing.T) {
 	// Reset before / after each subtest, since the allow-list is
 	// package-level state that survives across tests.
 	t.Cleanup(func() { ConfigureScreenshotAllowList() })
+	stubScreenshotResolver(t, nil)
 
 	t.Run("loopback always passes regardless of config", func(t *testing.T) {
 		ConfigureScreenshotAllowList()
@@ -95,6 +116,48 @@ func TestValidateScreenshotURL(t *testing.T) {
 			if err := validateScreenshotURL(bad); err == nil {
 				t.Errorf("expected %q to fail", bad)
 			}
+		}
+	})
+
+	// The DNS-rebind guard is the reason validateScreenshotURL resolves at all,
+	// and until this subtest existed nothing covered it: the allow-list cases
+	// exercised it only incidentally, via whatever the real resolver returned.
+	// An allow-listed hostname is not a trusted address, because the tenant who
+	// owns the name chooses the A record.
+	t.Run("allow-listed host that resolves into the private range is refused", func(t *testing.T) {
+		ConfigureScreenshotAllowList("example.com")
+		for name, addr := range map[string]string{
+			"RFC 1918":                   "10.0.0.5",
+			"link-local metadata":        "169.254.169.254",
+			"loopback via DNS":           "127.0.0.1",
+			"RFC 6598 carrier / tailnet": "100.100.100.100",
+		} {
+			stubScreenshotResolver(t, map[string][]net.IP{
+				"example.com": {net.ParseIP(addr)},
+			})
+			err := validateScreenshotURL("https://example.com/")
+			if err == nil {
+				t.Errorf("%s: allow-listed host resolving to %s was accepted; that is the rebind hole", name, addr)
+				continue
+			}
+			if !strings.Contains(err.Error(), "non-public") {
+				t.Errorf("%s: refused for the wrong reason: %v", name, err)
+			}
+		}
+	})
+
+	// A host that does not resolve is deliberately allowed through: navigation
+	// will simply fail, and refusing on a transient DNS error would break
+	// legitimate screenshots. Pinning it so the fail-open stays intentional.
+	t.Run("unresolvable allow-listed host passes rather than failing closed", func(t *testing.T) {
+		ConfigureScreenshotAllowList("example.com")
+		prev := screenshotLookupIP
+		screenshotLookupIP = func(string) ([]net.IP, error) {
+			return nil, &net.DNSError{Err: "no such host", Name: "example.com", IsNotFound: true}
+		}
+		t.Cleanup(func() { screenshotLookupIP = prev })
+		if err := validateScreenshotURL("https://example.com/"); err != nil {
+			t.Errorf("unresolvable host should pass the rebind check, got %v", err)
 		}
 	})
 
