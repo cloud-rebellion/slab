@@ -67,6 +67,17 @@ func Open(ctx context.Context, cfg Config) (*Manager, error) {
 	}
 
 	// In-memory DuckDB; storage lives in the ATTACHed SQLite file.
+	//
+	// GDPR NOTE, so this does not get re-raised every audit: because the DSN is
+	// empty this engine holds NO data of its own, and the ATTACH is read-only,
+	// so there is nothing here for an erasure to miss. The SQLite cascade in
+	// retention.sweepGDPRDeletions IS the erasure, and DuckDB reads through to
+	// the same file afterwards. The 2026-07-29 audit flagged "cascade cannot
+	// reach the DuckDB store" as a possible compliance gap and it is not one.
+	//
+	// This stops being true the moment anyone gives this DSN a path, or
+	// materialises a DuckDB table instead of querying the ATTACHed schema. If
+	// you do either, add an explicit erasure hook to sweepGDPRDeletions first.
 	db, err := sql.Open("duckdb", "")
 	if err != nil {
 		return nil, fmt.Errorf("analyticsdb: open duckdb: %w", err)

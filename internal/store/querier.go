@@ -80,6 +80,10 @@ type Querier interface {
 	CountMissingURLsBySite(ctx context.Context, siteID string) (int64, error)
 	CountOrdersBySite(ctx context.Context, siteID string) (int64, error)
 	CountPagesBySite(ctx context.Context, siteID string) (int64, error)
+	// For an operator health surface: a growing number here means the CRM has been
+	// unreachable and identifications are queued, which is exactly the state that
+	// used to be invisible.
+	CountPendingCRMOutbox(ctx context.Context) (int64, error)
 	CountPendingClarificationsBySite(ctx context.Context, siteID string) (int64, error)
 	CountProductsBySite(ctx context.Context, siteID string) (int64, error)
 	CountRedirectsBySite(ctx context.Context, siteID string) (int64, error)
@@ -157,6 +161,9 @@ type Querier interface {
 	DeleteBlockLocale(ctx context.Context, arg DeleteBlockLocaleParams) error
 	DeleteBlockLocalesByLocale(ctx context.Context, arg DeleteBlockLocalesByLocaleParams) error
 	DeleteBlocksByPage(ctx context.Context, pageID string) error
+	// Retention sweep. payload_json carries the identified visitor's email, so this
+	// table holds PII and must not outlive the window.
+	DeleteCRMOutboxBySiteOlderThan(ctx context.Context, arg DeleteCRMOutboxBySiteOlderThanParams) (int64, error)
 	DeleteCSSClass(ctx context.Context, id string) error
 	// Per-site retention sweep. The retention manager passes an ISO
 	// timestamp cutoff and gets back the number of rows deleted so the
@@ -237,6 +244,10 @@ type Querier interface {
 	DeleteWebhookSubscription(ctx context.Context, id string) error
 	DeleteWorkspace(ctx context.Context, id string) error
 	DeleteWorkspaceInvite(ctx context.Context, arg DeleteWorkspaceInviteParams) error
+	// Records the obligation to tell BrightCRM about an identified visitor. Called
+	// in the same tx as the visit_sessions write, so the local claim and the
+	// outbound obligation cannot diverge.
+	EnqueueCRMOutbox(ctx context.Context, arg EnqueueCRMOutboxParams) error
 	EnsureMediaFolder(ctx context.Context, arg EnsureMediaFolderParams) error
 	FinishVerifyJob(ctx context.Context, arg FinishVerifyJobParams) error
 	GetAgentKeyByHash(ctx context.Context, keyHash string) (AgentKey, error)
@@ -403,6 +414,8 @@ type Querier interface {
 	ListDistinctFontFamilies(ctx context.Context, siteID string) ([]string, error)
 	ListDomainsBySite(ctx context.Context, siteID string) ([]SiteDomain, error)
 	ListDomainsByStatus(ctx context.Context, status string) ([]SiteDomain, error)
+	// Drain feed: pending or retrying rows whose backoff has elapsed.
+	ListDueCRMOutbox(ctx context.Context, limit int64) ([]CrmOutbox, error)
 	ListEntityRevisions(ctx context.Context, arg ListEntityRevisionsParams) ([]EntityRevision, error)
 	// Evaluations
 	ListEvaluationsByBuild(ctx context.Context, buildID string) ([]Evaluation, error)
@@ -508,6 +521,13 @@ type Querier interface {
 	ListWorkspacesForLifecycleSweep(ctx context.Context) ([]ListWorkspacesForLifecycleSweepRow, error)
 	ListWorkspacesForUser(ctx context.Context, userID string) ([]ListWorkspacesForUserRow, error)
 	MarkBillingEventProcessed(ctx context.Context, arg MarkBillingEventProcessedParams) error
+	// Terminal. Kept rather than deleted so an operator can see WHAT was lost;
+	// the retention sweep purges it later.
+	MarkCRMOutboxDropped(ctx context.Context, arg MarkCRMOutboxDroppedParams) error
+	// attempts is incremented here rather than by the caller so a crash between
+	// the send and the bookkeeping cannot lose the count and loop forever.
+	MarkCRMOutboxRetrying(ctx context.Context, arg MarkCRMOutboxRetryingParams) error
+	MarkCRMOutboxSucceeded(ctx context.Context, id string) error
 	MarkInviteUsed(ctx context.Context, id string) error
 	MarkPasswordResetUsed(ctx context.Context, id string) error
 	MarkPaymentEventProcessed(ctx context.Context, arg MarkPaymentEventProcessedParams) (int64, error)

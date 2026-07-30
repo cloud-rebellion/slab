@@ -40,6 +40,9 @@ var retainedTables = map[string]string{
 	// let a replayed delivery re-run the side effects) and only the provider
 	// payload is blanked.
 	"payment_events": "PurgePaymentEventPayloadsOlderThan",
+	// Added with the table itself, which is the rule this guard enforces.
+	// payload_json carries an identified visitor's email.
+	"crm_outbox": "DeleteCRMOutboxBySiteOlderThan",
 }
 
 var purgeSiteCallRE = regexp.MustCompile(`m\.queries\.([A-Za-z0-9_]+)\(ctx`)

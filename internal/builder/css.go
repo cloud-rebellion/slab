@@ -133,6 +133,17 @@ func BuildCSS(ctx context.Context, queries *store.Queries, siteID string) (strin
 
 	// Reset
 	b.WriteString("*, *::before, *::after { box-sizing: border-box; margin: 0; }\n")
+	// [hidden] must actually hide. The UA stylesheet's [hidden] rule has
+	// specificity 0, so ANY authored rule beats it: a block style as ordinary as
+	// `.block--custom { display: grid }` reveals a personalization variant that
+	// the renderer marked hidden, to every visitor. The variants are all present
+	// in the published HTML by design (a client script unhides the matching one),
+	// so this rule is what keeps "hidden" meaning hidden until then.
+	//
+	// This is presentation only, and deliberately so. Personalization must never
+	// be used to gate confidential content: every variant is readable in
+	// view-source regardless of this rule.
+	b.WriteString("[hidden] { display: none !important; }\n")
 	b.WriteString("html { font-family: var(--font-body); color: var(--color-text); background-color: var(--color-bg); line-height: 1.6; -webkit-font-smoothing: antialiased; }\n")
 	b.WriteString("body { min-height: 100dvh; }\n")
 	b.WriteString("h1, h2, h3, h4, h5, h6 { font-family: var(--font-heading); line-height: 1.15; letter-spacing: -0.01em; }\n")

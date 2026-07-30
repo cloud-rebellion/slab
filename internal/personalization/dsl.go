@@ -2,7 +2,7 @@
 // uses to gate per-block visibility on per-visitor metadata pushed back
 // from a CRM. The grammar is intentionally minimal so the validator (Go,
 // here) and the evaluator (JS, inlined in internal/builder/personalization.go)
-// can stay in lock-step:
+// can stay in lock-step (NB: Validate does; Eval does NOT, see its doc comment):
 //
 //	condition := key " " op " " value
 //	op        := "==" | "!=" | ">" | ">=" | "<" | "<=" | "in" | "present"
@@ -69,6 +69,30 @@ func Validate(expr string) error {
 // Eval returns true when the condition matches the given variables.
 // Validation errors propagate; missing keys evaluate to false (except
 // "present" which is the explicit existence test).
+//
+// NOT USED IN PRODUCTION, AND NOT INTERCHANGEABLE WITH THE SHIPPING EVALUATOR.
+//
+// The package doc says this and the JS in builder/personalization.go "stay in
+// lock-step". They do not, and the 2026-07-29 audit enumerated exactly where:
+//
+//	expr            vars            Go (here)  JS (ships)
+//	"x present"     x = false       false      true
+//	"x present"     x = 0           false      true
+//	"flag == 0"     flag = false    false      true
+//	"x == 0"        x = ""          false      true
+//
+// Go's isEmpty treats false and 0 as absent; the JS checks `!== "" && != null`.
+// Go's toNumber refuses a bool; JS Number(false) is 0. Only Validate is called
+// in production (agent/guardrails.go), so the divergence is inert TODAY. It
+// becomes a live bug the moment someone wires this into a server-side editor
+// preview: the operator sees a block hidden that every visitor sees, or the
+// reverse.
+//
+// Keeping it (its tests document the DSL) but marking it, because deleting a
+// function the docs advertise invites someone to reimplement it worse. If you
+// need server-side evaluation, generate both evaluators from one table and add
+// a shared fixture test first. TestEvalDivergesFromShippingJS pins the deltas
+// above so this comment cannot rot silently.
 func Eval(expr string, vars map[string]any) (bool, error) {
 	if err := Validate(expr); err != nil {
 		return false, err

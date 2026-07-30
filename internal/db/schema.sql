@@ -1623,3 +1623,37 @@ CREATE TABLE IF NOT EXISTS site_app_installs (
     PRIMARY KEY (site_id, app_id)
 );
 CREATE INDEX IF NOT EXISTS idx_site_app_installs_site ON site_app_installs(site_id, status);
+
+-- crm_outbox: durable delivery for BrightCRM "identified" events.
+--
+-- The crmsync package doc says identified events bypass the throttle "so we
+-- never lose the moment a visitor links to a contact", and then delivered them
+-- with SendAsync, which logs a failure and drops it: no retry, no backoff, no
+-- dead letter. A 30-second BrightCRM deploy window silently lost every
+-- identification in it, and because the local DB write succeeded and nothing
+-- recorded an outstanding dispatch, the only way to notice was hand-diffing two
+-- systems. This table is the record of an outstanding dispatch.
+--
+-- Enqueued in the SAME transaction as the visit_sessions write where possible,
+-- so the claim "this visitor is identified" and the obligation to tell the CRM
+-- land together or not at all.
+--
+-- Mirrors webhook_deliveries deliberately: same status vocabulary, same
+-- attempts/next_attempt_at backoff shape, same terminal 'dropped'. One outbox
+-- pattern in this codebase, not two.
+CREATE TABLE IF NOT EXISTS crm_outbox (
+    id              TEXT PRIMARY KEY,
+    site_id         TEXT NOT NULL,
+    event_type      TEXT NOT NULL,
+    payload_json    TEXT NOT NULL,
+    status          TEXT NOT NULL DEFAULT 'pending',
+    attempts        INTEGER NOT NULL DEFAULT 0,
+    next_attempt_at TEXT NOT NULL DEFAULT (datetime('now')),
+    last_error      TEXT NOT NULL DEFAULT '',
+    created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+    completed_at    TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_crm_outbox_due
+    ON crm_outbox(status, next_attempt_at);
+CREATE INDEX IF NOT EXISTS idx_crm_outbox_site
+    ON crm_outbox(site_id, created_at);

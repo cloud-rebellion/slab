@@ -306,7 +306,7 @@ func main() {
 	go reconciler.Run(mgrCtx)
 	httpSrv := &http.Server{
 		Addr:         fmt.Sprintf(":%d", cfg.Port),
-		Handler:      srv.Router(),
+		Handler:      handlerWithCRMOutbox(srv, mgrCtx),
 		ReadTimeout:  30 * time.Second,
 		WriteTimeout: 120 * time.Second,
 		IdleTimeout:  120 * time.Second,
@@ -1097,4 +1097,14 @@ func dirSizeBytes(root string) int64 {
 		return nil
 	})
 	return total
+}
+
+// handlerWithCRMOutbox builds the router and then starts the CRM outbox drain.
+// Ordering matters: Routes() is what captures the shared crmsync client, so the
+// drain must start after the router is built or it would drain with a nil
+// client (a no-op) forever.
+func handlerWithCRMOutbox(srv *server.Server, ctx context.Context) http.Handler {
+	h := srv.Router()
+	srv.StartCRMOutbox(ctx)
+	return h
 }

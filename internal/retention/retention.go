@@ -174,6 +174,7 @@ type PerSiteSweepResult struct {
 	ConversionsDeleted     int64 `json:"conversions_deleted"`
 	FormSubmissionsDeleted int64 `json:"form_submissions_deleted"`
 	PaymentPayloadsPurged  int64 `json:"payment_payloads_purged"`
+	CRMOutboxDeleted       int64 `json:"crm_outbox_deleted"`
 	// CWVDeleted is the count of cwv_events rows purged in this sweep.
 	// Shares the analytics retention window.
 	CWVDeleted int64 `json:"cwv_deleted"`
@@ -542,6 +543,20 @@ func (m *Manager) purgeSite(ctx context.Context, siteID string) PerSiteSweepResu
 		slog.Warn("retention: purge payment event payloads", "site_id", siteID, "err", err)
 	} else {
 		res.PaymentPayloadsPurged = n
+	}
+
+	// crm_outbox.payload_json carries the identified visitor's EMAIL, so this
+	// table holds PII and must not outlive the window. Only terminal rows are
+	// deleted: a pending or retrying row is an outstanding obligation and
+	// deleting it would be the silent loss the outbox exists to prevent.
+	// Wired here in the SAME commit that added the table, per the CLAUDE.md rule
+	// and enforced by TestPurgeSiteCoversEveryRetainedTable.
+	if n, err := m.queries.DeleteCRMOutboxBySiteOlderThan(ctx, store.DeleteCRMOutboxBySiteOlderThanParams{
+		SiteID: siteID, CreatedAt: tsCutoff,
+	}); err != nil {
+		slog.Warn("retention: delete crm outbox", "site_id", siteID, "err", err)
+	} else {
+		res.CRMOutboxDeleted = n
 	}
 
 	return res

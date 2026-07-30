@@ -19,6 +19,9 @@ import (
 	"strings"
 	"time"
 
+	"crypto/rand"
+	"encoding/hex"
+	"fmt"
 	"github.com/bright-interaction/slab/internal/crmsync"
 	"github.com/bright-interaction/slab/internal/store"
 )
@@ -108,18 +111,18 @@ func (r *Recorder) Identify(ctx context.Context, siteID, fingerprint, email stri
 		visitorID = sess.VisitorID
 	}
 
-	r.dispatchCRM(siteID, visitorID, email, page)
+	r.dispatchCRM(ctx, siteID, visitorID, email, page)
 	return Outcome{Updated: true, VisitorID: visitorID}, nil
 }
 
 // dispatchCRM is split out so unit tests can verify the call without
 // standing up an HTTP server: a fake Client passed via NewRecorder
 // records the SendAsync invocation.
-func (r *Recorder) dispatchCRM(siteID, visitorID, email string, page Page) {
+func (r *Recorder) dispatchCRM(ctx context.Context, siteID, visitorID, email string, page Page) {
 	if r.crmClient == nil || !r.crmClient.Enabled() {
 		return
 	}
-	r.crmClient.SendAsync(crmsync.Event{
+	event := crmsync.Event{
 		Event:      crmsync.EventIdentified,
 		SiteID:     siteID,
 		VisitorID:  visitorID,
@@ -134,7 +137,30 @@ func (r *Recorder) dispatchCRM(siteID, visitorID, email string, page Page) {
 		Metadata: map[string]any{
 			"source": "form_or_identify",
 		},
-	})
+	}
+	// Durable, not fire-and-forget. This event carries the visitor's EMAIL and
+	// is the moment a fingerprint links to a real contact, which the package doc
+	// calls the thing we must "never lose". SendAsync logged and dropped on
+	// failure, so a brief CRM outage lost it while the visit_sessions write
+	// succeeded: Slab believed the visitor identified, BrightCRM never heard,
+	// and nothing recorded an outstanding dispatch.
+	if err := crmsync.Enqueue(ctx, r.queries, newOutboxID(), event); err != nil {
+		slog.Error("identify: could not enqueue identified event, falling back to best-effort send",
+			"site_id", siteID, "err", err)
+		r.crmClient.SendAsync(event)
+	}
+}
+
+// newOutboxID mints an outbox row id. Local so this package does not depend on
+// the handlers' id helper.
+func newOutboxID() string {
+	b := make([]byte, 12)
+	if _, err := rand.Read(b); err != nil {
+		// crypto/rand failing is not recoverable here; a time-based fallback
+		// keeps the event deliverable rather than dropping it.
+		return fmt.Sprintf("obx-%d", time.Now().UnixNano())
+	}
+	return hex.EncodeToString(b)
 }
 
 // emailFieldRE looks for plausibly-named email fields in form

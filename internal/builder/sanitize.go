@@ -26,6 +26,17 @@ var fontFamilyRE = regexp.MustCompile(`^[A-Za-z0-9 _-]{1,64}$`)
 // site-supplied font name. An empty or unsafe name (CSS injection via the
 // branding API or a figma import) falls back to the system stack rather than
 // emitting attacker-controlled CSS.
+// CSSFontFamilyDecl is the exported form, for packages that ingest third-party
+// font names and must not build the declaration themselves. internal/figma used
+// fmt.Sprintf("font-family: %q, ...") on a value straight out of a shared Figma
+// file: %q does stop a break out of the CSS string, so it was hygiene rather
+// than a live injection, but this helper's own doc comment names "a figma
+// import" as the threat it exists for, and a second hand-rolled path is how the
+// four divergent SSRF predicates happened.
+func CSSFontFamilyDecl(name string) string {
+	return cssFontFamilyDecl(name)
+}
+
 func cssFontFamilyDecl(name string) string {
 	if fontFamilyRE.MatchString(name) {
 		return "'" + name + "', system-ui, sans-serif"

@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+
+	"github.com/bright-interaction/slab/internal/builder"
 )
 
 // ImportResult is what the handler returns to the client after a successful
@@ -116,7 +118,11 @@ func ExtractTokens(ctx context.Context, c *Client, fileKey string) (*ImportResul
 		if t.LineHeightUnit == "PIXELS" && t.LineHeightPx > 0 {
 			lineHeight = fmt.Sprintf("%dpx", int(t.LineHeightPx))
 		}
-		cssBody := fmt.Sprintf("font-family: %q, system-ui, sans-serif; font-size: %dpx; font-weight: %d; line-height: %s;", t.FontFamily, size, weight, lineHeight)
+		// builder.CSSFontFamilyDecl allowlists the family name instead of merely
+		// quoting it. The name comes from a shared Figma file, i.e. a third
+		// party, and this is the helper written for exactly that case.
+		cssBody := fmt.Sprintf("font-family: %s; font-size: %dpx; font-weight: %d; line-height: %s;",
+			builder.CSSFontFamilyDecl(t.FontFamily), size, weight, lineHeight)
 		out.Typography = append(out.Typography, TextToken{
 			Name:       ref.Name,
 			ClassName:  ".type-" + slug,

@@ -22,6 +22,7 @@ import (
 	"github.com/bright-interaction/slab/ee"
 	"github.com/bright-interaction/slab/internal/analyticsdb"
 	"github.com/bright-interaction/slab/internal/config"
+	"github.com/bright-interaction/slab/internal/crmsync"
 	"github.com/bright-interaction/slab/internal/domains"
 	"github.com/bright-interaction/slab/internal/email"
 	"github.com/bright-interaction/slab/internal/handlers"
@@ -33,6 +34,7 @@ import (
 	"github.com/bright-interaction/slab/internal/shield"
 	"github.com/bright-interaction/slab/internal/storage"
 	"github.com/bright-interaction/slab/internal/store"
+	"strconv"
 )
 
 // FrontendFS is the embedded frontend dist. Populated by cmd/server/main.go.
@@ -40,11 +42,15 @@ var FrontendFS fs.FS
 
 // Server holds all dependencies.
 type Server struct {
-	cfg           *config.Config
-	db            *sql.DB
-	queries       *store.Queries
-	storage       storage.Store
-	authMW        *authmw.AuthMiddleware
+	cfg     *config.Config
+	db      *sql.DB
+	queries *store.Queries
+	storage storage.Store
+	authMW  *authmw.AuthMiddleware
+	// crmClient is the SAME instance the track handler uses, captured in Routes
+	// so StartCRMOutbox drains with the client that /admin/reload-secrets
+	// rotates rather than a second one frozen at boot-time config.
+	crmClient     *crmsync.Client
 	agentMW       *authmw.AgentAuthMiddleware
 	adminWriteLim *authmw.AdminWriteLimiter
 	// AnalyticsDB is the read-only DuckDB ATTACH on the SQLite file.
@@ -105,6 +111,17 @@ type Server struct {
 
 // SetVerifyJobManager wires the async verify-live worker. Called from
 // cmd/server/main.go after the JobManager is constructed and Started.
+// StartCRMOutbox begins draining the durable CRM outbox. Call AFTER Router(),
+// because Routes() is what captures the shared client. No-op when SSO to the CRM
+// is not configured; rows simply accumulate and drain once it is, which is the
+// point of an outbox.
+func (s *Server) StartCRMOutbox(ctx context.Context) {
+	if s == nil || s.queries == nil || s.crmClient == nil {
+		return
+	}
+	crmsync.NewOutboxManager(s.queries, s.crmClient).Start(ctx)
+}
+
 func (s *Server) SetVerifyJobManager(m *migration.JobManager) {
 	s.verifyJobMgr = m
 }
@@ -226,12 +243,28 @@ func (s *Server) Router() http.Handler {
 			status = "fail"
 			httpStatus = http.StatusServiceUnavailable
 		}
+		// CRM outbox depth. A growing number here means BrightCRM has been
+		// unreachable and identified-visitor events are queued, which is exactly
+		// the state that used to be invisible: SendAsync dropped them with a log
+		// line and nothing recorded an outstanding dispatch. Surfacing it on the
+		// existing health endpoint means an operator or an uptime check sees the
+		// backlog without reading logs.
+		//
+		// Reported, not fatal: a queued backlog is the outbox working, so it must
+		// not flip the health status and take the app out of rotation.
+		crmOutboxPending := int64(-1)
+		if s.queries != nil {
+			if n, err := s.queries.CountPendingCRMOutbox(ctx); err == nil {
+				crmOutboxPending = n
+			}
+		}
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Cache-Control", "no-store")
 		w.WriteHeader(httpStatus)
 		body := `{"status":"` + status +
 			`","sqlite":"` + boolToOKFail(dbOK) +
-			`","analyticsdb":"` + analyticsOK + `"}`
+			`","analyticsdb":"` + analyticsOK +
+			`","crm_outbox_pending":` + strconv.FormatInt(crmOutboxPending, 10) + `}`
 		_, _ = w.Write([]byte(body))
 	})
 
@@ -241,6 +274,11 @@ func (s *Server) Router() http.Handler {
 	// middleware runs only on this group so admin requests don't pick up
 	// visitor cookies.
 	trackH := handlers.NewTrackHandler(s.cfg, s.queries, s.db)
+	// Keep a reference so StartCRMOutbox can drain using the SAME client
+	// instance that /admin/reload-secrets rotates. A second client built from
+	// cfg would keep signing with the boot-time secret after a rotation and
+	// every delivery would be rejected.
+	s.crmClient = trackH.CRMClient()
 	r.Group(func(r chi.Router) {
 		r.Use(authmw.FingerprintMiddleware(s.cfg))
 		r.Post("/t/consent", trackH.Consent)

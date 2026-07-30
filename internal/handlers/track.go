@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -500,8 +501,26 @@ func (h *TrackHandler) crmEmitIdentified(siteID, visitorID, method string, req c
 			"consent_categories": categories,
 		},
 	}
-	// Identified events bypass throttling per design.
-	h.crmClient.SendAsync(event)
+	// Identified events go through the DURABLE outbox, not SendAsync.
+	// SendAsync logs and drops on failure, so a brief BrightCRM outage silently
+	// lost the identification while the local DB write succeeded: Slab believed
+	// the visitor was identified and the CRM never heard. The outbox row is the
+	// record of that obligation and the drain loop retries with backoff.
+	// DETACHED context, deliberately. This is a durability write that must
+	// outlive the request: the estate has a recorded gotcha for exactly this
+	// shape (a GDPR erasure audit record on r.Context() was dropped by client
+	// disconnects precisely when it mattered). A visitor closing the tab right
+	// after consenting is the common case here, and it must not discard the
+	// obligation to tell the CRM.
+	enqCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := crmsync.Enqueue(enqCtx, h.queries, newID(), event); err != nil {
+		// Falling back to a fire-and-forget send is better than losing the event
+		// outright, and this only happens if the enqueue itself failed.
+		slog.Error("crmsync: could not enqueue identified event, falling back to best-effort send",
+			"site_id", siteID, "err", err)
+		h.crmClient.SendAsync(event)
+	}
 }
 
 // pageViewRequest is the body of POST /t/pageview.

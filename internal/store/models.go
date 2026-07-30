@@ -197,6 +197,19 @@ type ConversionGoal struct {
 	UpdatedAt     string `json:"updated_at"`
 }
 
+type CrmOutbox struct {
+	ID            string `json:"id"`
+	SiteID        string `json:"site_id"`
+	EventType     string `json:"event_type"`
+	PayloadJson   string `json:"payload_json"`
+	Status        string `json:"status"`
+	Attempts      int64  `json:"attempts"`
+	NextAttemptAt string `json:"next_attempt_at"`
+	LastError     string `json:"last_error"`
+	CreatedAt     string `json:"created_at"`
+	CompletedAt   string `json:"completed_at"`
+}
+
 type CssClass struct {
 	ID        string `json:"id"`
 	SiteID    string `json:"site_id"`

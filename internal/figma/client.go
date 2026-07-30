@@ -29,6 +29,11 @@ type Client struct {
 }
 
 // NewClient returns a Client with the given personal access token.
+// maxFigmaResponseBytes caps a Figma API response. 32MB is far above any real
+// depth=1 file tree and far below "a hostile or accidentally enormous shared
+// file exhausts the server's memory".
+const maxFigmaResponseBytes = 32 << 20
+
 func NewClient(token string) *Client {
 	return &Client{
 		HTTP:    &http.Client{Timeout: 15 * time.Second},
@@ -97,7 +102,11 @@ func (c *Client) FetchFileMeta(ctx context.Context, fileKey string) (*File, erro
 	}
 
 	var f File
-	if err := json.NewDecoder(resp.Body).Decode(&f); err != nil {
+	// Bound the body. Figma is a third party and File.Document is a
+	// json.RawMessage, so it retains whatever arrives; depth=1 keeps this small
+	// in practice but that is a property of the request, not a guarantee about
+	// the response.
+	if err := json.NewDecoder(io.LimitReader(resp.Body, maxFigmaResponseBytes)).Decode(&f); err != nil {
 		return nil, fmt.Errorf("figma: decode file: %w", err)
 	}
 	return &f, nil
@@ -188,7 +197,7 @@ func (c *Client) fetchStyleNodesBatch(ctx context.Context, fileKey string, ids [
 	var wrap struct {
 		Nodes map[string]StyleNode `json:"nodes"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&wrap); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, maxFigmaResponseBytes)).Decode(&wrap); err != nil {
 		return nil, fmt.Errorf("figma: decode nodes: %w", err)
 	}
 	return wrap.Nodes, nil

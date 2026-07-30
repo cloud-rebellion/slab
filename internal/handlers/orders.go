@@ -764,9 +764,20 @@ func (h *OrderHandler) nextOrderNumber(ctx context.Context, siteID string) (stri
 			return "", err
 		}
 		candidate := fmt.Sprintf("ATM-%d-%s", year, suffix)
-		if _, err := h.queries.GetOrderByOrderNumber(ctx, store.GetOrderByOrderNumberParams{SiteID: siteID, OrderNumber: candidate}); err != nil {
+		_, err = h.queries.GetOrderByOrderNumber(ctx, store.GetOrderByOrderNumberParams{SiteID: siteID, OrderNumber: candidate})
+		if errors.Is(err, sql.ErrNoRows) {
+			// Genuinely free.
 			return candidate, nil
 		}
+		if err != nil {
+			// ANY other error meant "free" before, so a SQLITE_BUSY or a closed
+			// connection handed back a candidate that might well be taken, and
+			// the UNIQUE(site_id, order_number) constraint then failed the insert
+			// into a 500. Surface the real error instead of guessing: the caller
+			// aborts the checkout cleanly rather than failing later and deeper.
+			return "", fmt.Errorf("checking order number uniqueness: %w", err)
+		}
+		// No error means the row EXISTS, so the candidate is taken: loop.
 	}
 	return "", errors.New("could not allocate unique order number after 5 attempts")
 }
