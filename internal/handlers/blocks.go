@@ -10,6 +10,8 @@ import (
 	"github.com/bright-interaction/slab/internal/config"
 	"github.com/bright-interaction/slab/internal/revisions"
 	"github.com/bright-interaction/slab/internal/store"
+
+	"github.com/bright-interaction/slab/internal/agent"
 )
 
 type BlockHandler struct {
@@ -17,10 +19,40 @@ type BlockHandler struct {
 	queries  *store.Queries
 	db       *sql.DB
 	recorder *revisions.Recorder
+	// guardrails runs the same per-site block validation the agent and MCP
+	// surfaces run. It was wired to those two only, so the identical payload
+	// rejected by create_block over MCP was accepted by POST
+	// /api/pages/{id}/blocks. internal/perfectfoundation lists 12 checks as
+	// owned by ValidateBlock, and none of them held on this path.
+	guardrails *agent.GuardrailEngine
 }
 
 func NewBlockHandler(cfg *config.Config, queries *store.Queries, db *sql.DB) *BlockHandler {
-	return &BlockHandler{cfg: cfg, queries: queries, db: db}
+	return &BlockHandler{
+		cfg:        cfg,
+		queries:    queries,
+		db:         db,
+		guardrails: agent.NewGuardrailEngine(queries),
+	}
+}
+
+// validateBlockData runs the guardrail engine and writes the 422 response when
+// the payload violates a site rule. Returns false when the caller must stop.
+// Same contract and same response shape as the agent surface, so a client
+// switching between REST and MCP sees consistent behaviour.
+func (h *BlockHandler) validateBlockData(w http.ResponseWriter, r *http.Request, siteID, blockType, dataJSON string) bool {
+	if h.guardrails == nil {
+		return true
+	}
+	violations := h.guardrails.ValidateBlock(r.Context(), siteID, blockType, dataJSON)
+	if agent.HasErrors(violations) {
+		writeJSON(w, http.StatusUnprocessableEntity, map[string]any{
+			"error":      "Guardrail violations",
+			"violations": violations,
+		})
+		return false
+	}
+	return true
 }
 
 // SetRecorder wires the revisions recorder. Nil-safe.
@@ -77,6 +109,9 @@ func (h *BlockHandler) Create(w http.ResponseWriter, r *http.Request) {
 	dataJSON := "{}"
 	if len(req.Data) > 0 {
 		dataJSON = string(req.Data)
+	}
+	if !h.validateBlockData(w, r, siteID, req.BlockType, dataJSON) {
+		return
 	}
 	styleJSON := "{}"
 	if len(req.Style) > 0 {
@@ -159,6 +194,12 @@ func (h *BlockHandler) Update(w http.ResponseWriter, r *http.Request) {
 		} else {
 			params.IsVisible = 0
 		}
+	}
+
+	// Validate the RESOLVED payload, not just the delta: a partial update can
+	// turn an innocuous block into a violating one by changing data alone.
+	if !h.validateBlockData(w, r, siteID, params.BlockType, params.DataJson) {
+		return
 	}
 
 	if h.recorder != nil {
@@ -414,6 +455,20 @@ func (h *BlockHandler) BulkSave(w http.ResponseWriter, r *http.Request) {
 	defer tx.Rollback()
 
 	qtx := h.queries.WithTx(tx)
+
+	// Validate every incoming block BEFORE clearing the page. Validating
+	// inside the insert loop would mean a violation on block 7 had already
+	// deleted the page's existing blocks, and the rollback path is the only
+	// thing standing between that and data loss.
+	for _, b := range req.Blocks {
+		d := "{}"
+		if len(b.Data) > 0 {
+			d = string(b.Data)
+		}
+		if !h.validateBlockData(w, r, siteID, b.BlockType, d) {
+			return
+		}
+	}
 
 	// Delete existing blocks
 	if err := qtx.DeleteBlocksByPage(r.Context(), pageID); err != nil {

@@ -235,6 +235,17 @@ func main() {
 	webhookDeliveryMgr.Start(mgrCtx)
 	handlers.SetWebhookEmitter(webhook.NewEmitter(queries))
 
+	// Checkout commits the inventory + discount reservation BEFORE creating
+	// the Mollie payment, so anything that stops the payment from being
+	// created (a Mollie outage, a missing API key, no resolvable public URL)
+	// left the order at 'pending' with no payment_id. No webhook ever arrives
+	// for those, and the release path only ran from the 'failed' webhook, so
+	// the stock and the discount use were consumed permanently by an order
+	// nobody paid for. This reaper is the missing half: it releases those
+	// reservations. Keyed on payment_id = '' so an order whose customer is
+	// still on the Mollie page is never touched.
+	handlers.NewOrderHandler(cfg, queries, sqlDB).StartUnpaidOrderReaper(mgrCtx)
+
 	srv := server.New(cfg, sqlDB, queries, st)
 	srv.AnalyticsDB = analyticsMgrConn
 	srv.RetentionMgr = retentionMgr

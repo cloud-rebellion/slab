@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 
@@ -366,5 +367,117 @@ func TestOrders_WebhookPaidIdempotentAndAmountChecked(t *testing.T) {
 	}
 	if v3, _ := q.GetProductVariantByID(ctx, v.ID); v3.InventoryCount != 10 {
 		t.Errorf("inventory after mismatch = %d; want unchanged 10", v3.InventoryCount)
+	}
+}
+
+// The CRITICAL this reaper exists for. Checkout commits the reservation before
+// creating the Mollie payment, so when payment creation never happens (Mollie
+// down, no API key, no public URL) the order sits at pending with no
+// payment_id, no webhook ever arrives, and the release path is unreachable.
+// The stock and the discount use were consumed permanently by an order nobody
+// paid for. This test walks a real checkout, ages it, and asserts recovery.
+func TestOrders_ReaperReleasesStrandedUnpaidReservations(t *testing.T) {
+	db, q := setupDeployTestDB(t)
+	siteID := "ositea0000000000reap01"
+	seedSite(t, q, siteID)
+	_, v := seedActiveProductWithVariant(t, q, siteID, "hat", 1)
+	h := NewOrderHandler(nil, q, db)
+	r := checkoutRouter(h)
+
+	// A real checkout. No Mollie is configured in this harness, which is
+	// exactly the stranding condition: the order gets no payment_id.
+	code, body := postJSON(t, r, "/api/sites/"+siteID+"/checkout", map[string]any{
+		"items":    []map[string]any{{"variant_id": v.ID, "quantity": 1}},
+		"customer": map[string]any{"email": "buyer@example.com", "name": "Buyer"},
+	})
+	if code != http.StatusCreated {
+		t.Fatalf("checkout status = %d", code)
+	}
+	orderID := body["order"].(map[string]any)["id"].(string)
+
+	after, err := q.GetProductVariantByID(t.Context(), v.ID)
+	if err != nil {
+		t.Fatalf("read variant: %v", err)
+	}
+	if after.InventoryCount != 0 {
+		t.Fatalf("precondition: inventory = %d, want 0 (the reservation should be held)", after.InventoryCount)
+	}
+
+	// Not yet stale: reaping here would rob a customer still on the payment page.
+	if n, err := h.ReapUnpaidOrders(t.Context(), time.Now().UTC()); err != nil || n != 0 {
+		t.Fatalf("fresh order was reaped (n=%d, err=%v); a customer mid-payment would lose their cart", n, err)
+	}
+
+	// Past the TTL.
+	n, err := h.ReapUnpaidOrders(t.Context(), time.Now().UTC().Add(UnpaidOrderTTL+time.Minute))
+	if err != nil {
+		t.Fatalf("reap: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("reaped %d orders, want 1", n)
+	}
+
+	restocked, err := q.GetProductVariantByID(t.Context(), v.ID)
+	if err != nil {
+		t.Fatalf("re-read variant: %v", err)
+	}
+	if restocked.InventoryCount != 1 {
+		t.Errorf("inventory = %d, want 1: the stranded reservation was never released, so the last unit is unsellable forever", restocked.InventoryCount)
+	}
+	o, err := q.GetOrderByID(t.Context(), store.GetOrderByIDParams{ID: orderID, SiteID: siteID})
+	if err != nil {
+		t.Fatalf("re-read order: %v", err)
+	}
+	if o.Status != "failed" {
+		t.Errorf("order status = %q, want failed", o.Status)
+	}
+
+	// Idempotent: a second pass must not restock again and invent stock.
+	if n, err := h.ReapUnpaidOrders(t.Context(), time.Now().UTC().Add(UnpaidOrderTTL+time.Minute)); err != nil || n != 0 {
+		t.Fatalf("second pass reaped %d (err=%v), want 0", n, err)
+	}
+	again, _ := q.GetProductVariantByID(t.Context(), v.ID)
+	if again.InventoryCount != 1 {
+		t.Errorf("inventory = %d after a second reap pass, want 1: double release invents stock", again.InventoryCount)
+	}
+}
+
+// pending -> cancelled is a legal operator transition that used to write the
+// status and nothing else, leaving the stock decremented with no
+// inventory_adjustments row to explain it.
+func TestOrders_CancellingPendingOrderReleasesReservation(t *testing.T) {
+	db, q := setupDeployTestDB(t)
+	siteID := "ositea0000000000canc01"
+	seedSite(t, q, siteID)
+	_, v := seedActiveProductWithVariant(t, q, siteID, "hat", 1)
+	h := NewOrderHandler(nil, q, db)
+	r := checkoutRouter(h)
+	r.Patch("/api/sites/{siteID}/orders/{orderID}/status", h.UpdateStatus)
+
+	code, body := postJSON(t, r, "/api/sites/"+siteID+"/checkout", map[string]any{
+		"items":    []map[string]any{{"variant_id": v.ID, "quantity": 1}},
+		"customer": map[string]any{"email": "buyer@example.com", "name": "Buyer"},
+	})
+	if code != http.StatusCreated {
+		t.Fatalf("checkout status = %d", code)
+	}
+	orderID := body["order"].(map[string]any)["id"].(string)
+
+	req := httptest.NewRequest(http.MethodPatch,
+		"/api/sites/"+siteID+"/orders/"+orderID+"/status",
+		strings.NewReader(`{"status":"cancelled"}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("cancel status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+
+	after, err := q.GetProductVariantByID(t.Context(), v.ID)
+	if err != nil {
+		t.Fatalf("read variant: %v", err)
+	}
+	if after.InventoryCount != 1 {
+		t.Errorf("inventory = %d after cancelling an unpaid order, want 1: the last unit is unsellable and no adjustment row explains it", after.InventoryCount)
 	}
 }

@@ -83,3 +83,18 @@ WHERE status = 'pending'
   AND created_at < ?
 ORDER BY created_at
 LIMIT ?;
+
+-- name: ClaimOrderForRefund :execrows
+-- Atomically claim an order for refund. Refund used to be check-then-act
+-- across a network call: read status, canTransition, then CreateRefund at
+-- Mollie. Two concurrent requests (an operator double-click, or a dashboard
+-- retry on a slow response) both read 'paid', both passed the check, and both
+-- called Mollie for the full amount.
+--
+-- Claiming locally FIRST makes the second caller lose: rows_affected = 0 means
+-- someone else already owns this refund, so return early instead of calling
+-- Mollie again. The guard is on the from-state, not a flag, so it also refuses
+-- an order that was never refundable.
+UPDATE orders
+SET status = 'refunded', updated_at = datetime('now')
+WHERE id = ? AND site_id = ? AND status IN ('paid', 'fulfilled');

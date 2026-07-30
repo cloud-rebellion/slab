@@ -266,12 +266,48 @@ func (h *OrderHandler) Refund(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusFailedDependency, err.Error())
 		return
 	}
+
+	// Claim the refund locally BEFORE calling Mollie. This was check-then-act
+	// across a network call: two concurrent requests (an operator
+	// double-clicking, or the dashboard retrying a slow response) both read
+	// 'paid' above, both passed canTransition, and both created a refund at
+	// Mollie for the full amount. Only the last refund_id was persisted, so
+	// the second payout was invisible locally.
+	//
+	// Whoever wins the guarded UPDATE owns the refund; the loser sees zero
+	// rows and stops here without touching Mollie.
+	claimed, err := h.queries.ClaimOrderForRefund(r.Context(), store.ClaimOrderForRefundParams{
+		ID:     orderID,
+		SiteID: siteID,
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "refund failed: could not claim order")
+		return
+	}
+	if claimed == 0 {
+		writeError(w, http.StatusConflict, "this order is already being refunded or is no longer refundable")
+		return
+	}
+
 	client := mollie.NewClient(apiKey)
 	refund, err := client.CreateRefund(r.Context(), o.PaymentID, mollie.CreateRefundInput{
 		Amount:      mollie.MoneyValue{Currency: o.Currency, Value: mollie.FormatAmount(o.TotalCents)},
 		Description: "Refund " + o.OrderNumber,
 	})
 	if err != nil {
+		// Release the claim: we marked it 'refunded' optimistically, and no
+		// money moved. Leaving it claimed would strand the order in a state
+		// that says refunded while the customer still holds their charge.
+		if rerr := h.queries.UpdateOrderStatus(r.Context(), store.UpdateOrderStatusParams{
+			Status:        o.Status,
+			PaymentStatus: o.PaymentStatus,
+			Column3:       o.Status, Column4: o.Status, Column5: o.Status, Column6: o.Status,
+			ID:     orderID,
+			SiteID: siteID,
+		}); rerr != nil {
+			slog.Error("refund: Mollie failed AND un-claiming the order failed; it now reads refunded with no money moved",
+				"order_id", orderID, "site_id", siteID, "err", rerr)
+		}
 		writeError(w, http.StatusBadGateway, "Mollie refund failed: "+err.Error())
 		return
 	}
