@@ -857,13 +857,37 @@ func escapeHTML(s string) string {
 	return s
 }
 
-// escapeURL sanitizes a URL for href/src attribute use. Rejects javascript: and
-// data: schemes, then escapes for attribute context.
+// urlSchemeStripper removes the characters browsers discard from a URL BEFORE
+// resolving its scheme: ASCII tab, LF and CR per the WHATWG URL spec, plus the
+// other C0 controls and the space, which are stripped or rejected in practice.
+//
+// This exists because the scheme check below used TrimSpace, which removes
+// LEADING whitespace but nothing embedded. So "java\tscript:alert(1)" did not
+// match the "javascript:" prefix and passed through, while the browser removed
+// the tab and executed it. Same for \n, \r and a leading NUL. The guardrail on
+// the agent side has the same blind spot (it does strings.Contains on the
+// unstripped value), so nothing else caught it either.
+var urlSchemeStripper = strings.NewReplacer(
+	"\t", "", "\n", "", "\r", "", "\x00", "", "\x01", "", "\x02", "", "\x03", "",
+	"\x04", "", "\x05", "", "\x06", "", "\x07", "", "\x08", "", "\x0b", "",
+	"\x0c", "", "\x0e", "", "\x0f", "", "\x10", "", "\x11", "", "\x12", "",
+	"\x13", "", "\x14", "", "\x15", "", "\x16", "", "\x17", "", "\x18", "",
+	"\x19", "", "\x1a", "", "\x1b", "", "\x1c", "", "\x1d", "", "\x1e", "", "\x1f", "",
+	" ", "",
+)
+
+// dangerousURLSchemes are the schemes that can execute. Checked against the
+// stripped, lowercased value so no amount of embedded whitespace hides them.
+var dangerousURLSchemes = []string{"javascript:", "data:", "vbscript:", "blob:", "filesystem:"}
+
+// escapeURL sanitizes a URL for href/src attribute use. Rejects executable
+// schemes, then escapes for attribute context.
 func escapeURL(s string) string {
-	lower := strings.ToLower(strings.TrimSpace(s))
-	// Block dangerous schemes; fall back to a safe anchor.
-	for _, bad := range []string{"javascript:", "data:", "vbscript:"} {
-		if strings.HasPrefix(lower, bad) {
+	// Strip FIRST, then compare. The browser does the same, and comparing
+	// before stripping is what let "java<TAB>script:" through.
+	stripped := strings.ToLower(urlSchemeStripper.Replace(s))
+	for _, bad := range dangerousURLSchemes {
+		if strings.HasPrefix(stripped, bad) {
 			return "#"
 		}
 	}

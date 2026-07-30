@@ -172,14 +172,24 @@ func RenderLayouts(ctx context.Context, queries *store.Queries, siteID string, w
 	// Security headers as meta (belt-and-suspenders: headers also sent via
 	// _headers file and nginx.conf for directives browsers honor only in
 	// headers, e.g. frame-ancestors, HSTS, X-Frame-Options).
-	if headers, err := BuildSecurityHeaders(ctx, queries, siteID); err == nil {
-		if headers.ReferrerPolicy != "" {
-			b.WriteString(fmt.Sprintf("  <meta name=\"referrer\" content=\"%s\" />\n", escapeAttr(headers.ReferrerPolicy)))
-		}
-		// Use meta-safe CSP subset -- frame-ancestors etc. only work in headers.
-		if metaCSP := CSPForMeta(headers.CSP); metaCSP != "" {
-			b.WriteString(fmt.Sprintf("  <meta http-equiv=\"Content-Security-Policy\" content=\"%s\" />\n", escapeAttr(metaCSP)))
-		}
+	// Propagate the error instead of discarding it. BuildSecurityHeaders
+	// deliberately fails CLOSED on a settings read error (see the comment in
+	// security.go), and then this caller threw that away and rendered the
+	// layout with no referrer meta and no CSP meta. A transient SQLITE_BUSY
+	// during this one step, with the later steps succeeding, produced a
+	// "successful" build in which every page shipped without a CSP, which is
+	// exactly when the injection findings elsewhere in this audit stop being
+	// mitigated. Failing the build is the correct outcome: it is retried.
+	headers, err := BuildSecurityHeaders(ctx, queries, siteID)
+	if err != nil {
+		return fmt.Errorf("build security headers for layout: %w", err)
+	}
+	if headers.ReferrerPolicy != "" {
+		b.WriteString(fmt.Sprintf("  <meta name=\"referrer\" content=\"%s\" />\n", escapeAttr(headers.ReferrerPolicy)))
+	}
+	// Use meta-safe CSP subset -- frame-ancestors etc. only work in headers.
+	if metaCSP := CSPForMeta(headers.CSP); metaCSP != "" {
+		b.WriteString(fmt.Sprintf("  <meta http-equiv=\"Content-Security-Policy\" content=\"%s\" />\n", escapeAttr(metaCSP)))
 	}
 
 	// JSON-LD Organization schema for AI search / knowledge graph entity anchoring.

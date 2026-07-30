@@ -37,9 +37,23 @@ var redactPatterns = []redactPattern{
 	},
 	{
 		kind: KindPhone,
-		// Loose international + Swedish formats. Matches +CC followed
-		// by 7..14 digits with optional spaces/dashes/parentheses.
-		re:   regexp.MustCompile(`\+\d{1,3}[\s\-().]*\d{1,4}[\s\-().]*\d{1,4}[\s\-().]*\d{1,9}`),
+		// Two alternatives.
+		//
+		// 1. International: +CC followed by 7..14 digits with optional
+		//    separators. This was the ONLY alternative, so it required a
+		//    leading "+" and therefore missed every national-format number:
+		//    "070-123 45 67" passed through a get_profile response to the
+		//    model completely untokenized.
+		// 2. National: a leading 0 then 8..10 more digits with separators.
+		//    Requires at least one separator, deliberately. A BARE ten-digit
+		//    string is ambiguous between a Swedish mobile (0701234567) and a
+		//    personnummer (9001011234) with no way to tell them apart by shape,
+		//    and the personnummer pattern above runs first and wins. Both are
+		//    PII and both get tokenized either way, so the only cost is a
+		//    mislabelled kind on the marker, which is the right trade against
+		//    loosening the personnummer match.
+		re: regexp.MustCompile(`(?:\+\d{1,3}[\s\-().]*\d{1,4}[\s\-().]*\d{1,4}[\s\-().]*\d{1,9})` +
+			`|(?:\b0\d{1,3}[\s\-().]+\d{2,4}[\s\-().]*\d{2,4}[\s\-().]*\d{0,4}\b)`),
 		hint: []string{"country", "len"},
 	},
 }

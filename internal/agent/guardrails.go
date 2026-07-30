@@ -86,6 +86,13 @@ func (g *GuardrailEngine) ValidateBlock(ctx context.Context, siteID string, bloc
 	// slash-separated handlers (<svg/onload=>) can't slip past a naive
 	// case-sensitive Contains.
 	low := strings.ToLower(unescaped)
+	// Scheme matching runs against a copy with ASCII whitespace and C0 controls
+	// removed, because browsers strip tab, LF and CR from a URL BEFORE resolving
+	// its scheme. Matching the raw string meant "java\tscript:alert(1)" passed
+	// both this check and the renderer's escapeURL while executing fine in a
+	// browser. Only the scheme scan uses this; the tag and handler checks below
+	// still run on `low`, where the raw form is what matters.
+	lowStripped := strings.ToLower(urlControlStripper.Replace(unescaped))
 	if scriptTagRE.MatchString(low) {
 		violations = append(violations, Violation{
 			Rule:     "security",
@@ -94,7 +101,7 @@ func (g *GuardrailEngine) ValidateBlock(ctx context.Context, siteID string, bloc
 		})
 	}
 	for _, scheme := range dangerousURLSchemes {
-		if strings.Contains(low, scheme) {
+		if strings.Contains(lowStripped, scheme) {
 			violations = append(violations, Violation{
 				Rule:     "security",
 				Message:  fmt.Sprintf("Dangerous URL scheme %q is not allowed. Use plain https:// links.", scheme),
@@ -546,6 +553,19 @@ var (
 	scriptTagRE          = regexp.MustCompile(`<\s*script`)
 	inlineEventHandlerRE = regexp.MustCompile(`<[^>]*[\s/]on[a-z]+\s*=`)
 	dangerousURLSchemes  = []string{"javascript:", "vbscript:", "data:text/html"}
+
+	// urlControlStripper mirrors the renderer's stripper in
+	// internal/builder/pages.go. Both must strip the same set, or the two
+	// layers disagree about what a URL says and the gap between them is
+	// exactly where an injection lives.
+	urlControlStripper = strings.NewReplacer(
+		"\t", "", "\n", "", "\r", "", "\x00", "", "\x01", "", "\x02", "", "\x03", "",
+		"\x04", "", "\x05", "", "\x06", "", "\x07", "", "\x08", "", "\x0b", "",
+		"\x0c", "", "\x0e", "", "\x0f", "", "\x10", "", "\x11", "", "\x12", "",
+		"\x13", "", "\x14", "", "\x15", "", "\x16", "", "\x17", "", "\x18", "",
+		"\x19", "", "\x1a", "", "\x1b", "", "\x1c", "", "\x1d", "", "\x1e", "", "\x1f", "",
+		" ", "",
+	)
 )
 
 var genericAnchors = []string{

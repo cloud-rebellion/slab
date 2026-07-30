@@ -12,6 +12,7 @@ import (
 	"regexp"
 	"strings"
 
+	"fmt"
 	"github.com/bright-interaction/slab/internal/agent"
 	"github.com/bright-interaction/slab/internal/billing"
 	"github.com/bright-interaction/slab/internal/config"
@@ -41,6 +42,38 @@ var (
 	slugPattern  = regexp.MustCompile(`^[a-z0-9-]+$`)
 	colorPattern = regexp.MustCompile(`^#[0-9a-fA-F]{6}$`)
 )
+
+// validateBrandingColors checks every supplied colour against colorPattern.
+// Values reach css.go, which writes `--color-primary: <value>;` straight into
+// the :root block of the generated stylesheet, so an unvalidated one closes the
+// rule and injects arbitrary CSS (`red } html{display:none!important} :root{--z: red`
+// blanks the site with its own stylesheet, which no CSP can stop).
+//
+// colorPattern existed and had exactly two call sites, neither of them Create
+// or Update, so the agent branding surface validated all nine while the two
+// REST surfaces validated none. Same helper for all of them now.
+func validateBrandingColors(pairs map[string]*string) error {
+	for name, v := range pairs {
+		if v == nil || *v == "" {
+			continue
+		}
+		if !colorPattern.MatchString(*v) {
+			return fmt.Errorf("%s must match ^#[0-9a-fA-F]{6}$", name)
+		}
+	}
+	return nil
+}
+
+// validateBrandingColorValues is the non-pointer form for create-style payloads
+// where an empty string means "use the default".
+func validateBrandingColorValues(pairs map[string]string) error {
+	m := make(map[string]*string, len(pairs))
+	for k := range pairs {
+		v := pairs[k]
+		m[k] = &v
+	}
+	return validateBrandingColors(m)
+}
 
 // applyDefaultSiteSettings inserts the security and server best-practice settings
 // for a freshly created site using the supplied Queries handle.
@@ -156,6 +189,15 @@ func (h *SiteHandler) Create(w http.ResponseWriter, r *http.Request) {
 	var req createSiteRequest
 	if err := parseJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "Invalid request body")
+		return
+	}
+	if err := validateBrandingColorValues(map[string]string{
+		"primary_color":   req.PrimaryColor,
+		"secondary_color": req.SecondaryColor,
+		"bg_color":        req.BgColor,
+		"text_color":      req.TextColor,
+	}); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	if req.Name == "" || req.Slug == "" {
@@ -625,6 +667,20 @@ func (h *SiteHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := parseJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "Invalid request body")
+		return
+	}
+	if err := validateBrandingColors(map[string]*string{
+		"primary_color":    req.PrimaryColor,
+		"secondary_color":  req.SecondaryColor,
+		"bg_color":         req.BgColor,
+		"text_color":       req.TextColor,
+		"surface_color":    req.SurfaceColor,
+		"border_color":     req.BorderColor,
+		"muted_color":      req.MutedColor,
+		"accent_color":     req.AccentColor,
+		"on_primary_color": req.OnPrimaryColor,
+	}); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 

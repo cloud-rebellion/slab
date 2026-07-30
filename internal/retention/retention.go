@@ -40,6 +40,7 @@ import (
 	"sync"
 	"time"
 
+	"fmt"
 	"github.com/bright-interaction/slab/internal/store"
 )
 
@@ -706,21 +707,32 @@ func (m *Manager) sweepPlanQuotaOverages(ctx context.Context) (int, []string) {
 			continue // unlimited plan; skip the SUM queries entirely
 		}
 
+		// A workspace whose usage could not be MEASURED must not be reported
+		// compliant. These two errors were discarded, so a SUM failing under
+		// concurrent write load (SQLITE_BUSY is routine here) left usage at 0,
+		// the over-quota branch was skipped, and the sweep returned (0, nil):
+		// a green dashboard for a workspace that might be far over its cap,
+		// with no plan_quota_overage_detected row and nothing to bill or block.
+		// That defeats the stated purpose of the sweep, so record and skip.
 		storageUsed := int64(0)
 		if storageGB >= 0 {
 			raw, err := m.queries.SumStorageBytesByWorkspace(ctx, ws.ID)
-			if err == nil {
-				storageUsed = anyToInt64(raw)
+			if err != nil {
+				errs = append(errs, fmt.Sprintf("workspace %s: sum storage bytes: %v (usage unknown, not reported compliant)", ws.ID, err))
+				continue
 			}
+			storageUsed = anyToInt64(raw)
 		}
 		buildUsed := int64(0)
 		if buildMin >= 0 {
 			raw, err := m.queries.SumBuildMinutesByWorkspaceSinceCutoff(ctx, store.SumBuildMinutesByWorkspaceSinceCutoffParams{
 				WorkspaceID: ws.ID, CreatedAt: now,
 			})
-			if err == nil {
-				buildUsed = anyToInt64(raw) / 60000
+			if err != nil {
+				errs = append(errs, fmt.Sprintf("workspace %s: sum build minutes: %v (usage unknown, not reported compliant)", ws.ID, err))
+				continue
 			}
+			buildUsed = anyToInt64(raw) / 60000
 		}
 
 		storageCap := storageGB * 1024 * 1024 * 1024

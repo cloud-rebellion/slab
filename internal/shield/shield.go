@@ -93,6 +93,16 @@ var piiFieldKinds = map[string]Kind{
 	// happens to catch it; do not rely on that for a new field.
 	"member_name":  KindName,
 	"member_email": KindEmail,
+	// site_profiles fields, returned by get_profile. These are the operator's
+	// own business contact details rather than a visitor's, which is why this
+	// is lower stakes than the order fields, but they were entirely uncovered:
+	// not in this map and not matched by any regex, so they went to the model
+	// verbatim. Only shipping_address_json / billing_address_json were keyed.
+	"contact_phone": KindPhone,
+	"contact_email": KindEmail,
+	"address_line1": KindFreeform,
+	"address_line2": KindFreeform,
+	"postal_code":   KindFreeform,
 }
 
 // defaultHintKeys is the ordered hint-key list used when tokenizing a
