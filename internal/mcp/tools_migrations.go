@@ -152,6 +152,12 @@ func (s *Server) registerMigrationTools() {
 				manifest, err := runMCPImporter(crawlCtx, args.SourceType, args.SourceURL, args.WordPressAuth, args.WebflowSiteID, args.WebflowAuthToken, args.GhostContentKey)
 				if err == nil {
 					var manifestJSON []byte
+					// Redact addresses from crawl warnings before they are stored. Warnings
+					// travel back to the agent inside the manifest and are read by the same
+					// tenant-facing surfaces as the error field, so they carry the same
+					// disclosure risk. Redacted in place rather than dropped, so the tenant
+					// still learns which page had a problem.
+					manifest.Warnings = migration.SafeWarnings(manifest.Warnings)
 					manifestJSON, err = json.Marshal(manifest)
 					if err == nil {
 						err = s.queries.UpdateMigrationManifest(crawlCtx, store.UpdateMigrationManifestParams{
@@ -162,7 +168,7 @@ func (s *Server) registerMigrationTools() {
 				if err != nil {
 					slog.Warn("migration crawl failed", "migration_id", id, "site_id", agent.SiteID, "err", err)
 					if uerr := s.queries.UpdateMigrationStatus(context.Background(), store.UpdateMigrationStatusParams{
-						ID: id, Status: "failed", Error: err.Error(),
+						ID: id, Status: "failed", Error: migration.SafeErrorText(err),
 					}); uerr != nil {
 						slog.Error("migration crawl: persisting failed status failed", "migration_id", id, "err", uerr)
 					}
@@ -303,7 +309,7 @@ func (s *Server) registerMigrationTools() {
 				migration.ApplyOptions{Upsert: args.Upsert})
 			if err != nil {
 				_ = s.queries.UpdateMigrationStatus(ctx, store.UpdateMigrationStatusParams{
-					ID: args.MigrationID, Status: "failed", Error: err.Error(),
+					ID: args.MigrationID, Status: "failed", Error: migration.SafeErrorText(err),
 				})
 				return "", err
 			}

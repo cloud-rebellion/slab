@@ -12,6 +12,8 @@
 //	oss    = free    (no limits, self-hosted)
 package billing
 
+import "log/slog"
+
 // Plan describes one tier in the plan ladder. -1 means unlimited.
 //
 // MaxPagesPerSite + MaxRedirectsPerSite were added 2026-05-06 (Sprint 3
@@ -131,7 +133,17 @@ func Limit(planKey, resource string) int64 {
 		}
 		return 0
 	default:
-		return -1
+		// Fail CLOSED on an unrecognised resource. This returned -1
+		// ("unlimited"), and every gate treats -1 as allow, so a typo'd
+		// resource name in a NEW gate would silently never apply the cap on any
+		// tier, and no test would catch it because a passing quota check is the
+		// expected result in most tests. Allows() inherits the same fix, so
+		// Allows(plan, "whitelabel") no longer grants white-label to the free
+		// oss plan. All current call sites pass correct literals, so this
+		// changes no live behaviour; it changes the direction of the next
+		// mistake.
+		slog.Warn("billing: unknown plan resource, denying by default", "plan", planKey, "resource", resource)
+		return 0
 	}
 }
 

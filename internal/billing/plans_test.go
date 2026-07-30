@@ -61,9 +61,22 @@ func TestCustomDomainGate(t *testing.T) {
 	}
 }
 
+// Fails CLOSED. This asserted `want -1 fallback`, i.e. that an unrecognised
+// resource reads as UNLIMITED, so the test encoded the defect: every gate treats
+// -1 as allow, so a typo'd resource name in a new gate would silently never
+// apply the cap on any tier and no test would notice, because a passing quota
+// check is the expected result almost everywhere.
 func TestUnknownResource(t *testing.T) {
-	if got := Limit("solo", "made_up_resource"); got != -1 {
-		t.Errorf("unknown resource: got %d, want -1 fallback", got)
+	if got := Limit("solo", "made_up_resource"); got != 0 {
+		t.Errorf("unknown resource: got %d, want 0 (deny); -1 would mean a typo'd gate silently never applies", got)
+	}
+	// Allows() inherits it, so a misspelled feature no longer grants the
+	// feature to the free plan.
+	if Allows("oss", "whitelabel") {
+		t.Error("Allows(oss, \"whitelabel\") = true; a misspelled feature must not grant it")
+	}
+	if !Allows("agency", "white_label") {
+		t.Error("Allows(agency, \"white_label\") = false; the correctly spelled feature must still work")
 	}
 }
 

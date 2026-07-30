@@ -102,6 +102,12 @@ func (h *MigrationHandler) Start(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadGateway, "Importer failed: "+err.Error())
 		return
 	}
+	// Redact addresses from crawl warnings before they are stored. Warnings
+	// travel back to the agent inside the manifest and are read by the same
+	// tenant-facing surfaces as the error field, so they carry the same
+	// disclosure risk. Redacted in place rather than dropped, so the tenant
+	// still learns which page had a problem.
+	manifest.Warnings = migration.SafeWarnings(manifest.Warnings)
 	manifestJSON, err := json.Marshal(manifest)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "Encode manifest")
@@ -336,7 +342,7 @@ func (h *MigrationHandler) Apply(w http.ResponseWriter, r *http.Request) {
 		migration.ApplyOptions{Upsert: req.Upsert})
 	if err != nil {
 		_ = h.queries.UpdateMigrationStatus(r.Context(), store.UpdateMigrationStatusParams{
-			ID: id, Status: "failed", Error: err.Error(),
+			ID: id, Status: "failed", Error: migration.SafeErrorText(err),
 		})
 		writeError(w, http.StatusUnprocessableEntity, err.Error())
 		return

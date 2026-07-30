@@ -70,7 +70,20 @@ func (c *Client) Enabled() bool {
 // configured BrightCRM webhook URL. 200 and 204 responses are treated as
 // success. Disabled clients return nil without a network call.
 func (c *Client) Send(ctx context.Context, event Event) error {
-	if !c.Enabled() {
+	if c == nil || c.webhookURL == "" {
+		return nil
+	}
+	// ONE acquisition, snapshotted. This used to call Enabled() (which takes
+	// RLock, checks c.secret != "", releases) and then re-take RLock lower down
+	// to read c.secret. A rotation landing between the two returned a
+	// momentarily empty secret, so the event was HMAC'd with an empty key and
+	// POSTed anyway: the full payload, including the email on an identified
+	// event, transmitted with a signature the receiver rejects. Payload out,
+	// event lost.
+	c.mu.RLock()
+	currentSecret := c.secret
+	c.mu.RUnlock()
+	if currentSecret == "" {
 		return nil
 	}
 
@@ -85,9 +98,6 @@ func (c *Client) Send(ctx context.Context, event Event) error {
 	// window, in-flight requests still verify there. We never sign with the
 	// previous value once rotated. RWMutex copy snapshots the value so a
 	// concurrent UpdateSecret swap never tears.
-	c.mu.RLock()
-	currentSecret := c.secret
-	c.mu.RUnlock()
 	mac := hmac.New(sha256.New, []byte(currentSecret))
 	mac.Write(body)
 	sig := hex.EncodeToString(mac.Sum(nil))
@@ -119,11 +129,35 @@ func (c *Client) Send(ctx context.Context, event Event) error {
 //
 // Use this from request handlers where the user-facing response must not
 // block on BrightCRM round-trips.
+// asyncSlots bounds concurrent SendAsync goroutines.
+//
+// SendAsync used to spawn a naked goroutine per event with no cap. When the
+// BrightCRM webhook accepts TCP but stops responding (a hung upstream, not a
+// fast error), every send parks for the full 5s timeout, so ~2,000 events/sec
+// leaves ~10,000 live goroutines and ~10,000 open sockets. The process then hits
+// its file-descriptor limit and UNRELATED outbound calls start failing with
+// "too many open files", including the Mollie CreatePayment in checkout. A slow
+// CRM taking down checkout is not an acceptable coupling.
+//
+// Non-blocking acquire: when the pool is saturated the event is DROPPED with a
+// log line rather than queued, because these are best-effort analytics pings and
+// blocking the caller is the thing SendAsync exists to avoid. Identified events
+// deserve real durability (an outbox), which is a separate, larger change.
+var asyncSlots = make(chan struct{}, 64)
+
 func (c *Client) SendAsync(event Event) {
 	if !c.Enabled() {
 		return
 	}
+	select {
+	case asyncSlots <- struct{}{}:
+	default:
+		slog.Warn("crmsync: async send pool saturated, dropping event",
+			"event", event.Event, "site_id", event.SiteID)
+		return
+	}
 	go func() {
+		defer func() { <-asyncSlots }()
 		ctx, cancel := context.WithTimeout(context.Background(), defaultTimeout)
 		defer cancel()
 		if err := c.Send(ctx, event); err != nil {

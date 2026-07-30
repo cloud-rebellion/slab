@@ -654,8 +654,19 @@ func (m *Manager) sweepGDPRDeletions(ctx context.Context) (deleted int, errs []s
 			ResourceID:   u.ID,
 			ChangesJson:  `{"email":"` + escapeJSONString(u.Email) + `","cooling_days":` + strconv.Itoa(cooling) + `}`,
 		}); err != nil {
-			// Log but proceed; the delete itself is the contract.
-			slog.Warn("retention: audit write failed for gdpr delete", "user_id", u.ID, "err", err)
+			// Do NOT proceed. An irreversible erasure whose only evidence is a
+			// log line subject to journal retention means a regulator asking
+			// for the record of that erasure gets nothing. Skip this user and
+			// retry on the next sweep: the cooling window has already passed,
+			// so a few more minutes costs nothing, whereas an unrecorded
+			// hard-delete cannot be undone or reconstructed.
+			//
+			// The ordering above (audit BEFORE delete, so actor_user_id still
+			// resolves) was already right; only the handling was wrong.
+			slog.Error("retention: audit write failed for gdpr delete; SKIPPING the delete so it is retried with a record",
+				"user_id", u.ID, "err", err)
+			errs = append(errs, "gdpr delete "+u.ID+": audit write failed, delete deferred: "+err.Error())
+			continue
 		}
 		if err := m.queries.DeleteUser(ctx, u.ID); err != nil {
 			errs = append(errs, "delete user "+u.ID+": "+err.Error())
@@ -812,7 +823,18 @@ func planLimitFor(planKey, resource string) int64 {
 // and imports `internal/billing` directly.
 //
 // (Defined in billing_shim.go to keep this file's import set short.)
-var billingLimit = func(planKey, resource string) int64 { return -1 }
+// billingLimit is wired to billing.Limit by billing_shim.go at package init.
+// The stub returns 0 (deny), NOT -1 (unlimited): if the shim is ever deleted,
+// renamed, or moved behind a build tag, -1 meant every plan read as unlimited,
+// the `storageGB < 0 && buildMin < 0` short-circuit skipped every workspace,
+// and sweepPlanQuotaOverages returned 0 overages and 0 errors forever while
+// compiling cleanly and passing every test that does not specifically assert an
+// overage. A missing wire must fail loudly, not report compliance.
+var billingLimit = func(planKey, resource string) int64 {
+	slog.Error("retention: billingLimit is not wired (billing_shim.go missing?); denying by default so quota sweeps do not silently report compliant",
+		"plan", planKey, "resource", resource)
+	return 0
+}
 
 // boolStr formats a Go bool as the JSON literal "true" / "false" for
 // our hand-built audit_log changes_json blob. Keeps the retention
