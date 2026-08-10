@@ -1633,8 +1633,14 @@ func renderCustomBlock(data map[string]any) string {
 	// runs on the agent and MCP surfaces, never on the REST block API, and
 	// guardrails.go itself names this render pass as the authoritative
 	// defense. The two comments pointed at each other and neither ran here.
+	//
+	// The policy is customBlockPolicy, not rawHTMLPolicy. This block is an
+	// authoring surface, not a comment field: it carries the section's own
+	// <style>, inline SVG and aria-*/data-* attributes. rawHTMLPolicy drops
+	// all of those, which took the CSS off every custom block estate-wide the
+	// first time a site was rebuilt after that call landed.
 	if markup := dataString(data, "markup"); markup != "" {
-		b.WriteString("    " + sanitizeRawHTML(markup) + "\n")
+		b.WriteString("    " + sanitizeCustomBlockHTML(markup) + "\n")
 	}
 	b.WriteString("  </section>\n")
 	return b.String()

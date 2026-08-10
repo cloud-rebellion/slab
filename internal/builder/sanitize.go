@@ -1,6 +1,7 @@
 package builder
 
 import (
+	"fmt"
 	"regexp"
 	"strings"
 
@@ -74,6 +75,147 @@ var rawHTMLPolicy = func() *bluemonday.Policy {
 func sanitizeRawHTML(s string) string {
 	return rawHTMLPolicy.Sanitize(s)
 }
+
+// safeCustomPropRE accepts an inline style attribute made only of CSS custom
+// properties, which is what the block library uses to seed per-instance
+// animation timings (style="--del:0.7s;--dur:6.2s"). A colon is not in the
+// value class, so no scheme (javascript:, data:) can appear in a value.
+var safeCustomPropRE = regexp.MustCompile(`^(?:\s*--[A-Za-z0-9_-]+\s*:\s*[A-Za-z0-9 .,%#()/_-]+\s*;?)+\s*$`)
+
+// fragmentRefRE accepts only a same-document reference. <use href> and
+// <textPath href> resolve and fetch, so an absolute URL there is an SSRF and
+// exfiltration sink; a fragment cannot leave the page.
+var fragmentRefRE = regexp.MustCompile(`^#[A-Za-z0-9_:.-]+$`)
+
+// svgElements is the presentational SVG surface the block library draws with
+// (card walls, flocks, the guarantee stamp). <script>, <foreignObject>,
+// <animate> and <set> are deliberately absent: the first two execute, the last
+// two can drive an attribute at runtime.
+var svgElements = []string{
+	"svg", "g", "defs", "symbol", "use", "title", "desc",
+	"path", "rect", "circle", "ellipse", "line", "polyline", "polygon",
+	"text", "tspan", "textPath", "clipPath", "mask", "pattern",
+	"linearGradient", "radialGradient", "stop",
+}
+
+// svgAttrs are geometry and paint attributes. No event handlers, no href
+// (granted separately, fragment-only), no xlink:href at all.
+var svgAttrs = []string{
+	"viewBox", "xmlns", "xmlns:xlink", "preserveAspectRatio", "focusable",
+	"d", "x", "y", "dx", "dy", "x1", "y1", "x2", "y2", "cx", "cy", "r", "rx", "ry",
+	"width", "height", "points", "transform", "transform-origin", "gradientUnits",
+	"gradientTransform", "patternUnits", "patternTransform", "offset", "vector-effect",
+	"fill", "fill-opacity", "fill-rule", "stroke", "stroke-width", "stroke-opacity",
+	"stroke-linecap", "stroke-linejoin", "stroke-dasharray", "stroke-dashoffset",
+	"opacity", "stop-color", "stop-opacity", "clip-path", "clip-rule", "mask",
+	"font-family", "font-size", "font-weight", "letter-spacing", "word-spacing",
+	"text-anchor", "dominant-baseline", "startOffset", "shape-rendering",
+}
+
+// customBlockPolicy sanitizes the `custom` block's markup. That block is the
+// authoring surface the whole block library is built on: every section ships as
+// a <style> plus semantic markup, inline SVG for the decorative motifs, aria-*
+// for the landmarks, and data-* for the nav state.
+//
+// rawHTMLPolicy is wrong for it. bluemonday's UGC policy is tuned for untrusted
+// comment HTML, so it drops <style>, all SVG, every aria-*/data-* attribute,
+// loading/decoding, and (because it drops the elements that carry them) most
+// class attributes too. Pointing renderCustomBlock at it to close a stored-XSS
+// hole silently stripped the CSS off every custom block on the next build: a
+// site authored this way renders as unstyled text, and nothing in the build log
+// says so. See the 2026-08-10 post-mortem.
+//
+// What still cannot get through, which is the part that mattered: <script>,
+// <iframe>, <object>, <embed>, on* handlers, and javascript:/data: URLs.
+var customBlockPolicy = func() *bluemonday.Policy {
+	p := bluemonday.UGCPolicy()
+	p.AllowStyling()
+	p.AllowDataAttributes()
+	p.AllowAttrs("id", "class", "role").Globally()
+	p.AllowAttrs("style").Matching(safeCustomPropRE).Globally()
+	p.AllowAttrs(
+		"aria-hidden", "aria-label", "aria-labelledby", "aria-describedby",
+		"aria-current", "aria-expanded", "aria-controls", "aria-live", "aria-atomic",
+	).Globally()
+	p.AllowElements(
+		"section", "header", "footer", "nav", "article", "aside", "main",
+		"figure", "figcaption", "picture", "details", "summary",
+		"time", "mark", "small", "hr", "span", "div",
+	)
+	p.AllowAttrs("loading", "decoding", "width", "height", "sizes", "srcset").OnElements("img")
+	p.AllowAttrs("media", "srcset", "type").OnElements("source")
+	p.AllowAttrs("datetime").OnElements("time")
+	p.AllowAttrs("open").OnElements("details")
+	p.AllowElements(svgElements...)
+	p.AllowAttrs(svgAttrs...).OnElements(svgElements...)
+	p.AllowAttrs("href").Matching(fragmentRefRE).OnElements("use", "textPath")
+	return p
+}()
+
+// styleBlockRE matches a whole <style> element, including its CSS text.
+var styleBlockRE = regexp.MustCompile(`(?is)<style\b[^>]*>(.*?)</style\s*>`)
+
+// cssUnsafeRE removes the CSS constructs that can close the element, reopen
+// markup, fetch, or execute. bluemonday never sees the CSS text (it deletes
+// <style> outright), so this is the whole filter for that content.
+var cssUnsafeRE = regexp.MustCompile(`(?is)</\s*style|<!--|-->|<\s*script|@import|@charset|expression\s*\(|behaviou?r\s*:|-moz-binding|javascript\s*:|vbscript\s*:`)
+
+func sanitizeBlockCSS(css string) string {
+	return cssUnsafeRE.ReplaceAllString(css, "")
+}
+
+// styleSlotPrefix/Suffix bracket the placeholder that stands in for a <style>
+// element while the surrounding markup goes through bluemonday. Letters and
+// digits only, so the sanitizer passes it through as ordinary text and no
+// entity encoding can break the round trip.
+const (
+	styleSlotPrefix = "slabstyleslot"
+	styleSlotSuffix = "endslabstyleslot"
+)
+
+// sanitizeCustomBlockHTML sanitizes custom-block markup while preserving the
+// author's CSS. <style> is lifted out first because bluemonday deletes the
+// element and its text no matter how the policy is configured, so the CSS gets
+// its own filter (sanitizeBlockCSS) and is spliced back at the same position.
+func sanitizeCustomBlockHTML(s string) string {
+	var css []string
+	withSlots := styleBlockRE.ReplaceAllStringFunc(s, func(m string) string {
+		inner := styleBlockRE.FindStringSubmatch(m)[1]
+		css = append(css, sanitizeBlockCSS(inner))
+		return fmt.Sprintf("%s%d%s", styleSlotPrefix, len(css)-1, styleSlotSuffix)
+	})
+	out := svgCaseRestorer.Replace(customBlockPolicy.Sanitize(withSlots))
+	for i, c := range css {
+		slot := fmt.Sprintf("%s%d%s", styleSlotPrefix, i, styleSlotSuffix)
+		out = strings.Replace(out, slot, "<style>"+c+"</style>", 1)
+	}
+	return out
+}
+
+// svgCaseRestorer puts the camelCase back into SVG names that bluemonday's
+// HTML tokenizer lowercases. The HTML parser has a foreign-content fixup table
+// that maps `viewbox` back to `viewBox`, so browsers do cope, but the value
+// then depends on that table rather than on what the author wrote: the same
+// markup copied into a standalone .svg, or read back through the agent API,
+// has a dead viewBox and an unscaled graphic. Restoring it keeps the output
+// identical to the input instead of merely equivalent in one parsing mode.
+var svgCaseRestorer = strings.NewReplacer(
+	"<clippath", "<clipPath", "</clippath", "</clipPath",
+	"<textpath", "<textPath", "</textpath", "</textPath",
+	"<lineargradient", "<linearGradient", "</lineargradient", "</linearGradient",
+	"<radialgradient", "<radialGradient", "</radialgradient", "</radialGradient",
+	" viewbox=", " viewBox=",
+	" preserveaspectratio=", " preserveAspectRatio=",
+	" gradientunits=", " gradientUnits=",
+	" gradienttransform=", " gradientTransform=",
+	" patternunits=", " patternUnits=",
+	" patterntransform=", " patternTransform=",
+	" clippathunits=", " clipPathUnits=",
+	" maskunits=", " maskUnits=",
+	" startoffset=", " startOffset=",
+	" spreadmethod=", " spreadMethod=",
+	" shape-rendering=", " shape-rendering=",
+)
 
 // astroExpressionReplacer neutralises Astro's build-time expression syntax.
 //
