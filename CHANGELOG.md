@@ -6,6 +6,20 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+- **Custom blocks kept their CSS, SVG and ARIA through the build.**
+  `renderCustomBlock` was sanitizing with `rawHTMLPolicy` (bluemonday's
+  UGC policy) to close a stored-XSS hole. That policy also deletes
+  `<style>`, all inline SVG, every `aria-*`/`data-*` attribute and
+  `loading`/`decoding`, so the first build after it landed published every
+  custom-block section as unstyled text with nothing in the build log to
+  say so. `customBlockPolicy` keeps that authoring surface and still
+  refuses `<script>`, `<iframe>`, `<object>`, `on*` handlers and
+  `javascript:`/`data:` URLs; the CSS is lifted out before sanitizing,
+  filtered for element breakout, `@import`, `expression()` and legacy
+  bindings, then spliced back. SVG camelCase (`viewBox` and friends) is
+  restored after the tokenizer lowercases it.
+
 ### Added
 - **Admin write rate limiter** (`AdminWriteRateLimit` middleware,
   `internal/middleware/admin_writes.go`). Per-(user, peer-IP) token
