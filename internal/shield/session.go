@@ -397,6 +397,12 @@ func (s *Session) ShieldJSON(ctx context.Context, raw []byte) ([]byte, error) {
 func (s *Session) shieldAny(ctx context.Context, v any) (any, error) {
 	switch t := v.(type) {
 	case string:
+		// An encoded payload (base64 PNG, data: URI) is not human text and
+		// the regex bank mangles it: the phone pattern matches '+' followed
+		// by digits, which base64 produces constantly. See blob.go.
+		if looksLikeEncodedBlob(t) {
+			return t, nil
+		}
 		return s.RedactString(ctx, t)
 	case []any:
 		out := make([]any, len(t))
