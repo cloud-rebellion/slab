@@ -22,7 +22,7 @@ func renderHeroGraphic(name string, data map[string]any) string {
 	if name == "" {
 		return ""
 	}
-	cls := "hero-graphic hero-graphic--" + escapeAttr(name)
+	cls := "hero-graphic hero-graphic--" + escapeAttrForAstro(name)
 	switch name {
 	// aurora: full-bleed drifting aurora gradient, the showcase-fidelity
 	// signature. Renders in any fidelity; reduced motion freezes it to a
@@ -71,7 +71,7 @@ func renderHeroGraphic(name string, data map[string]any) string {
 			}
 		}
 		return fmt.Sprintf(`<div class="%s" aria-hidden="true"><span>%s</span></div>`,
-			cls, escapeHTML(char))
+			cls, escapeTextForAstro(char))
 	case "audit-receipt":
 		label := dataString(data, "audit_label")
 		if label == "" {
@@ -91,13 +91,13 @@ func renderHeroGraphic(name string, data map[string]any) string {
 		}
 		var b strings.Builder
 		b.WriteString(fmt.Sprintf(`<div class="%s" role="img" aria-label="%s, %s out of %s. Industry average %s.">`,
-			cls, escapeAttr(label), escapeAttr(score), escapeAttr(max), escapeAttr(baseline)))
+			cls, escapeAttrForAstro(label), escapeAttrForAstro(score), escapeAttrForAstro(max), escapeAttrForAstro(baseline)))
 		b.WriteString(`<div class="hero-graphic__chrome"><span></span><span></span><span></span></div>`)
-		b.WriteString(`<p class="hero-graphic__label">` + escapeHTML(label) + `</p>`)
+		b.WriteString(`<p class="hero-graphic__label">` + escapeTextForAstro(label) + `</p>`)
 		b.WriteString(fmt.Sprintf(`<p class="hero-graphic__score"><strong>%s</strong><span>/%s</span></p>`,
-			escapeHTML(score), escapeHTML(max)))
+			escapeTextForAstro(score), escapeTextForAstro(max)))
 		b.WriteString(fmt.Sprintf(`<p class="hero-graphic__baseline">Industry average %s</p>`,
-			escapeHTML(baseline)))
+			escapeTextForAstro(baseline)))
 		b.WriteString(`</div>`)
 		return b.String()
 	}
@@ -133,13 +133,13 @@ func renderSplitHeroBlock(data map[string]any, mediaByID map[string]store.Medium
 	}
 	b.WriteString("    <div class=\"split-hero-content\">\n")
 	if eyebrow := dataString(data, "eyebrow"); eyebrow != "" {
-		b.WriteString(fmt.Sprintf("      <p class=\"eyebrow\">%s</p>\n", escapeHTML(eyebrow)))
+		b.WriteString(fmt.Sprintf("      <p class=\"eyebrow\">%s</p>\n", escapeTextForAstro(eyebrow)))
 	}
 	if headline := dataString(data, "headline"); headline != "" {
 		b.WriteString(fmt.Sprintf("      <h1>%s</h1>\n", renderHeadlineWithAccent(headline, dataString(data, "headline_accent"))))
 	}
 	if sub := dataString(data, "subheading"); sub != "" {
-		b.WriteString(fmt.Sprintf("      <p class=\"subheading\">%s</p>\n", escapeHTML(sub)))
+		b.WriteString(fmt.Sprintf("      <p class=\"subheading\">%s</p>\n", escapeTextForAstro(sub)))
 	}
 	ctaText := dataString(data, "cta_text")
 	secLabel := dataString(data, "secondary_label")
@@ -151,7 +151,7 @@ func renderSplitHeroBlock(data map[string]any, mediaByID map[string]store.Medium
 				ctaURL = "#"
 			}
 			b.WriteString(fmt.Sprintf("        <a href=\"%s\" class=\"btn-primary\">%s</a>\n",
-				escapeURL(ctaURL), escapeHTML(ctaText)))
+				escapeURL(ctaURL), escapeTextForAstro(ctaText)))
 		}
 		if secLabel != "" {
 			secURL := dataString(data, "secondary_url")
@@ -159,7 +159,7 @@ func renderSplitHeroBlock(data map[string]any, mediaByID map[string]store.Medium
 				secURL = "#"
 			}
 			b.WriteString(fmt.Sprintf("        <a href=\"%s\" class=\"btn-secondary\">%s</a>\n",
-				escapeURL(secURL), escapeHTML(secLabel)))
+				escapeURL(secURL), escapeTextForAstro(secLabel)))
 		}
 		b.WriteString("      </div>\n")
 	}
@@ -183,10 +183,10 @@ func renderStatGridBlock(data map[string]any) string {
 	var b strings.Builder
 	b.WriteString("  <section class=\"block block--stat_grid\">\n")
 	if heading := dataString(data, "heading"); heading != "" {
-		b.WriteString(fmt.Sprintf("    <h2>%s</h2>\n", escapeHTML(heading)))
+		b.WriteString(fmt.Sprintf("    <h2>%s</h2>\n", escapeTextForAstro(heading)))
 	}
 	if sub := dataString(data, "subheading"); sub != "" {
-		b.WriteString(fmt.Sprintf("    <p class=\"subheading\">%s</p>\n", escapeHTML(sub)))
+		b.WriteString(fmt.Sprintf("    <p class=\"subheading\">%s</p>\n", escapeTextForAstro(sub)))
 	}
 	if itemsRaw, ok := data["items"].([]any); ok && len(itemsRaw) > 0 {
 		b.WriteString("    <ul class=\"stat-grid\">\n")
@@ -197,13 +197,13 @@ func renderStatGridBlock(data map[string]any) string {
 			}
 			b.WriteString("      <li class=\"stat-grid-item\">\n")
 			if v := dataString(item, "value"); v != "" {
-				b.WriteString(fmt.Sprintf("        <div class=\"stat-value\">%s</div>\n", escapeHTML(v)))
+				b.WriteString(fmt.Sprintf("        <div class=\"stat-value\">%s</div>\n", escapeTextForAstro(v)))
 			}
 			if l := dataString(item, "label"); l != "" {
-				b.WriteString(fmt.Sprintf("        <div class=\"stat-label\">%s</div>\n", escapeHTML(l)))
+				b.WriteString(fmt.Sprintf("        <div class=\"stat-label\">%s</div>\n", escapeTextForAstro(l)))
 			}
 			if c := dataString(item, "context"); c != "" {
-				b.WriteString(fmt.Sprintf("        <div class=\"stat-context\">%s</div>\n", escapeHTML(c)))
+				b.WriteString(fmt.Sprintf("        <div class=\"stat-context\">%s</div>\n", escapeTextForAstro(c)))
 			}
 			b.WriteString("      </li>\n")
 		}
@@ -219,10 +219,10 @@ func renderAccordionFAQBlock(data map[string]any) string {
 	var b strings.Builder
 	b.WriteString("  <section class=\"block block--accordion_faq\">\n")
 	if heading := dataString(data, "heading"); heading != "" {
-		b.WriteString(fmt.Sprintf("    <h2>%s</h2>\n", escapeHTML(heading)))
+		b.WriteString(fmt.Sprintf("    <h2>%s</h2>\n", escapeTextForAstro(heading)))
 	}
 	if sub := dataString(data, "subheading"); sub != "" {
-		b.WriteString(fmt.Sprintf("    <p class=\"subheading\">%s</p>\n", escapeHTML(sub)))
+		b.WriteString(fmt.Sprintf("    <p class=\"subheading\">%s</p>\n", escapeTextForAstro(sub)))
 	}
 	if itemsRaw, ok := data["items"].([]any); ok && len(itemsRaw) > 0 {
 		// Emit FAQPage JSON-LD so the eval picks up structured FAQ.
@@ -269,7 +269,7 @@ func renderAccordionFAQBlock(data map[string]any) string {
 				continue
 			}
 			b.WriteString("      <details class=\"faq-item\">\n")
-			b.WriteString(fmt.Sprintf("        <summary>%s</summary>\n", escapeHTML(q)))
+			b.WriteString(fmt.Sprintf("        <summary>%s</summary>\n", escapeTextForAstro(q)))
 			if a != "" {
 				b.WriteString("        <div class=\"faq-body\">\n")
 				renderTextParagraphs(&b, a)
@@ -289,10 +289,10 @@ func renderPricingBlock(data map[string]any) string {
 	var b strings.Builder
 	b.WriteString("  <section class=\"block block--pricing\">\n")
 	if heading := dataString(data, "heading"); heading != "" {
-		b.WriteString(fmt.Sprintf("    <h2>%s</h2>\n", escapeHTML(heading)))
+		b.WriteString(fmt.Sprintf("    <h2>%s</h2>\n", escapeTextForAstro(heading)))
 	}
 	if sub := dataString(data, "subheading"); sub != "" {
-		b.WriteString(fmt.Sprintf("    <p class=\"subheading\">%s</p>\n", escapeHTML(sub)))
+		b.WriteString(fmt.Sprintf("    <p class=\"subheading\">%s</p>\n", escapeTextForAstro(sub)))
 	}
 	if tiersRaw, ok := data["tiers"].([]any); ok && len(tiersRaw) > 0 {
 		b.WriteString("    <ul class=\"pricing-grid\">\n")
@@ -307,25 +307,25 @@ func renderPricingBlock(data map[string]any) string {
 			}
 			b.WriteString(fmt.Sprintf("      <li class=\"%s\">\n", cls))
 			if step := dataString(tier, "step"); step != "" {
-				b.WriteString(fmt.Sprintf("        <div class=\"tier-step\">%s</div>\n", escapeHTML(step)))
+				b.WriteString(fmt.Sprintf("        <div class=\"tier-step\">%s</div>\n", escapeTextForAstro(step)))
 			}
 			if n := dataString(tier, "name"); n != "" {
-				b.WriteString(fmt.Sprintf("        <div class=\"tier-name\">%s</div>\n", escapeHTML(n)))
+				b.WriteString(fmt.Sprintf("        <div class=\"tier-name\">%s</div>\n", escapeTextForAstro(n)))
 			}
 			if p := dataString(tier, "price"); p != "" {
-				b.WriteString(fmt.Sprintf("        <div class=\"tier-price\">%s</div>\n", escapeHTML(p)))
+				b.WriteString(fmt.Sprintf("        <div class=\"tier-price\">%s</div>\n", escapeTextForAstro(p)))
 			}
 			if pp := dataString(tier, "price_period"); pp != "" {
-				b.WriteString(fmt.Sprintf("        <div class=\"tier-price-period\">%s</div>\n", escapeHTML(pp)))
+				b.WriteString(fmt.Sprintf("        <div class=\"tier-price-period\">%s</div>\n", escapeTextForAstro(pp)))
 			}
 			if d := dataString(tier, "description"); d != "" {
-				b.WriteString(fmt.Sprintf("        <p class=\"tier-description\">%s</p>\n", escapeHTML(d)))
+				b.WriteString(fmt.Sprintf("        <p class=\"tier-description\">%s</p>\n", escapeTextForAstro(d)))
 			}
 			if featuresRaw, ok := tier["features"].([]any); ok && len(featuresRaw) > 0 {
 				b.WriteString("        <ul class=\"tier-features\">\n")
 				for _, f := range featuresRaw {
 					if fs, ok := f.(string); ok && fs != "" {
-						b.WriteString(fmt.Sprintf("          <li>%s</li>\n", escapeHTML(fs)))
+						b.WriteString(fmt.Sprintf("          <li>%s</li>\n", escapeTextForAstro(fs)))
 					}
 				}
 				b.WriteString("        </ul>\n")
@@ -340,7 +340,7 @@ func renderPricingBlock(data map[string]any) string {
 					cls = "btn-secondary"
 				}
 				b.WriteString(fmt.Sprintf("        <div class=\"tier-cta\"><a href=\"%s\" class=\"%s\">%s</a></div>\n",
-					escapeURL(ctaURL), cls, escapeHTML(ctaText)))
+					escapeURL(ctaURL), cls, escapeTextForAstro(ctaText)))
 			}
 			b.WriteString("      </li>\n")
 		}
@@ -378,10 +378,10 @@ func renderComparisonTableBlock(data map[string]any) string {
 	var b strings.Builder
 	b.WriteString("  <section class=\"block block--comparison_table\">\n")
 	if heading := dataString(data, "heading"); heading != "" {
-		b.WriteString(fmt.Sprintf("    <h2>%s</h2>\n", escapeHTML(heading)))
+		b.WriteString(fmt.Sprintf("    <h2>%s</h2>\n", escapeTextForAstro(heading)))
 	}
 	if sub := dataString(data, "subheading"); sub != "" {
-		b.WriteString(fmt.Sprintf("    <p class=\"subheading\">%s</p>\n", escapeHTML(sub)))
+		b.WriteString(fmt.Sprintf("    <p class=\"subheading\">%s</p>\n", escapeTextForAstro(sub)))
 	}
 	usLabel := dataString(data, "us_label")
 	if usLabel == "" {
@@ -403,9 +403,9 @@ func renderComparisonTableBlock(data map[string]any) string {
 	b.WriteString("      <thead>\n")
 	b.WriteString("        <tr>\n")
 	b.WriteString("          <th scope=\"col\">Feature</th>\n")
-	b.WriteString(fmt.Sprintf("          <th scope=\"col\" class=\"comparison-us\">%s</th>\n", escapeHTML(usLabel)))
+	b.WriteString(fmt.Sprintf("          <th scope=\"col\" class=\"comparison-us\">%s</th>\n", escapeTextForAstro(usLabel)))
 	for _, c := range cols {
-		b.WriteString(fmt.Sprintf("          <th scope=\"col\">%s</th>\n", escapeHTML(c)))
+		b.WriteString(fmt.Sprintf("          <th scope=\"col\">%s</th>\n", escapeTextForAstro(c)))
 	}
 	b.WriteString("        </tr>\n")
 	b.WriteString("      </thead>\n")
@@ -420,7 +420,7 @@ func renderComparisonTableBlock(data map[string]any) string {
 			continue
 		}
 		b.WriteString("        <tr>\n")
-		b.WriteString(fmt.Sprintf("          <th scope=\"row\">%s</th>\n", escapeHTML(feature)))
+		b.WriteString(fmt.Sprintf("          <th scope=\"row\">%s</th>\n", escapeTextForAstro(feature)))
 		b.WriteString(fmt.Sprintf("          <td class=\"comparison-us\">%s</td>\n", renderComparisonCell(row["us"])))
 		valsRaw, _ := row["values"].([]any)
 		for i := 0; i < len(cols); i++ {
@@ -456,7 +456,7 @@ func renderComparisonCell(v any) string {
 		if x == "" {
 			return `<span class="comparison-cell comparison-cell--none" aria-label="not included">-</span>`
 		}
-		return fmt.Sprintf(`<span class="comparison-cell comparison-cell--text">%s</span>`, escapeHTML(x))
+		return fmt.Sprintf(`<span class="comparison-cell comparison-cell--text">%s</span>`, escapeTextForAstro(x))
 	}
 	return fmt.Sprintf(`<span class="comparison-cell comparison-cell--text">%v</span>`, v)
 }
@@ -493,11 +493,11 @@ func renderMegaMenuBlock(data map[string]any) string {
 		switch {
 		case !hasDropdown && href != "":
 			b.WriteString(fmt.Sprintf("      <li class=\"mega-menu-item mega-menu-item--link\"><a href=\"%s\">%s</a></li>\n",
-				escapeURL(href), escapeHTML(label)))
+				escapeURL(href), escapeTextForAstro(label)))
 		case hasDropdown:
 			b.WriteString("      <li class=\"mega-menu-item mega-menu-item--dropdown\">\n")
 			b.WriteString("        <details>\n")
-			b.WriteString(fmt.Sprintf("          <summary>%s<span class=\"mega-menu-caret\" aria-hidden=\"true\">▾</span></summary>\n", escapeHTML(label)))
+			b.WriteString(fmt.Sprintf("          <summary>%s<span class=\"mega-menu-caret\" aria-hidden=\"true\">▾</span></summary>\n", escapeTextForAstro(label)))
 			b.WriteString("          <div class=\"mega-panel\">\n")
 			b.WriteString("            <div class=\"mega-panel-columns\">\n")
 			for _, c := range columnsRaw {
@@ -507,7 +507,7 @@ func renderMegaMenuBlock(data map[string]any) string {
 				}
 				b.WriteString("              <div class=\"mega-column\">\n")
 				if h := dataString(col, "heading"); h != "" {
-					b.WriteString(fmt.Sprintf("                <p class=\"mega-column-heading\">%s</p>\n", escapeHTML(h)))
+					b.WriteString(fmt.Sprintf("                <p class=\"mega-column-heading\">%s</p>\n", escapeTextForAstro(h)))
 				}
 				colItems, _ := col["items"].([]any)
 				if len(colItems) > 0 {
@@ -523,9 +523,9 @@ func renderMegaMenuBlock(data map[string]any) string {
 							continue
 						}
 						desc := dataString(link, "description")
-						b.WriteString(fmt.Sprintf("                  <li><a href=\"%s\"><span class=\"mega-link-label\">%s</span>", escapeURL(lHref), escapeHTML(lLabel)))
+						b.WriteString(fmt.Sprintf("                  <li><a href=\"%s\"><span class=\"mega-link-label\">%s</span>", escapeURL(lHref), escapeTextForAstro(lLabel)))
 						if desc != "" {
-							b.WriteString(fmt.Sprintf("<span class=\"mega-link-desc\">%s</span>", escapeHTML(desc)))
+							b.WriteString(fmt.Sprintf("<span class=\"mega-link-desc\">%s</span>", escapeTextForAstro(desc)))
 						}
 						b.WriteString("</a></li>\n")
 					}
@@ -537,14 +537,14 @@ func renderMegaMenuBlock(data map[string]any) string {
 			// Featured slot.
 			if fh := dataString(item, "featured_heading"); fh != "" {
 				b.WriteString("            <aside class=\"mega-featured\">\n")
-				b.WriteString(fmt.Sprintf("              <p class=\"mega-featured-heading\">%s</p>\n", escapeHTML(fh)))
+				b.WriteString(fmt.Sprintf("              <p class=\"mega-featured-heading\">%s</p>\n", escapeTextForAstro(fh)))
 				if fb := dataString(item, "featured_body"); fb != "" {
-					b.WriteString(fmt.Sprintf("              <p class=\"mega-featured-body\">%s</p>\n", escapeHTML(fb)))
+					b.WriteString(fmt.Sprintf("              <p class=\"mega-featured-body\">%s</p>\n", escapeTextForAstro(fb)))
 				}
 				fctaT := dataString(item, "featured_cta_text")
 				fctaU := dataString(item, "featured_cta_url")
 				if fctaT != "" && fctaU != "" {
-					b.WriteString(fmt.Sprintf("              <a class=\"mega-featured-cta\" href=\"%s\">%s</a>\n", escapeURL(fctaU), escapeHTML(fctaT)))
+					b.WriteString(fmt.Sprintf("              <a class=\"mega-featured-cta\" href=\"%s\">%s</a>\n", escapeURL(fctaU), escapeTextForAstro(fctaT)))
 				}
 				b.WriteString("            </aside>\n")
 			}
@@ -555,7 +555,7 @@ func renderMegaMenuBlock(data map[string]any) string {
 			// Label only, no href and no dropdown content. Render as
 			// plain text so the menu item still appears (operator can
 			// edit later) without dead links.
-			b.WriteString(fmt.Sprintf("      <li class=\"mega-menu-item mega-menu-item--text\"><span>%s</span></li>\n", escapeHTML(label)))
+			b.WriteString(fmt.Sprintf("      <li class=\"mega-menu-item mega-menu-item--text\"><span>%s</span></li>\n", escapeTextForAstro(label)))
 		}
 	}
 	b.WriteString("    </ul>\n")
@@ -574,13 +574,13 @@ func renderScrollRevealBlock(data map[string]any, mediaByID map[string]store.Med
 	var b strings.Builder
 	b.WriteString("  <section class=\"block block--scroll_reveal\">\n")
 	if eyebrow := dataString(data, "eyebrow"); eyebrow != "" {
-		b.WriteString(fmt.Sprintf("    <p class=\"eyebrow\">%s</p>\n", escapeHTML(eyebrow)))
+		b.WriteString(fmt.Sprintf("    <p class=\"eyebrow\">%s</p>\n", escapeTextForAstro(eyebrow)))
 	}
 	if heading := dataString(data, "heading"); heading != "" {
-		b.WriteString(fmt.Sprintf("    <h2>%s</h2>\n", escapeHTML(heading)))
+		b.WriteString(fmt.Sprintf("    <h2>%s</h2>\n", escapeTextForAstro(heading)))
 	}
 	if sub := dataString(data, "subheading"); sub != "" {
-		b.WriteString(fmt.Sprintf("    <p class=\"subheading\">%s</p>\n", escapeHTML(sub)))
+		b.WriteString(fmt.Sprintf("    <p class=\"subheading\">%s</p>\n", escapeTextForAstro(sub)))
 	}
 	itemsRaw, _ := data["items"].([]any)
 	if len(itemsRaw) == 0 {
@@ -601,14 +601,14 @@ func renderScrollRevealBlock(data map[string]any, mediaByID map[string]store.Med
 		if imagePos != "left" {
 			imagePos = "right"
 		}
-		b.WriteString(fmt.Sprintf("      <li class=\"scroll-reveal-item is-image-%s\">\n", escapeAttr(imagePos)))
+		b.WriteString(fmt.Sprintf("      <li class=\"scroll-reveal-item is-image-%s\">\n", escapeAttrForAstro(imagePos)))
 		b.WriteString("        <div class=\"scroll-reveal-content\">\n")
-		b.WriteString(fmt.Sprintf("          <h3>%s</h3>\n", escapeHTML(stepHeading)))
+		b.WriteString(fmt.Sprintf("          <h3>%s</h3>\n", escapeTextForAstro(stepHeading)))
 		if body := dataString(item, "body"); body != "" {
 			for _, para := range strings.Split(body, "\n\n") {
 				para = strings.TrimSpace(para)
 				if para != "" {
-					b.WriteString(fmt.Sprintf("          <p>%s</p>\n", escapeHTML(para)))
+					b.WriteString(fmt.Sprintf("          <p>%s</p>\n", escapeTextForAstro(para)))
 				}
 			}
 		}
@@ -646,13 +646,13 @@ func renderTabsBlock(data map[string]any, mediaByID map[string]store.Medium) str
 
 	b.WriteString("  <section class=\"block block--tabs\">\n")
 	if eyebrow := dataString(data, "eyebrow"); eyebrow != "" {
-		b.WriteString(fmt.Sprintf("    <p class=\"eyebrow\">%s</p>\n", escapeHTML(eyebrow)))
+		b.WriteString(fmt.Sprintf("    <p class=\"eyebrow\">%s</p>\n", escapeTextForAstro(eyebrow)))
 	}
 	if heading := dataString(data, "heading"); heading != "" {
-		b.WriteString(fmt.Sprintf("    <h2>%s</h2>\n", escapeHTML(heading)))
+		b.WriteString(fmt.Sprintf("    <h2>%s</h2>\n", escapeTextForAstro(heading)))
 	}
 	if sub := dataString(data, "subheading"); sub != "" {
-		b.WriteString(fmt.Sprintf("    <p class=\"subheading\">%s</p>\n", escapeHTML(sub)))
+		b.WriteString(fmt.Sprintf("    <p class=\"subheading\">%s</p>\n", escapeTextForAstro(sub)))
 	}
 
 	b.WriteString("    <div class=\"tabs-root\">\n")
@@ -666,7 +666,7 @@ func renderTabsBlock(data map[string]any, mediaByID map[string]store.Medium) str
 			checked = " checked"
 		}
 		b.WriteString(fmt.Sprintf("      <input type=\"radio\" class=\"tab-radio\" name=\"%s\" id=\"%s-%d\"%s />\n",
-			escapeAttr(groupID), escapeAttr(groupID), i, checked))
+			escapeAttrForAstro(groupID), escapeAttrForAstro(groupID), i, checked))
 	}
 
 	b.WriteString("      <div class=\"tabs-list\" role=\"tablist\">\n")
@@ -680,7 +680,7 @@ func renderTabsBlock(data map[string]any, mediaByID map[string]store.Medium) str
 			label = fmt.Sprintf("Tab %d", i+1)
 		}
 		b.WriteString(fmt.Sprintf("        <label for=\"%s-%d\" class=\"tab-trigger\" role=\"tab\">%s</label>\n",
-			escapeAttr(groupID), i, escapeHTML(label)))
+			escapeAttrForAstro(groupID), i, escapeTextForAstro(label)))
 	}
 	b.WriteString("      </div>\n")
 
@@ -692,13 +692,13 @@ func renderTabsBlock(data map[string]any, mediaByID map[string]store.Medium) str
 		}
 		b.WriteString("        <div class=\"tab-panel\" role=\"tabpanel\">\n")
 		if h := dataString(item, "heading"); h != "" {
-			b.WriteString(fmt.Sprintf("          <h3>%s</h3>\n", escapeHTML(h)))
+			b.WriteString(fmt.Sprintf("          <h3>%s</h3>\n", escapeTextForAstro(h)))
 		}
 		if body := dataString(item, "body"); body != "" {
 			for _, para := range strings.Split(body, "\n\n") {
 				para = strings.TrimSpace(para)
 				if para != "" {
-					b.WriteString(fmt.Sprintf("          <p>%s</p>\n", escapeHTML(para)))
+					b.WriteString(fmt.Sprintf("          <p>%s</p>\n", escapeTextForAstro(para)))
 				}
 			}
 		}
@@ -709,7 +709,7 @@ func renderTabsBlock(data map[string]any, mediaByID map[string]store.Medium) str
 		ctaText := dataString(item, "cta_text")
 		ctaURL := dataString(item, "cta_url")
 		if ctaText != "" && ctaURL != "" {
-			b.WriteString(fmt.Sprintf("          <a class=\"cta cta--secondary\" href=\"%s\">%s</a>\n", escapeURL(ctaURL), escapeHTML(ctaText)))
+			b.WriteString(fmt.Sprintf("          <a class=\"cta cta--secondary\" href=\"%s\">%s</a>\n", escapeURL(ctaURL), escapeTextForAstro(ctaText)))
 		}
 		b.WriteString("        </div>\n")
 	}
@@ -788,12 +788,12 @@ func renderVideoHeroBlock(data map[string]any, mediaByID map[string]store.Medium
 	switch source {
 	case "youtube":
 		if videoID != "" {
-			src := fmt.Sprintf("https://www.youtube-nocookie.com/embed/%s?autoplay=1&mute=1&loop=1&playlist=%s&controls=0&modestbranding=1&playsinline=1", escapeAttr(videoID), escapeAttr(videoID))
+			src := fmt.Sprintf("https://www.youtube-nocookie.com/embed/%s?autoplay=1&mute=1&loop=1&playlist=%s&controls=0&modestbranding=1&playsinline=1", escapeAttrForAstro(videoID), escapeAttrForAstro(videoID))
 			b.WriteString(fmt.Sprintf("      <iframe src=\"%s\" title=\"Background video\" loading=\"lazy\" referrerpolicy=\"strict-origin-when-cross-origin\" allow=\"autoplay; encrypted-media; picture-in-picture\" allowfullscreen></iframe>\n", src))
 		}
 	case "vimeo":
 		if videoID != "" {
-			src := fmt.Sprintf("https://player.vimeo.com/video/%s?background=1&muted=1&loop=1&autoplay=1", escapeAttr(videoID))
+			src := fmt.Sprintf("https://player.vimeo.com/video/%s?background=1&muted=1&loop=1&autoplay=1", escapeAttrForAstro(videoID))
 			b.WriteString(fmt.Sprintf("      <iframe src=\"%s\" title=\"Background video\" loading=\"lazy\" referrerpolicy=\"strict-origin-when-cross-origin\" allow=\"autoplay; picture-in-picture\" allowfullscreen></iframe>\n", src))
 		}
 	default:
@@ -802,9 +802,9 @@ func renderVideoHeroBlock(data map[string]any, mediaByID map[string]store.Medium
 			posterAttr := ""
 			if m, ok := mediaByID[posterID]; ok && len(m.VariantsJson) > 0 {
 				// Use the smallest variant path as a quick poster.
-				posterAttr = fmt.Sprintf(" poster=\"/media/%s/original\"", escapeAttr(m.ID))
+				posterAttr = fmt.Sprintf(" poster=\"/media/%s/original\"", escapeAttrForAstro(m.ID))
 			}
-			b.WriteString(fmt.Sprintf("      <video%s autoplay muted loop playsinline preload=\"metadata\"><source src=\"/media/%s/original.mp4\" type=\"video/mp4\" /></video>\n", posterAttr, escapeAttr(videoID)))
+			b.WriteString(fmt.Sprintf("      <video%s autoplay muted loop playsinline preload=\"metadata\"><source src=\"/media/%s/original.mp4\" type=\"video/mp4\" /></video>\n", posterAttr, escapeAttrForAstro(videoID)))
 		}
 	}
 	// Static poster underneath the video keeps LCP grounded. fetchpriority=high
@@ -819,13 +819,13 @@ func renderVideoHeroBlock(data map[string]any, mediaByID map[string]store.Medium
 	// Content layer.
 	b.WriteString("    <div class=\"video-hero-content\">\n")
 	if eyebrow := dataString(data, "eyebrow"); eyebrow != "" {
-		b.WriteString(fmt.Sprintf("      <p class=\"eyebrow\">%s</p>\n", escapeHTML(eyebrow)))
+		b.WriteString(fmt.Sprintf("      <p class=\"eyebrow\">%s</p>\n", escapeTextForAstro(eyebrow)))
 	}
 	if headline != "" {
-		b.WriteString(fmt.Sprintf("      <h1>%s</h1>\n", escapeHTML(headline)))
+		b.WriteString(fmt.Sprintf("      <h1>%s</h1>\n", escapeTextForAstro(headline)))
 	}
 	if sub := dataString(data, "subheading"); sub != "" {
-		b.WriteString(fmt.Sprintf("      <p class=\"subheading\">%s</p>\n", escapeHTML(sub)))
+		b.WriteString(fmt.Sprintf("      <p class=\"subheading\">%s</p>\n", escapeTextForAstro(sub)))
 	}
 	cta := dataString(data, "cta_text")
 	ctaURL := dataString(data, "cta_url")
@@ -834,10 +834,10 @@ func renderVideoHeroBlock(data map[string]any, mediaByID map[string]store.Medium
 	if cta != "" || secLabel != "" {
 		b.WriteString("      <div class=\"cta-group\">\n")
 		if cta != "" && ctaURL != "" {
-			b.WriteString(fmt.Sprintf("        <a class=\"cta cta--primary\" href=\"%s\">%s</a>\n", escapeURL(ctaURL), escapeHTML(cta)))
+			b.WriteString(fmt.Sprintf("        <a class=\"cta cta--primary\" href=\"%s\">%s</a>\n", escapeURL(ctaURL), escapeTextForAstro(cta)))
 		}
 		if secLabel != "" && secURL != "" {
-			b.WriteString(fmt.Sprintf("        <a class=\"cta cta--secondary\" href=\"%s\">%s</a>\n", escapeURL(secURL), escapeHTML(secLabel)))
+			b.WriteString(fmt.Sprintf("        <a class=\"cta cta--secondary\" href=\"%s\">%s</a>\n", escapeURL(secURL), escapeTextForAstro(secLabel)))
 		}
 		b.WriteString("      </div>\n")
 	}
@@ -890,15 +890,15 @@ func renderTestimonialWallBlock(data map[string]any, mediaByID map[string]store.
 	default:
 		layout = "wall"
 	}
-	b.WriteString(fmt.Sprintf("  <section class=\"block block--testimonial_wall block--testimonial_wall--%s\">\n", escapeAttr(layout)))
+	b.WriteString(fmt.Sprintf("  <section class=\"block block--testimonial_wall block--testimonial_wall--%s\">\n", escapeAttrForAstro(layout)))
 	if eyebrow := dataString(data, "eyebrow"); eyebrow != "" {
-		b.WriteString(fmt.Sprintf("    <p class=\"eyebrow\">%s</p>\n", escapeHTML(eyebrow)))
+		b.WriteString(fmt.Sprintf("    <p class=\"eyebrow\">%s</p>\n", escapeTextForAstro(eyebrow)))
 	}
 	if heading := dataString(data, "heading"); heading != "" {
-		b.WriteString(fmt.Sprintf("    <h2>%s</h2>\n", escapeHTML(heading)))
+		b.WriteString(fmt.Sprintf("    <h2>%s</h2>\n", escapeTextForAstro(heading)))
 	}
 	if sub := dataString(data, "subheading"); sub != "" {
-		b.WriteString(fmt.Sprintf("    <p class=\"subheading\">%s</p>\n", escapeHTML(sub)))
+		b.WriteString(fmt.Sprintf("    <p class=\"subheading\">%s</p>\n", escapeTextForAstro(sub)))
 	}
 	itemsRaw, _ := data["items"].([]any)
 	if len(itemsRaw) > 0 {
@@ -941,9 +941,9 @@ func renderTestimonialWallBlock(data map[string]any, mediaByID map[string]store.
 			// quote marks dropped in by CSS so the text stays plain.
 			if sourceURL := dataString(item, "source_url"); sourceURL != "" {
 				b.WriteString(fmt.Sprintf("        <blockquote cite=\"%s\">%s</blockquote>\n",
-					escapeAttr(sourceURL), escapeHTML(quote)))
+					escapeAttrForAstro(sourceURL), escapeTextForAstro(quote)))
 			} else {
-				b.WriteString(fmt.Sprintf("        <blockquote>%s</blockquote>\n", escapeHTML(quote)))
+				b.WriteString(fmt.Sprintf("        <blockquote>%s</blockquote>\n", escapeTextForAstro(quote)))
 			}
 
 			// Cite block: optional author photo, name, role @ company.
@@ -954,17 +954,17 @@ func renderTestimonialWallBlock(data map[string]any, mediaByID map[string]store.
 			}
 			b.WriteString("          <div class=\"testimonial-author\">\n")
 			if name := dataString(item, "author_name"); name != "" {
-				b.WriteString(fmt.Sprintf("            <span class=\"testimonial-author-name\">%s</span>\n", escapeHTML(name)))
+				b.WriteString(fmt.Sprintf("            <span class=\"testimonial-author-name\">%s</span>\n", escapeTextForAstro(name)))
 			}
 			role := dataString(item, "author_role")
 			company := dataString(item, "author_company")
 			switch {
 			case role != "" && company != "":
-				b.WriteString(fmt.Sprintf("            <span class=\"testimonial-author-meta\">%s, %s</span>\n", escapeHTML(role), escapeHTML(company)))
+				b.WriteString(fmt.Sprintf("            <span class=\"testimonial-author-meta\">%s, %s</span>\n", escapeTextForAstro(role), escapeTextForAstro(company)))
 			case role != "":
-				b.WriteString(fmt.Sprintf("            <span class=\"testimonial-author-meta\">%s</span>\n", escapeHTML(role)))
+				b.WriteString(fmt.Sprintf("            <span class=\"testimonial-author-meta\">%s</span>\n", escapeTextForAstro(role)))
 			case company != "":
-				b.WriteString(fmt.Sprintf("            <span class=\"testimonial-author-meta\">%s</span>\n", escapeHTML(company)))
+				b.WriteString(fmt.Sprintf("            <span class=\"testimonial-author-meta\">%s</span>\n", escapeTextForAstro(company)))
 			}
 			b.WriteString("          </div>\n")
 			if logoID := dataString(item, "company_logo_id"); logoID != "" {
@@ -977,9 +977,9 @@ func renderTestimonialWallBlock(data map[string]any, mediaByID map[string]store.
 	}
 	if footer := dataString(data, "footer"); footer != "" {
 		if footerURL := dataString(data, "footer_url"); footerURL != "" {
-			b.WriteString(fmt.Sprintf("    <a class=\"testimonial-footer\" href=\"%s\">%s</a>\n", escapeURL(footerURL), escapeHTML(footer)))
+			b.WriteString(fmt.Sprintf("    <a class=\"testimonial-footer\" href=\"%s\">%s</a>\n", escapeURL(footerURL), escapeTextForAstro(footer)))
 		} else {
-			b.WriteString(fmt.Sprintf("    <p class=\"testimonial-footer\">%s</p>\n", escapeHTML(footer)))
+			b.WriteString(fmt.Sprintf("    <p class=\"testimonial-footer\">%s</p>\n", escapeTextForAstro(footer)))
 		}
 	}
 	b.WriteString("  </section>\n")
@@ -1017,7 +1017,7 @@ func renderLogoStripBlock(data map[string]any, mediaByID map[string]store.Medium
 	var b strings.Builder
 	b.WriteString("  <section class=\"block block--logo_strip\">\n")
 	if label := dataString(data, "label"); label != "" {
-		b.WriteString(fmt.Sprintf("    <p class=\"logo-strip-label\">%s</p>\n", escapeHTML(label)))
+		b.WriteString(fmt.Sprintf("    <p class=\"logo-strip-label\">%s</p>\n", escapeTextForAstro(label)))
 	}
 	if itemsRaw, ok := data["items"].([]any); ok && len(itemsRaw) > 0 {
 		b.WriteString("    <ul class=\"logo-strip\">\n")
@@ -1051,10 +1051,10 @@ func renderCodeBlock(data map[string]any) string {
 	var b strings.Builder
 	b.WriteString("  <section class=\"block block--code_block\">\n")
 	if heading := dataString(data, "heading"); heading != "" {
-		b.WriteString(fmt.Sprintf("    <h2>%s</h2>\n", escapeHTML(heading)))
+		b.WriteString(fmt.Sprintf("    <h2>%s</h2>\n", escapeTextForAstro(heading)))
 	}
 	if lang := dataString(data, "language"); lang != "" {
-		b.WriteString(fmt.Sprintf("    <p class=\"code-label\">%s</p>\n", escapeHTML(lang)))
+		b.WriteString(fmt.Sprintf("    <p class=\"code-label\">%s</p>\n", escapeTextForAstro(lang)))
 	}
 	if code := dataString(data, "code"); code != "" {
 		// escapeHTML alone is not enough here. A code sample is written into
@@ -1090,10 +1090,10 @@ func renderFormBlock(data map[string]any) string {
 	var b strings.Builder
 	b.WriteString("  <section class=\"block block--form\">\n")
 	if heading := dataString(data, "heading"); heading != "" {
-		b.WriteString(fmt.Sprintf("    <h2>%s</h2>\n", escapeHTML(heading)))
+		b.WriteString(fmt.Sprintf("    <h2>%s</h2>\n", escapeTextForAstro(heading)))
 	}
 	if sub := dataString(data, "subheading"); sub != "" {
-		b.WriteString(fmt.Sprintf("    <p class=\"subheading\">%s</p>\n", escapeHTML(sub)))
+		b.WriteString(fmt.Sprintf("    <p class=\"subheading\">%s</p>\n", escapeTextForAstro(sub)))
 	}
 	action := dataString(data, "action")
 	formID := dataString(data, "form_id")
@@ -1114,7 +1114,7 @@ func renderFormBlock(data map[string]any) string {
 	}
 	formIDAttr := ""
 	if formID != "" {
-		formIDAttr = fmt.Sprintf(" data-form-id=\"%s\"", escapeAttr(formID))
+		formIDAttr = fmt.Sprintf(" data-form-id=\"%s\"", escapeAttrForAstro(formID))
 	}
 
 	// Multi-step detection: scan once for the highest step value. If
@@ -1217,7 +1217,7 @@ func renderFormBlock(data map[string]any) string {
 			fieldHidden := ""
 			if visIfField != "" {
 				fieldAttrs = fmt.Sprintf(" data-visible-if-field=\"%s\" data-visible-if-equals=\"%s\"",
-					escapeAttr(visIfField), escapeAttr(visIfEquals))
+					escapeAttrForAstro(visIfField), escapeAttrForAstro(visIfEquals))
 				// Hidden by default; the script reveals on first
 				// evaluation so flash-of-visible-content never
 				// happens. The hidden attribute also drops the field
@@ -1227,7 +1227,7 @@ func renderFormBlock(data map[string]any) string {
 			}
 			b.WriteString(fmt.Sprintf("      <div class=\"form-field\"%s%s>\n", fieldAttrs, fieldHidden))
 			if label != "" {
-				b.WriteString(fmt.Sprintf("        <label for=\"f-%s\">%s</label>\n", escapeAttr(name), escapeHTML(label)))
+				b.WriteString(fmt.Sprintf("        <label for=\"f-%s\">%s</label>\n", escapeAttrForAstro(name), escapeTextForAstro(label)))
 			}
 			reqAttr := ""
 			if required {
@@ -1245,15 +1245,15 @@ func renderFormBlock(data map[string]any) string {
 			switch ftype {
 			case "textarea":
 				b.WriteString(fmt.Sprintf("        <textarea id=\"f-%s\" name=\"%s\" placeholder=\"%s\"%s></textarea>\n",
-					escapeAttr(name), escapeAttr(name), escapeAttr(placeholder), reqAttr))
+					escapeAttrForAstro(name), escapeAttrForAstro(name), escapeAttrForAstro(placeholder), reqAttr))
 			case "select":
 				b.WriteString(fmt.Sprintf("        <select id=\"f-%s\" name=\"%s\"%s>\n",
-					escapeAttr(name), escapeAttr(name), reqAttr))
+					escapeAttrForAstro(name), escapeAttrForAstro(name), reqAttr))
 				if optsRaw, ok := field["options"].([]any); ok {
 					for _, o := range optsRaw {
 						if os, ok := o.(string); ok {
 							b.WriteString(fmt.Sprintf("          <option value=\"%s\">%s</option>\n",
-								escapeAttr(os), escapeHTML(os)))
+								escapeAttrForAstro(os), escapeTextForAstro(os)))
 						}
 					}
 				}
@@ -1261,7 +1261,7 @@ func renderFormBlock(data map[string]any) string {
 			default:
 				// text, email, tel, url, checkbox, radio (basic: no group support yet).
 				b.WriteString(fmt.Sprintf("        <input type=\"%s\" id=\"f-%s\" name=\"%s\" placeholder=\"%s\"%s />\n",
-					escapeAttr(ftype), escapeAttr(name), escapeAttr(name), escapeAttr(placeholder), reqAttr))
+					escapeAttrForAstro(ftype), escapeAttrForAstro(name), escapeAttrForAstro(name), escapeAttrForAstro(placeholder), reqAttr))
 			}
 			b.WriteString("      </div>\n")
 		}
@@ -1278,10 +1278,10 @@ func renderFormBlock(data map[string]any) string {
 			}
 			b.WriteString("        <div class=\"form-step-nav\">\n")
 			if !isFirst {
-				b.WriteString(fmt.Sprintf("          <button type=\"button\" data-form-prev>%s</button>\n", escapeHTML(previousLabel)))
+				b.WriteString(fmt.Sprintf("          <button type=\"button\" data-form-prev>%s</button>\n", escapeTextForAstro(previousLabel)))
 			}
 			if !isLast {
-				b.WriteString(fmt.Sprintf("          <button type=\"button\" data-form-next>%s</button>\n", escapeHTML(nextLabel)))
+				b.WriteString(fmt.Sprintf("          <button type=\"button\" data-form-next>%s</button>\n", escapeTextForAstro(nextLabel)))
 			}
 			b.WriteString("        </div>\n")
 			b.WriteString("      </fieldset>\n")
@@ -1301,7 +1301,7 @@ func renderFormBlock(data map[string]any) string {
 	if hasMultiStep {
 		submitHidden = " hidden"
 	}
-	b.WriteString(fmt.Sprintf("      <button type=\"submit\" data-form-submit%s>%s</button>\n", submitHidden, escapeHTML(submitLabel)))
+	b.WriteString(fmt.Sprintf("      <button type=\"submit\" data-form-submit%s>%s</button>\n", submitHidden, escapeTextForAstro(submitLabel)))
 	b.WriteString("    </form>\n")
 
 	// Inline form-logic script: toggles conditional fields + steps.
@@ -1360,7 +1360,7 @@ func renderLogoCarouselBlock(data map[string]any, mediaByID map[string]store.Med
 	var b strings.Builder
 	b.WriteString("  <section class=\"block block--logo_carousel\">\n")
 	if label := dataString(data, "label"); label != "" {
-		b.WriteString(fmt.Sprintf("    <p class=\"logo-carousel-label\">%s</p>\n", escapeHTML(label)))
+		b.WriteString(fmt.Sprintf("    <p class=\"logo-carousel-label\">%s</p>\n", escapeTextForAstro(label)))
 	}
 	itemsRaw, ok := data["items"].([]any)
 	if !ok || len(itemsRaw) == 0 {
@@ -1397,7 +1397,7 @@ func renderLogoCarouselBlock(data map[string]any, mediaByID map[string]store.Med
 			if imageID != "" {
 				b.WriteString(renderMediaImg(imageID, alt, label, "carousel-img", mediaByID))
 			} else {
-				b.WriteString(fmt.Sprintf(`<span class="carousel-mark">%s</span>`, escapeHTML(label)))
+				b.WriteString(fmt.Sprintf(`<span class="carousel-mark">%s</span>`, escapeTextForAstro(label)))
 			}
 			if href != "" {
 				b.WriteString("</a>")
@@ -1424,13 +1424,13 @@ func renderReplacementGridBlock(data map[string]any) string {
 	var b strings.Builder
 	b.WriteString("  <section class=\"block block--replacement_grid\">\n")
 	if eyebrow := dataString(data, "eyebrow"); eyebrow != "" {
-		b.WriteString(fmt.Sprintf("    <p class=\"eyebrow\">%s</p>\n", escapeHTML(eyebrow)))
+		b.WriteString(fmt.Sprintf("    <p class=\"eyebrow\">%s</p>\n", escapeTextForAstro(eyebrow)))
 	}
 	if heading := dataString(data, "heading"); heading != "" {
-		b.WriteString(fmt.Sprintf("    <h2>%s</h2>\n", escapeHTML(heading)))
+		b.WriteString(fmt.Sprintf("    <h2>%s</h2>\n", escapeTextForAstro(heading)))
 	}
 	if sub := dataString(data, "subheading"); sub != "" {
-		b.WriteString(fmt.Sprintf("    <p class=\"subheading\">%s</p>\n", escapeHTML(sub)))
+		b.WriteString(fmt.Sprintf("    <p class=\"subheading\">%s</p>\n", escapeTextForAstro(sub)))
 	}
 	if itemsRaw, ok := data["items"].([]any); ok && len(itemsRaw) > 0 {
 		b.WriteString("    <ul class=\"replacement-grid\">\n")
@@ -1450,22 +1450,22 @@ func renderReplacementGridBlock(data map[string]any) string {
 			b.WriteString(fmt.Sprintf("      <li class=\"%s\">\n", cls))
 			b.WriteString("        <div class=\"replacement-pair\">\n")
 			if from != "" {
-				b.WriteString(fmt.Sprintf("          <span class=\"replacement-from\">%s</span>\n", escapeHTML(from)))
+				b.WriteString(fmt.Sprintf("          <span class=\"replacement-from\">%s</span>\n", escapeTextForAstro(from)))
 			}
 			b.WriteString("          <svg class=\"replacement-arrow\" viewBox=\"0 0 24 24\" width=\"16\" height=\"16\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"M5 12h14\"/><path d=\"m12 5 7 7-7 7\"/></svg>\n")
 			if to != "" {
-				b.WriteString(fmt.Sprintf("          <span class=\"replacement-to\">%s</span>\n", escapeHTML(to)))
+				b.WriteString(fmt.Sprintf("          <span class=\"replacement-to\">%s</span>\n", escapeTextForAstro(to)))
 			}
 			b.WriteString("        </div>\n")
 			if desc != "" {
-				b.WriteString(fmt.Sprintf("        <p class=\"replacement-desc\">%s</p>\n", escapeHTML(desc)))
+				b.WriteString(fmt.Sprintf("        <p class=\"replacement-desc\">%s</p>\n", escapeTextForAstro(desc)))
 			}
 			b.WriteString("      </li>\n")
 		}
 		b.WriteString("    </ul>\n")
 	}
 	if footer := dataString(data, "footer"); footer != "" {
-		b.WriteString(fmt.Sprintf("    <p class=\"replacement-footer\">%s</p>\n", escapeHTML(footer)))
+		b.WriteString(fmt.Sprintf("    <p class=\"replacement-footer\">%s</p>\n", escapeTextForAstro(footer)))
 	}
 	b.WriteString("  </section>\n")
 	return b.String()
@@ -1484,13 +1484,13 @@ func renderCalculatorBlock(data map[string]any) string {
 	var b strings.Builder
 	b.WriteString("  <section class=\"block block--calculator\">\n")
 	if eyebrow := dataString(data, "eyebrow"); eyebrow != "" {
-		b.WriteString(fmt.Sprintf("    <p class=\"eyebrow\">%s</p>\n", escapeHTML(eyebrow)))
+		b.WriteString(fmt.Sprintf("    <p class=\"eyebrow\">%s</p>\n", escapeTextForAstro(eyebrow)))
 	}
 	if heading := dataString(data, "heading"); heading != "" {
-		b.WriteString(fmt.Sprintf("    <h2>%s</h2>\n", escapeHTML(heading)))
+		b.WriteString(fmt.Sprintf("    <h2>%s</h2>\n", escapeTextForAstro(heading)))
 	}
 	if sub := dataString(data, "subheading"); sub != "" {
-		b.WriteString(fmt.Sprintf("    <p class=\"subheading\">%s</p>\n", escapeHTML(sub)))
+		b.WriteString(fmt.Sprintf("    <p class=\"subheading\">%s</p>\n", escapeTextForAstro(sub)))
 	}
 
 	// JSON config blob the embedded JS reads. We pass it via a JSON-encoded
@@ -1509,7 +1509,7 @@ func renderCalculatorBlock(data map[string]any) string {
 	})
 
 	b.WriteString(fmt.Sprintf("    <div class=\"calculator-root\" data-config='%s'>\n",
-		escapeAttr(string(configBytes))))
+		escapeAttrForAstro(string(configBytes))))
 
 	// Service tile grid. Initial markup uses the operator-supplied selected
 	// flags so the form looks right pre-hydration; the JS replays the same
@@ -1530,11 +1530,11 @@ func renderCalculatorBlock(data map[string]any) string {
 				selCls = " is-selected"
 			}
 			b.WriteString(fmt.Sprintf("        <button type=\"button\" class=\"calculator-service%s\" data-key=\"%s\" data-selected=\"%t\">\n",
-				selCls, escapeAttr(key), selected))
+				selCls, escapeAttrForAstro(key), selected))
 			b.WriteString("          <span class=\"calculator-service-body\">\n")
-			b.WriteString(fmt.Sprintf("            <span class=\"calculator-service-label\">%s</span>\n", escapeHTML(label)))
+			b.WriteString(fmt.Sprintf("            <span class=\"calculator-service-label\">%s</span>\n", escapeTextForAstro(label)))
 			if brand != "" {
-				b.WriteString(fmt.Sprintf("            <span class=\"calculator-service-brand\">%s</span>\n", escapeHTML(brand)))
+				b.WriteString(fmt.Sprintf("            <span class=\"calculator-service-brand\">%s</span>\n", escapeTextForAstro(brand)))
 			}
 			b.WriteString("          </span>\n")
 			b.WriteString("          <span class=\"calculator-service-check\" aria-hidden=\"true\">✓</span>\n")
@@ -1578,7 +1578,7 @@ func renderCalculatorBlock(data map[string]any) string {
 			ctaURL = "#"
 		}
 		b.WriteString(fmt.Sprintf("      <div class=\"calculator-cta\"><a href=\"%s\" class=\"btn-primary\">%s</a></div>\n",
-			escapeURL(ctaURL), escapeHTML(ctaText)))
+			escapeURL(ctaURL), escapeTextForAstro(ctaText)))
 	}
 	b.WriteString("    </div>\n")
 	b.WriteString("  </section>\n")
@@ -1631,7 +1631,7 @@ func renderCustomBlock(data map[string]any) string {
 	var b strings.Builder
 	b.WriteString("  <section class=\"block block--custom\">\n")
 	if eyebrow := dataString(data, "eyebrow"); eyebrow != "" {
-		b.WriteString(fmt.Sprintf("    <p class=\"eyebrow\">%s</p>\n", escapeHTML(eyebrow)))
+		b.WriteString(fmt.Sprintf("    <p class=\"eyebrow\">%s</p>\n", escapeTextForAstro(eyebrow)))
 	}
 	// Sanitized, like the raw_html sink in pages.go. This used to emit the
 	// tenant string verbatim, so <script> in a custom block executed on every
@@ -1711,8 +1711,11 @@ func renderRawAstroBlock(data map[string]any) string {
 		return "  " + code + "\n"
 	}
 	cls := "block block--raw_astro"
+	// Exit 2. The block's `code` field has been the careful one all along and
+	// its sibling `class` went into the attribute raw, so a quote in it closed
+	// the attribute and everything after it was markup the sanitizer never saw.
 	if extra := dataString(data, "class"); extra != "" {
-		cls += " " + extra
+		cls += " " + escapeAttrForAstro(extra)
 	}
 	return fmt.Sprintf("  <section class=\"%s\">\n    %s\n  </section>\n", cls, code)
 }
@@ -1728,13 +1731,13 @@ func renderProcessStepsBlock(data map[string]any) string {
 	var b strings.Builder
 	b.WriteString("  <section class=\"block block--process_steps\">\n")
 	if eyebrow := dataString(data, "eyebrow"); eyebrow != "" {
-		b.WriteString(fmt.Sprintf("    <p class=\"eyebrow\">%s</p>\n", escapeHTML(eyebrow)))
+		b.WriteString(fmt.Sprintf("    <p class=\"eyebrow\">%s</p>\n", escapeTextForAstro(eyebrow)))
 	}
 	if heading := dataString(data, "heading"); heading != "" {
-		b.WriteString(fmt.Sprintf("    <h2>%s</h2>\n", escapeHTML(heading)))
+		b.WriteString(fmt.Sprintf("    <h2>%s</h2>\n", escapeTextForAstro(heading)))
 	}
 	if sub := dataString(data, "subheading"); sub != "" {
-		b.WriteString(fmt.Sprintf("    <p class=\"subheading\">%s</p>\n", escapeHTML(sub)))
+		b.WriteString(fmt.Sprintf("    <p class=\"subheading\">%s</p>\n", escapeTextForAstro(sub)))
 	}
 	if itemsRaw, ok := data["items"].([]any); ok && len(itemsRaw) > 0 {
 		b.WriteString("    <ol class=\"process-steps\">\n")
@@ -1748,12 +1751,12 @@ func renderProcessStepsBlock(data map[string]any) string {
 				num = fmt.Sprintf("%02d", i+1)
 			}
 			b.WriteString("      <li class=\"process-step\">\n")
-			b.WriteString(fmt.Sprintf("        <div class=\"process-step-num\">%s</div>\n", escapeHTML(num)))
+			b.WriteString(fmt.Sprintf("        <div class=\"process-step-num\">%s</div>\n", escapeTextForAstro(num)))
 			if title := dataString(item, "title"); title != "" {
-				b.WriteString(fmt.Sprintf("        <h3 class=\"process-step-title\">%s</h3>\n", escapeHTML(title)))
+				b.WriteString(fmt.Sprintf("        <h3 class=\"process-step-title\">%s</h3>\n", escapeTextForAstro(title)))
 			}
 			if desc := dataString(item, "description"); desc != "" {
-				b.WriteString(fmt.Sprintf("        <p class=\"process-step-desc\">%s</p>\n", escapeHTML(desc)))
+				b.WriteString(fmt.Sprintf("        <p class=\"process-step-desc\">%s</p>\n", escapeTextForAstro(desc)))
 			}
 			b.WriteString("      </li>\n")
 		}
@@ -1784,15 +1787,15 @@ func renderAboutSplitBlock(data map[string]any, mediaByID map[string]store.Mediu
 	b.WriteString(fmt.Sprintf("  <section class=\"%s\">\n", cls))
 	b.WriteString("    <div class=\"about-split-content\">\n")
 	if eyebrow := dataString(data, "eyebrow"); eyebrow != "" {
-		b.WriteString(fmt.Sprintf("      <p class=\"eyebrow\">%s</p>\n", escapeHTML(eyebrow)))
+		b.WriteString(fmt.Sprintf("      <p class=\"eyebrow\">%s</p>\n", escapeTextForAstro(eyebrow)))
 	}
 	if heading := dataString(data, "heading"); heading != "" {
-		b.WriteString(fmt.Sprintf("      <h2>%s</h2>\n", escapeHTML(heading)))
+		b.WriteString(fmt.Sprintf("      <h2>%s</h2>\n", escapeTextForAstro(heading)))
 	}
 	if parasRaw, ok := data["paragraphs"].([]any); ok {
 		for _, p := range parasRaw {
 			if ps, ok := p.(string); ok && ps != "" {
-				b.WriteString(fmt.Sprintf("      <p>%s</p>\n", escapeHTML(ps)))
+				b.WriteString(fmt.Sprintf("      <p>%s</p>\n", escapeTextForAstro(ps)))
 			}
 		}
 	} else if text := dataString(data, "text"); text != "" {
@@ -1808,10 +1811,10 @@ func renderAboutSplitBlock(data map[string]any, mediaByID map[string]store.Mediu
 			}
 			b.WriteString("        <li>\n")
 			if v := dataString(st, "value"); v != "" {
-				b.WriteString(fmt.Sprintf("          <div class=\"about-split-stat-value\">%s</div>\n", escapeHTML(v)))
+				b.WriteString(fmt.Sprintf("          <div class=\"about-split-stat-value\">%s</div>\n", escapeTextForAstro(v)))
 			}
 			if l := dataString(st, "label"); l != "" {
-				b.WriteString(fmt.Sprintf("          <div class=\"about-split-stat-label\">%s</div>\n", escapeHTML(l)))
+				b.WriteString(fmt.Sprintf("          <div class=\"about-split-stat-label\">%s</div>\n", escapeTextForAstro(l)))
 			}
 			b.WriteString("        </li>\n")
 		}
@@ -1823,7 +1826,7 @@ func renderAboutSplitBlock(data map[string]any, mediaByID map[string]store.Mediu
 			ctaURL = "#"
 		}
 		b.WriteString(fmt.Sprintf("      <a href=\"%s\" class=\"about-split-link\">%s →</a>\n",
-			escapeURL(ctaURL), escapeHTML(ctaText)))
+			escapeURL(ctaURL), escapeTextForAstro(ctaText)))
 	}
 	b.WriteString("    </div>\n")
 	b.WriteString("    <div class=\"about-split-image\">\n")
@@ -1844,7 +1847,7 @@ func renderEmbedBlock(data map[string]any) string {
 	var b strings.Builder
 	b.WriteString("  <section class=\"block block--embed\">\n")
 	if heading := dataString(data, "heading"); heading != "" {
-		b.WriteString(fmt.Sprintf("    <h2>%s</h2>\n", escapeHTML(heading)))
+		b.WriteString(fmt.Sprintf("    <h2>%s</h2>\n", escapeTextForAstro(heading)))
 	}
 	src := dataString(data, "src")
 	if src != "" {
@@ -1854,7 +1857,7 @@ func renderEmbedBlock(data map[string]any) string {
 		}
 		b.WriteString("    <div class=\"embed-wrapper\">\n")
 		b.WriteString(fmt.Sprintf("      <iframe src=\"%s\" title=\"%s\" loading=\"lazy\" referrerpolicy=\"no-referrer-when-downgrade\"></iframe>\n",
-			escapeURL(src), escapeAttr(title)))
+			escapeURL(src), escapeAttrForAstro(title)))
 		b.WriteString("    </div>\n")
 	}
 	b.WriteString("  </section>\n")

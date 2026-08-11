@@ -310,10 +310,145 @@ func sanitizeForAstro(s string) string {
 	return neutraliseAstroExpressions(sanitizeRawHTML(s))
 }
 
-// escapeTextForAstro is the variant for tenant text that is HTML-escaped rather
-// than sanitized, and that has to survive verbatim once it is on the page (a
-// code sample). escapeHTML replaces < > and & only, which leaves the braces
-// Astro evaluates, so the two steps belong together at one name.
+// ---------------------------------------------------------------------------
+// The Astro escaping engine.
+//
+// Everything this package writes lands in a generated .astro file, and .astro
+// is not one output language. It is four, and the escape that makes one safe
+// breaks another. Measured against a real Astro 5 build rather than reasoned
+// about, because the two halves disagree in a way that is easy to get backwards:
+//
+//	context                    braces evaluated?   entity decoded on render?
+//	markup text                YES  <- the sink    yes
+//	quoted HTML attribute      no                  yes
+//	quoted component prop      no                  yes
+//	<style> body               no                  NO
+//	<script> body              no                  NO
+//
+// So brace neutralisation is required in markup text, harmless in attributes,
+// and actively wrong inside <script> or <style>, where an entity is not decoded
+// by anything and `&#123;` stays seven literal characters in the JavaScript.
+// That is the whole reason a blanket pass over rendered output cannot work, and
+// why every tenant string takes a NAMED exit for the context it lands in.
+//
+// Exit 1: escapeTextForAstro       markup text
+// Exit 2: escapeAttrForAstro       quoted HTML attribute
+// Exit 3: escapeJSStringForAstro   inside a <script> the renderer writes
+//         escapeCSSStringForAstro  inside a <style> the renderer writes
+// Exit 4: escapeAstroPropString    a quoted prop on an Astro component
+//
+// A fifth context exists and is deliberately not an exit: JSON-LD, which is
+// produced by json.Marshal. encoding/json escapes < > and & to \uXXXX by
+// default, so it is already a correct raw-text escape, and routing it through
+// exit 1 or 2 would corrupt the JSON.
+// ---------------------------------------------------------------------------
+
+// escapeTextForAstro is exit 1: tenant text in markup context. This is the one
+// exit where the neutralisation is load-bearing rather than defensive, because
+// markup text is the only measured context in which Astro evaluates `{...}`.
+// escapeHTML replaces < > and & only, which leaves exactly the braces Astro
+// runs, so the two steps belong together behind one name.
 func escapeTextForAstro(s string) string {
 	return neutraliseAstroExpressions(escapeHTML(s))
+}
+
+// escapeAttrForAstro is exit 2: tenant text in a quoted HTML attribute.
+//
+// The neutralisation here is defence in depth, not a live fix: a quoted
+// attribute value is inert to the Astro compiler today, measured. It is applied
+// anyway because the difference between an attribute and markup text is one
+// refactor wide, the rendered result is identical either way (the browser
+// decodes the entity), and the alternative is a rule that says "braces are
+// dangerous except in the places somebody checked once".
+func escapeAttrForAstro(s string) string {
+	return neutraliseAstroExpressions(escapeAttr(s))
+}
+
+// jsStringReplacer escapes a value for use inside a single- or double-quoted
+// JavaScript string literal that sits inside a <script> element.
+//
+// Braces are deliberately absent. Astro does not evaluate them inside a script
+// body, and an HTML entity is not decoded there by anything, so neutralising
+// would replace working JavaScript with the seven characters `&#123;`.
+//
+// `<` and `>` become < and > because the HTML parser, not the JS
+// parser, decides where a script element ends: a literal `</script` inside a
+// string closes the element and everything after it is markup again. That is a
+// live hole today wherever a tenant value reaches a script body through %q,
+// which quotes for JavaScript and does nothing about HTML.
+// jsBackslash is one backslash, kept as its own constant so the escapes below
+// read as the data they are and cannot be mangled by anything that rewrites Go
+// escape sequences.
+const jsBackslash = `\`
+
+var jsStringReplacer = strings.NewReplacer(
+	`\`, `\\`,
+	`'`, `\'`,
+	`"`, `\"`,
+	"`", "\\`",
+	"\n", `\n`,
+	"\r", `\r`,
+	// JS line terminators: legal inside a JSON string, fatal inside a JS one.
+	string(rune(0x2028)), jsBackslash+"u2028",
+	string(rune(0x2029)), jsBackslash+"u2029",
+	"<", jsBackslash+"u003c",
+	">", jsBackslash+"u003e",
+)
+
+// escapeJSStringForAstro is exit 3, script half. It returns the BODY of a JS
+// string literal, without the surrounding quotes, so a call site keeps its own
+// quoting style visible.
+func escapeJSStringForAstro(s string) string {
+	return jsStringReplacer.Replace(s)
+}
+
+// cssStringReplacer escapes a value for use inside a quoted CSS string token
+// (a font-family name, a url(...) target) inside a <style> element.
+//
+// Same reasoning as the JS half, same reason braces are untouched. The hex
+// escapes carry a trailing space, which is how CSS terminates a hex escape
+// sequence, and a newline inside a string token is a parse error in CSS so it
+// becomes \A instead.
+var cssStringReplacer = strings.NewReplacer(
+	`\`, `\\`,
+	`"`, `\"`,
+	`'`, `\'`,
+	"\n", `\A `,
+	"\r", `\A `,
+	"<", `\3c `,
+	">", `\3e `,
+)
+
+// escapeCSSStringForAstro is exit 3, style half. Like the JS half it returns
+// the body of a string token, without the surrounding quotes.
+func escapeCSSStringForAstro(s string) string {
+	return cssStringReplacer.Replace(s)
+}
+
+// cssFontStyleKeyword clamps a stored font-style to the three keywords the CSS
+// property accepts. The uploaded value was interpolated into a <style> body
+// with a bare %s, so it was not an escaping problem at all: it was a keyword
+// slot taking arbitrary CSS text. An unrecognised value becomes normal, which
+// is the browser's own default for the property.
+func cssFontStyleKeyword(s string) string {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "italic":
+		return "italic"
+	case "oblique":
+		return "oblique"
+	default:
+		return "normal"
+	}
+}
+
+// escapeAstroPropString is exit 4: a quoted attribute on an Astro COMPONENT,
+// which is a prop rather than markup.
+//
+// It deliberately does not neutralise. Measured on a real build:
+// `<Base title="{process.env.SECRET}">` renders the literal text, so the value
+// is inert, and Astro decodes an entity in a quoted prop before handing it to
+// the component. The exit exists so these call sites read as a decision rather
+// than as the ones somebody forgot, and so the guard test can tell them apart.
+func escapeAstroPropString(s string) string {
+	return escapeAttr(s)
 }

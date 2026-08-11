@@ -349,12 +349,12 @@ func renderProductGridBlock(data map[string]any, mediaByID map[string]store.Medi
 	}
 	linkToDetail := boolFromData(data, "link_to_detail", true)
 
-	b.WriteString(fmt.Sprintf("  <section class=\"block block--product_grid block--product_grid--cols-%s\">\n", escapeAttr(cols)))
+	b.WriteString(fmt.Sprintf("  <section class=\"block block--product_grid block--product_grid--cols-%s\">\n", escapeAttrForAstro(cols)))
 	if heading := dataString(data, "heading"); heading != "" {
-		b.WriteString(fmt.Sprintf("    <h2>%s</h2>\n", escapeHTML(heading)))
+		b.WriteString(fmt.Sprintf("    <h2>%s</h2>\n", escapeTextForAstro(heading)))
 	}
 	if sub := dataString(data, "subheading"); sub != "" {
-		b.WriteString(fmt.Sprintf("    <p class=\"subheading\">%s</p>\n", escapeHTML(sub)))
+		b.WriteString(fmt.Sprintf("    <p class=\"subheading\">%s</p>\n", escapeTextForAstro(sub)))
 	}
 
 	resolved, _ := data["_resolved_products"].([]any)
@@ -385,19 +385,19 @@ func renderProductGridBlock(data map[string]any, mediaByID map[string]store.Medi
 		if imageID != "" {
 			imgHTML := renderMediaImg(imageID, name, name, "product-card-img", mediaByID)
 			if linkToDetail && slug != "" {
-				b.WriteString(fmt.Sprintf("        <a class=\"product-card-imglink\" href=\"/products/%s\">%s</a>\n", escapeAttr(slug), imgHTML))
+				b.WriteString(fmt.Sprintf("        <a class=\"product-card-imglink\" href=\"/products/%s\">%s</a>\n", escapeAttrForAstro(slug), imgHTML))
 			} else {
 				b.WriteString("        " + imgHTML + "\n")
 			}
 		}
 		if linkToDetail && slug != "" {
-			b.WriteString(fmt.Sprintf("        <a class=\"product-card-title\" href=\"/products/%s\"><h3>%s</h3></a>\n", escapeAttr(slug), escapeHTML(name)))
+			b.WriteString(fmt.Sprintf("        <a class=\"product-card-title\" href=\"/products/%s\"><h3>%s</h3></a>\n", escapeAttrForAstro(slug), escapeTextForAstro(name)))
 		} else {
-			b.WriteString(fmt.Sprintf("        <h3 class=\"product-card-title\">%s</h3>\n", escapeHTML(name)))
+			b.WriteString(fmt.Sprintf("        <h3 class=\"product-card-title\">%s</h3>\n", escapeTextForAstro(name)))
 		}
-		b.WriteString(fmt.Sprintf("        <p class=\"product-card-price\">%s</p>\n", escapeHTML(formatPriceForServerRender(price, currency))))
+		b.WriteString(fmt.Sprintf("        <p class=\"product-card-price\">%s</p>\n", escapeTextForAstro(formatPriceForServerRender(price, currency))))
 		if snapshot != "" {
-			b.WriteString(fmt.Sprintf("        <button type=\"button\" class=\"btn btn-primary product-card-cta\" data-cart-add data-cart-item=\"%s\">%s</button>\n", escapeAttr(snapshot), escapeHTML(ctaLabel)))
+			b.WriteString(fmt.Sprintf("        <button type=\"button\" class=\"btn btn-primary product-card-cta\" data-cart-add data-cart-item=\"%s\">%s</button>\n", escapeAttrForAstro(snapshot), escapeTextForAstro(ctaLabel)))
 		} else {
 			b.WriteString("        <p class=\"product-card-unavailable\">Currently unavailable.</p>\n")
 		}
@@ -414,7 +414,7 @@ func renderProductGridBlock(data map[string]any, mediaByID map[string]store.Medi
 func renderProductDetailBlock(data map[string]any, mediaByID map[string]store.Medium) string {
 	var b strings.Builder
 	if missing, _ := data["_resolved_missing"].(bool); missing {
-		slug := escapeHTML(dataString(data, "product_slug"))
+		slug := escapeTextForAstro(dataString(data, "product_slug"))
 		b.WriteString(fmt.Sprintf("  <section class=\"block block--product_detail block--product_detail--missing\">\n    <p class=\"empty\">Product not found: <code>%s</code></p>\n  </section>\n", slug))
 		return b.String()
 	}
@@ -461,23 +461,23 @@ func renderProductDetailBlock(data map[string]any, mediaByID map[string]store.Me
 	displayPrice := int64OrZero(defaultVariant["price_cents"])
 	snapshot := cartItemSnapshot(p, defaultVariant, imageURL)
 
-	b.WriteString(fmt.Sprintf("  <section class=\"block block--product_detail block--product_detail--%s\" data-product-detail data-product-slug=\"%s\">\n", escapeAttr(layout), escapeAttr(stringOrEmpty(p["slug"]))))
+	b.WriteString(fmt.Sprintf("  <section class=\"block block--product_detail block--product_detail--%s\" data-product-detail data-product-slug=\"%s\">\n", escapeAttrForAstro(layout), escapeAttrForAstro(stringOrEmpty(p["slug"]))))
 	b.WriteString("    <div class=\"product-detail-gallery\">\n")
 	if imageID != "" {
 		b.WriteString("      " + renderMediaImgWithPriority(imageID, name, name, "product-detail-img", mediaByID, true) + "\n")
 	}
 	b.WriteString("    </div>\n")
 	b.WriteString("    <div class=\"product-detail-body\">\n")
-	b.WriteString(fmt.Sprintf("      <h1>%s</h1>\n", escapeHTML(name)))
-	b.WriteString(fmt.Sprintf("      <p class=\"product-detail-price\" data-product-price>%s</p>\n", escapeHTML(formatPriceForServerRender(displayPrice, currency))))
+	b.WriteString(fmt.Sprintf("      <h1>%s</h1>\n", escapeTextForAstro(name)))
+	b.WriteString(fmt.Sprintf("      <p class=\"product-detail-price\" data-product-price>%s</p>\n", escapeTextForAstro(formatPriceForServerRender(displayPrice, currency))))
 	if desc != "" {
-		b.WriteString(fmt.Sprintf("      <div class=\"product-detail-description\"><p>%s</p></div>\n", escapeHTML(desc)))
+		b.WriteString(fmt.Sprintf("      <div class=\"product-detail-description\"><p>%s</p></div>\n", escapeTextForAstro(desc)))
 	}
 	if showVariants && len(variants) > 1 {
 		b.WriteString("      <fieldset class=\"product-detail-variants\">\n        <legend>Options</legend>\n")
 		for i, v := range variants {
 			vsnap := cartItemSnapshot(p, v, imageURL)
-			vID := escapeAttr(stringOrEmpty(v["id"]))
+			vID := escapeAttrForAstro(stringOrEmpty(v["id"]))
 			label := stringOrEmpty(v["name"])
 			if label == "" {
 				label = "Option " + fmt.Sprintf("%d", i+1)
@@ -486,11 +486,11 @@ func renderProductDetailBlock(data map[string]any, mediaByID map[string]store.Me
 			if i == 0 {
 				checked = " checked"
 			}
-			b.WriteString(fmt.Sprintf("        <label class=\"variant-option\"><input type=\"radio\" name=\"variant\" value=\"%s\" data-variant-pick data-cart-item=\"%s\"%s /> %s</label>\n", vID, escapeAttr(vsnap), checked, escapeHTML(label)))
+			b.WriteString(fmt.Sprintf("        <label class=\"variant-option\"><input type=\"radio\" name=\"variant\" value=\"%s\" data-variant-pick data-cart-item=\"%s\"%s /> %s</label>\n", vID, escapeAttrForAstro(vsnap), checked, escapeTextForAstro(label)))
 		}
 		b.WriteString("      </fieldset>\n")
 	}
-	b.WriteString(fmt.Sprintf("      <button type=\"button\" class=\"btn btn-primary product-detail-cta\" data-cart-add data-cart-item=\"%s\">%s</button>\n", escapeAttr(snapshot), escapeHTML(ctaLabel)))
+	b.WriteString(fmt.Sprintf("      <button type=\"button\" class=\"btn btn-primary product-detail-cta\" data-cart-add data-cart-item=\"%s\">%s</button>\n", escapeAttrForAstro(snapshot), escapeTextForAstro(ctaLabel)))
 	b.WriteString("    </div>\n  </section>\n")
 	return b.String()
 }
@@ -514,20 +514,20 @@ func renderCartDrawerBlock(data map[string]any) string {
 
 	var b strings.Builder
 	b.WriteString("  <div class=\"block block--cart_drawer\">\n")
-	b.WriteString(fmt.Sprintf("    <button type=\"button\" class=\"cart-trigger\" data-cart-open aria-label=\"%s\">\n", escapeAttr(triggerLabel)))
-	b.WriteString(fmt.Sprintf("      <span class=\"cart-trigger-label\">%s</span>\n", escapeHTML(triggerLabel)))
+	b.WriteString(fmt.Sprintf("    <button type=\"button\" class=\"cart-trigger\" data-cart-open aria-label=\"%s\">\n", escapeAttrForAstro(triggerLabel)))
+	b.WriteString(fmt.Sprintf("      <span class=\"cart-trigger-label\">%s</span>\n", escapeTextForAstro(triggerLabel)))
 	b.WriteString("      <span class=\"cart-trigger-count\" data-cart-count hidden></span>\n")
 	b.WriteString("    </button>\n")
-	b.WriteString(fmt.Sprintf("    <dialog class=\"cart-drawer\" data-cart-drawer data-currency-locale=\"%s\">\n", escapeAttr(locale)))
+	b.WriteString(fmt.Sprintf("    <dialog class=\"cart-drawer\" data-cart-drawer data-currency-locale=\"%s\">\n", escapeAttrForAstro(locale)))
 	b.WriteString("      <header class=\"cart-drawer-header\">\n")
 	b.WriteString("        <h2>Cart</h2>\n")
 	b.WriteString("        <button type=\"button\" class=\"cart-drawer-close\" data-cart-close aria-label=\"Close cart\">&times;</button>\n")
 	b.WriteString("      </header>\n")
-	b.WriteString(fmt.Sprintf("      <p class=\"cart-drawer-empty\" data-cart-empty>%s</p>\n", escapeHTML(emptyMessage)))
+	b.WriteString(fmt.Sprintf("      <p class=\"cart-drawer-empty\" data-cart-empty>%s</p>\n", escapeTextForAstro(emptyMessage)))
 	b.WriteString("      <ul class=\"cart-drawer-items\" data-cart-items hidden></ul>\n")
 	b.WriteString("      <footer class=\"cart-drawer-footer\">\n")
 	b.WriteString("        <p class=\"cart-drawer-subtotal\"><span>Subtotal</span><span data-cart-total></span></p>\n")
-	b.WriteString(fmt.Sprintf("        <a class=\"btn btn-primary cart-drawer-checkout\" href=\"%s\" data-cart-checkout hidden>Checkout</a>\n", escapeAttr(checkoutURL)))
+	b.WriteString(fmt.Sprintf("        <a class=\"btn btn-primary cart-drawer-checkout\" href=\"%s\" data-cart-checkout hidden>Checkout</a>\n", escapeAttrForAstro(checkoutURL)))
 	b.WriteString("      </footer>\n")
 	b.WriteString("    </dialog>\n  </div>\n")
 	return b.String()
@@ -558,12 +558,12 @@ func renderCheckoutFormBlock(data map[string]any, siteID string) string {
 
 	var b strings.Builder
 	b.WriteString("  <section class=\"block block--checkout_form\">\n")
-	b.WriteString(fmt.Sprintf("    <h2>%s</h2>\n", escapeHTML(heading)))
+	b.WriteString(fmt.Sprintf("    <h2>%s</h2>\n", escapeTextForAstro(heading)))
 	if subheading != "" {
-		b.WriteString(fmt.Sprintf("    <p class=\"subheading\">%s</p>\n", escapeHTML(subheading)))
+		b.WriteString(fmt.Sprintf("    <p class=\"subheading\">%s</p>\n", escapeTextForAstro(subheading)))
 	}
 	b.WriteString(fmt.Sprintf("    <form class=\"checkout-form\" data-checkout-form data-site-id=\"%s\" data-return-url=\"%s\" data-require-shipping=\"%s\" novalidate>\n",
-		escapeAttr(siteID), escapeAttr(returnURL), shippingFlag))
+		escapeAttrForAstro(siteID), escapeAttrForAstro(returnURL), shippingFlag))
 	b.WriteString("      <div class=\"checkout-field\"><label for=\"checkout-name\">Full name</label><input id=\"checkout-name\" name=\"name\" type=\"text\" autocomplete=\"name\" required /></div>\n")
 	b.WriteString("      <div class=\"checkout-field\"><label for=\"checkout-email\">Email</label><input id=\"checkout-email\" name=\"email\" type=\"email\" autocomplete=\"email\" required /></div>\n")
 	if requirePhone {
@@ -581,7 +581,7 @@ func renderCheckoutFormBlock(data map[string]any, siteID string) string {
 	}
 	b.WriteString("      <div class=\"checkout-field\"><label for=\"checkout-discount\">Discount code (optional)</label><input id=\"checkout-discount\" name=\"discount_code\" type=\"text\" autocapitalize=\"characters\" /></div>\n")
 	b.WriteString("      <p class=\"checkout-error\" data-checkout-error hidden></p>\n")
-	b.WriteString(fmt.Sprintf("      <button type=\"submit\" class=\"btn btn-primary checkout-submit\">%s</button>\n", escapeHTML(submitLabel)))
+	b.WriteString(fmt.Sprintf("      <button type=\"submit\" class=\"btn btn-primary checkout-submit\">%s</button>\n", escapeTextForAstro(submitLabel)))
 	b.WriteString("    </form>\n  </section>\n")
 	return b.String()
 }

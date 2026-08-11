@@ -292,16 +292,16 @@ func renderPageWithContext(page store.Page, blocks []store.Block, components map
 	title := ExpandMetaTemplate(ctx.titleTpl, pageTitle, vars)
 	description := ExpandMetaTemplate(ctx.descTpl, pageDesc, vars)
 
-	b.WriteString(fmt.Sprintf("<Base title=\"%s\"", escapeAttr(title)))
+	b.WriteString(fmt.Sprintf("<Base title=\"%s\"", escapeAstroPropString(title)))
 	if description != "" {
-		b.WriteString(fmt.Sprintf(" description=\"%s\"", escapeAttr(description)))
+		b.WriteString(fmt.Sprintf(" description=\"%s\"", escapeAstroPropString(description)))
 	}
 	// Per-page lang stamp. Defaults to site.Lang in the layout; override
 	// here when the page slug carries a locale prefix the renderer
 	// recognises (drives <html lang> + the :lang() CSS that hides the
 	// current-locale link in the nav switcher).
 	if pageLang := ctx.i18n.LangForSlug(page.Slug); pageLang != "" && pageLang != ctx.site.Lang {
-		b.WriteString(fmt.Sprintf(` lang="%s"`, escapeAttr(pageLang)))
+		b.WriteString(fmt.Sprintf(` lang="%s"`, escapeAstroPropString(pageLang)))
 	}
 	if page.NoIndex == 1 {
 		b.WriteString(` robots="noindex, nofollow"`)
@@ -365,7 +365,7 @@ func renderBlock(bl store.Block, components map[string]string, mediaByID map[str
 	// anchors like href="#what-i-replace" resolve without per-block manual
 	// wiring. Skip when the block already declares an id (e.g. raw HTML).
 	if id := sectionIDFromHeading(data); id != "" && strings.HasPrefix(inner, "  <section ") && !strings.Contains(inner[:strings.Index(inner, "\n")], " id=\"") {
-		inner = strings.Replace(inner, "  <section ", "  <section id=\""+escapeAttr(id)+"\" ", 1)
+		inner = strings.Replace(inner, "  <section ", "  <section id=\""+escapeAttrForAstro(id)+"\" ", 1)
 	}
 
 	// Phase 18.3: optional per-visitor condition. The hydration script
@@ -373,7 +373,7 @@ func renderBlock(bl store.Block, components map[string]string, mediaByID map[str
 	// and removes `hidden` when the embedded DSL matches. Empty / missing
 	// condition renders verbatim, no wrapper.
 	if cond, ok := data["condition"].(string); ok && strings.TrimSpace(cond) != "" {
-		return fmt.Sprintf("  <div data-asp-when=\"%s\" hidden>\n%s  </div>\n", escapeAttr(cond), inner)
+		return fmt.Sprintf("  <div data-asp-when=\"%s\" hidden>\n%s  </div>\n", escapeAttrForAstro(cond), inner)
 	}
 	return inner
 }
@@ -412,7 +412,7 @@ func renderComponentBlock(name string, data map[string]any) string {
 		}
 		switch val := v.(type) {
 		case string:
-			b.WriteString(fmt.Sprintf(" %s=\"%s\"", k, escapeAttr(val)))
+			b.WriteString(fmt.Sprintf(" %s=\"%s\"", k, escapeAttrForAstro(val)))
 		case float64:
 			b.WriteString(fmt.Sprintf(" %s={%g}", k, val))
 		case bool:
@@ -574,7 +574,7 @@ func renderTextParagraphs(b *strings.Builder, text string) {
 			if i > 0 {
 				inner.WriteString("<br>")
 			}
-			inner.WriteString(escapeHTML(strings.TrimSpace(ln)))
+			inner.WriteString(escapeTextForAstro(strings.TrimSpace(ln)))
 		}
 		b.WriteString(fmt.Sprintf("    <p>%s</p>\n", inner.String()))
 	}
@@ -589,14 +589,14 @@ func renderHeroBlock(data map[string]any, mediaByID map[string]store.Medium) str
 		cls += " has-circuit-bg"
 	}
 	if graphic != "" {
-		cls += " has-graphic has-graphic--" + escapeAttr(graphic)
+		cls += " has-graphic has-graphic--" + escapeAttrForAstro(graphic)
 	}
 	b.WriteString(fmt.Sprintf("  <section class=\"%s\"", cls))
 	if bg == "circuit-static" {
 		b.WriteString(` data-bg="circuit"`)
 	}
 	if graphic != "" {
-		b.WriteString(fmt.Sprintf(` data-hero-graphic="%s"`, escapeAttr(graphic)))
+		b.WriteString(fmt.Sprintf(` data-hero-graphic="%s"`, escapeAttrForAstro(graphic)))
 	}
 	b.WriteString(">\n")
 	if bg == "circuit" {
@@ -609,13 +609,13 @@ func renderHeroBlock(data map[string]any, mediaByID map[string]store.Medium) str
 		b.WriteString("    " + renderHeroGraphic(graphic, data) + "\n")
 	}
 	if eyebrow := dataString(data, "eyebrow"); eyebrow != "" {
-		b.WriteString(fmt.Sprintf("    <p class=\"eyebrow\">%s</p>\n", escapeHTML(eyebrow)))
+		b.WriteString(fmt.Sprintf("    <p class=\"eyebrow\">%s</p>\n", escapeTextForAstro(eyebrow)))
 	}
 	if headline := dataString(data, "headline"); headline != "" {
 		b.WriteString(fmt.Sprintf("    <h1>%s</h1>\n", renderHeadlineWithAccent(headline, dataString(data, "headline_accent"))))
 	}
 	if sub := dataString(data, "subheading"); sub != "" {
-		b.WriteString(fmt.Sprintf("    <p class=\"subheading\">%s</p>\n", escapeHTML(sub)))
+		b.WriteString(fmt.Sprintf("    <p class=\"subheading\">%s</p>\n", escapeTextForAstro(sub)))
 	}
 	if imageID := dataString(data, "image_id"); imageID != "" && graphic == "" {
 		b.WriteString("    " + renderMediaImgWithPriority(imageID, dataString(data, "image_alt"), dataString(data, "headline"), "hero-image", mediaByID, true) + "\n")
@@ -630,7 +630,7 @@ func renderHeroBlock(data map[string]any, mediaByID map[string]store.Medium) str
 				ctaURL = "#"
 			}
 			b.WriteString(fmt.Sprintf("      <a href=\"%s\" class=\"btn-primary\">%s</a>\n",
-				escapeURL(ctaURL), escapeHTML(ctaText)))
+				escapeURL(ctaURL), escapeTextForAstro(ctaText)))
 		}
 		if secLabel != "" {
 			secURL := dataString(data, "secondary_url")
@@ -638,7 +638,7 @@ func renderHeroBlock(data map[string]any, mediaByID map[string]store.Medium) str
 				secURL = "#"
 			}
 			b.WriteString(fmt.Sprintf("      <a href=\"%s\" class=\"btn-secondary\">%s</a>\n",
-				escapeURL(secURL), escapeHTML(secLabel)))
+				escapeURL(secURL), escapeTextForAstro(secLabel)))
 		}
 		b.WriteString("    </div>\n")
 	}
@@ -660,16 +660,16 @@ func renderHeadlineWithAccent(headline, accent string) string {
 		return strings.ReplaceAll(s, "\n", "<br>")
 	}
 	if strings.Contains(headline, "[[") && strings.Contains(headline, "]]") {
-		out := escapeHTML(headline)
+		out := escapeTextForAstro(headline)
 		out = strings.ReplaceAll(out, "[[", `<span class="headline-accent">`)
 		out = strings.ReplaceAll(out, "]]", `</span>`)
 		return convertNewlines(out)
 	}
 	if accent != "" {
 		return fmt.Sprintf("%s<br><span class=\"headline-accent\">%s</span>",
-			convertNewlines(escapeHTML(headline)), escapeHTML(accent))
+			convertNewlines(escapeTextForAstro(headline)), escapeTextForAstro(accent))
 	}
-	return convertNewlines(escapeHTML(headline))
+	return convertNewlines(escapeTextForAstro(headline))
 }
 
 // renderMediaImg returns a <picture> element when the media row is found in
@@ -702,17 +702,17 @@ func renderMediaImgWithPriority(mediaID, alt, fallbackAlt, cssClass string, medi
 		loadAttrs = `loading="eager" fetchpriority="high"`
 	}
 	return fmt.Sprintf(`<img src="/media/%s/original.png" alt="%s" %s />`,
-		escapeAttr(mediaID), escapeAttr(alt), loadAttrs)
+		escapeAttrForAstro(mediaID), escapeAttrForAstro(alt), loadAttrs)
 }
 
 func renderFeatureGridBlock(data map[string]any) string {
 	var b strings.Builder
 	b.WriteString("  <section class=\"block block--feature_grid\">\n")
 	if heading := dataString(data, "heading"); heading != "" {
-		b.WriteString(fmt.Sprintf("    <h2>%s</h2>\n", escapeHTML(heading)))
+		b.WriteString(fmt.Sprintf("    <h2>%s</h2>\n", escapeTextForAstro(heading)))
 	}
 	if sub := dataString(data, "subheading"); sub != "" {
-		b.WriteString(fmt.Sprintf("    <p class=\"subheading\">%s</p>\n", escapeHTML(sub)))
+		b.WriteString(fmt.Sprintf("    <p class=\"subheading\">%s</p>\n", escapeTextForAstro(sub)))
 	}
 	if itemsRaw, ok := data["items"].([]any); ok && len(itemsRaw) > 0 {
 		b.WriteString("    <ul class=\"feature-grid\">\n")
@@ -728,10 +728,10 @@ func renderFeatureGridBlock(data map[string]any) string {
 				}
 			}
 			if title := dataString(item, "title"); title != "" {
-				b.WriteString(fmt.Sprintf("        <h3>%s</h3>\n", escapeHTML(title)))
+				b.WriteString(fmt.Sprintf("        <h3>%s</h3>\n", escapeTextForAstro(title)))
 			}
 			if body := dataString(item, "body"); body != "" {
-				b.WriteString(fmt.Sprintf("        <p>%s</p>\n", escapeHTML(body)))
+				b.WriteString(fmt.Sprintf("        <p>%s</p>\n", escapeTextForAstro(body)))
 			}
 			b.WriteString("      </li>\n")
 		}
@@ -745,13 +745,13 @@ func renderTextBlock(data map[string]any) string {
 	var b strings.Builder
 	b.WriteString("  <section class=\"block block--text\">\n")
 	if eyebrow := dataString(data, "eyebrow"); eyebrow != "" {
-		b.WriteString(fmt.Sprintf("    <p class=\"eyebrow\">%s</p>\n", escapeHTML(eyebrow)))
+		b.WriteString(fmt.Sprintf("    <p class=\"eyebrow\">%s</p>\n", escapeTextForAstro(eyebrow)))
 	}
 	if heading := dataString(data, "heading"); heading != "" {
-		b.WriteString(fmt.Sprintf("    <h2>%s</h2>\n", escapeHTML(heading)))
+		b.WriteString(fmt.Sprintf("    <h2>%s</h2>\n", escapeTextForAstro(heading)))
 	}
 	if sub := dataString(data, "subheading"); sub != "" {
-		b.WriteString(fmt.Sprintf("    <p class=\"subheading\">%s</p>\n", escapeHTML(sub)))
+		b.WriteString(fmt.Sprintf("    <p class=\"subheading\">%s</p>\n", escapeTextForAstro(sub)))
 	}
 	if text := dataString(data, "text"); text != "" {
 		renderTextParagraphs(&b, text)
@@ -762,7 +762,7 @@ func renderTextBlock(data map[string]any) string {
 			ctaURL = "#"
 		}
 		b.WriteString(fmt.Sprintf("    <a href=\"%s\" class=\"btn-primary\">%s</a>\n",
-			escapeURL(ctaURL), escapeHTML(ctaText)))
+			escapeURL(ctaURL), escapeTextForAstro(ctaText)))
 	}
 	b.WriteString("  </section>\n")
 	return b.String()
@@ -774,12 +774,12 @@ func renderCTABlock(data map[string]any) string {
 	if variant == "" {
 		variant = "primary"
 	}
-	b.WriteString(fmt.Sprintf("  <section class=\"block block--cta block--cta-%s\">\n", escapeAttr(variant)))
+	b.WriteString(fmt.Sprintf("  <section class=\"block block--cta block--cta-%s\">\n", escapeAttrForAstro(variant)))
 	if heading := dataString(data, "heading"); heading != "" {
-		b.WriteString(fmt.Sprintf("    <h2>%s</h2>\n", escapeHTML(heading)))
+		b.WriteString(fmt.Sprintf("    <h2>%s</h2>\n", escapeTextForAstro(heading)))
 	}
 	if text := dataString(data, "text"); text != "" {
-		b.WriteString(fmt.Sprintf("    <p>%s</p>\n", escapeHTML(text)))
+		b.WriteString(fmt.Sprintf("    <p>%s</p>\n", escapeTextForAstro(text)))
 	}
 	if ctaText := dataString(data, "cta_text"); ctaText != "" {
 		ctaURL := dataString(data, "cta_url")
@@ -791,7 +791,7 @@ func renderCTABlock(data map[string]any) string {
 			btnClass = "btn-secondary"
 		}
 		b.WriteString(fmt.Sprintf("    <a href=\"%s\" class=\"%s\">%s</a>\n",
-			escapeURL(ctaURL), btnClass, escapeHTML(ctaText)))
+			escapeURL(ctaURL), btnClass, escapeTextForAstro(ctaText)))
 	}
 	b.WriteString("  </section>\n")
 	return b.String()
@@ -804,7 +804,7 @@ func renderImageBlock(data map[string]any, mediaByID map[string]store.Medium) st
 		b.WriteString("    " + renderMediaImg(imageID, dataString(data, "alt"), "", "", mediaByID) + "\n")
 	}
 	if caption := dataString(data, "caption"); caption != "" {
-		b.WriteString(fmt.Sprintf("    <p class=\"caption\">%s</p>\n", escapeHTML(caption)))
+		b.WriteString(fmt.Sprintf("    <p class=\"caption\">%s</p>\n", escapeTextForAstro(caption)))
 	}
 	b.WriteString("  </section>\n")
 	return b.String()
@@ -814,10 +814,10 @@ func renderQuoteBlock(data map[string]any) string {
 	var b strings.Builder
 	b.WriteString("  <section class=\"block block--quote\">\n")
 	if quote := dataString(data, "quote"); quote != "" {
-		b.WriteString(fmt.Sprintf("    <blockquote><p>%s</p></blockquote>\n", escapeHTML(quote)))
+		b.WriteString(fmt.Sprintf("    <blockquote><p>%s</p></blockquote>\n", escapeTextForAstro(quote)))
 	}
 	if attribution := dataString(data, "attribution"); attribution != "" {
-		b.WriteString(fmt.Sprintf("    <cite>%s</cite>\n", escapeHTML(attribution)))
+		b.WriteString(fmt.Sprintf("    <cite>%s</cite>\n", escapeTextForAstro(attribution)))
 	}
 	b.WriteString("  </section>\n")
 	return b.String()
@@ -828,16 +828,16 @@ func renderQuoteBlock(data map[string]any) string {
 // lowest-common-denominator fields (heading / subheading / text / cta).
 func renderGenericBlock(blockType string, data map[string]any) string {
 	var b strings.Builder
-	b.WriteString(fmt.Sprintf("  <section class=\"block block--%s\">\n", escapeAttr(blockType)))
+	b.WriteString(fmt.Sprintf("  <section class=\"block block--%s\">\n", escapeAttrForAstro(blockType)))
 
 	if heading, ok := data["heading"].(string); ok {
-		b.WriteString(fmt.Sprintf("    <h2>%s</h2>\n", escapeHTML(heading)))
+		b.WriteString(fmt.Sprintf("    <h2>%s</h2>\n", escapeTextForAstro(heading)))
 	}
 	if subheading, ok := data["subheading"].(string); ok {
-		b.WriteString(fmt.Sprintf("    <p>%s</p>\n", escapeHTML(subheading)))
+		b.WriteString(fmt.Sprintf("    <p>%s</p>\n", escapeTextForAstro(subheading)))
 	}
 	if text, ok := data["text"].(string); ok {
-		b.WriteString(fmt.Sprintf("    <div>%s</div>\n", escapeHTML(text)))
+		b.WriteString(fmt.Sprintf("    <div>%s</div>\n", escapeTextForAstro(text)))
 	}
 	if ctaText, ok := data["cta_text"].(string); ok {
 		ctaURL, _ := data["cta_url"].(string)
@@ -845,7 +845,7 @@ func renderGenericBlock(blockType string, data map[string]any) string {
 			ctaURL = "#"
 		}
 		b.WriteString(fmt.Sprintf("    <a href=\"%s\" class=\"btn-primary\">%s</a>\n",
-			escapeURL(ctaURL), escapeHTML(ctaText)))
+			escapeURL(ctaURL), escapeTextForAstro(ctaText)))
 	}
 
 	b.WriteString("  </section>\n")
@@ -894,7 +894,7 @@ func escapeURL(s string) string {
 			return "#"
 		}
 	}
-	return escapeAttr(s)
+	return escapeAttrForAstro(s)
 }
 
 func extractComponentName(bl store.Block) string {
