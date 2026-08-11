@@ -45,6 +45,31 @@ func AgentWritableCategory(category string) bool {
 	return agentWritableCategories[category]
 }
 
+// privilegedCategories enumerates settings categories that a plain site
+// member must not write over the human REST surface. Membership in
+// site_members proves "may edit this site's content"; it does not prove
+// "may change this site's security posture".
+//
+// This is the human-surface counterpart to agentWritableCategories. The
+// two lists answer different questions and are deliberately not derived
+// from each other: an agent key is denied many categories a human editor
+// legitimately edits (payments, nginx). Only categories whose keys change
+// the site's attack surface belong here.
+//
+//   - security: csp_policy has no validator at all and takes precedence
+//     over csp_enabled, so one write replaces the entire published CSP.
+//     Matches the RequireOwnerOrAdmin already on allowed_scripts.go,
+//     which guards the other half of the same CSP.
+var privilegedCategories = map[string]bool{
+	"security": true,
+}
+
+// PrivilegedCategory reports whether writes to the category require the
+// site owner (or a platform admin) rather than any site member.
+func PrivilegedCategory(category string) bool {
+	return privilegedCategories[category]
+}
+
 // AgentWritableCategories returns the writable category names, sorted.
 // Used to build the settings catalog summary and the MCP tool schema
 // enum so every surface advertises the same policy.

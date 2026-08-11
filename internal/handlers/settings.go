@@ -7,8 +7,32 @@ import (
 
 	"github.com/bright-interaction/slab/internal/builder"
 	"github.com/bright-interaction/slab/internal/config"
+	authmw "github.com/bright-interaction/slab/internal/middleware"
+	"github.com/bright-interaction/slab/internal/settingspolicy"
 	"github.com/bright-interaction/slab/internal/store"
 )
+
+// requirePrivilegedCategory gates writes to categories that change the
+// site's security posture (settingspolicy.PrivilegedCategory) behind the
+// site owner / platform admin, the same bar allowed_scripts.go applies to
+// the other half of the CSP. Ordinary categories pass through untouched
+// so a member can still edit content settings.
+//
+// Returns true when the write may proceed; on false the caller has
+// already received a 403 written by RequireOwnerOrAdmin.
+func (h *SettingsHandler) requirePrivilegedCategory(w http.ResponseWriter, r *http.Request, categories ...string) bool {
+	needsOwner := false
+	for _, c := range categories {
+		if settingspolicy.PrivilegedCategory(c) {
+			needsOwner = true
+			break
+		}
+	}
+	if !needsOwner {
+		return true
+	}
+	return authmw.RequireOwnerOrAdmin(w, r, h.queries)
+}
 
 // SettingsHandler handles per-site settings CRUD.
 type SettingsHandler struct {
@@ -68,6 +92,9 @@ func (h *SettingsHandler) Upsert(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "category and key are required")
 		return
 	}
+	if !h.requirePrivilegedCategory(w, r, req.Category) {
+		return
+	}
 	if err := validateSetting(req.Category, req.Key, req.Value); err != nil {
 		writeError(w, http.StatusUnprocessableEntity, err.Error())
 		return
@@ -107,6 +134,22 @@ func (h *SettingsHandler) BulkUpsert(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := parseJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "Invalid JSON body")
+		return
+	}
+
+	// Authorize the whole batch before validating or writing any of it.
+	// A batch is as privileged as its most privileged entry, so one
+	// security.* key in a payload of otherwise ordinary keys requires
+	// owner. Checked up front for the same reason validation is: no
+	// half-applied state.
+	cats := make([]string, 0, len(req))
+	for _, s := range req {
+		if s.Category == "" || s.Key == "" {
+			continue
+		}
+		cats = append(cats, s.Category)
+	}
+	if !h.requirePrivilegedCategory(w, r, cats...) {
 		return
 	}
 
@@ -164,14 +207,22 @@ func (h *SettingsHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	// another tenant and have it removed.
 	rows, _ := h.queries.ListSettingsBySite(r.Context(), siteID)
 	owns := false
+	category := ""
 	for _, s := range rows {
 		if s.ID == id {
 			owns = true
+			category = s.Category
 			break
 		}
 	}
 	if !owns {
 		writeError(w, http.StatusNotFound, "Setting not found")
+		return
+	}
+	// Deleting a privileged row is a write to that category: dropping
+	// security.csp_extra_directives removes hardening the owner added,
+	// and a gate on Upsert alone would just be routed around by DELETE.
+	if !h.requirePrivilegedCategory(w, r, category) {
 		return
 	}
 	if err := h.queries.DeleteSetting(r.Context(), id); err != nil {

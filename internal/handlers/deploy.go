@@ -109,7 +109,15 @@ func toView(t store.DeployTarget) deployTargetView {
 }
 
 // ListTargets returns all deploy targets for a site.
+//
+// Owner-gated like the four mutating handlers below. The view returns the
+// target's config blob, which carries deployment credentials (the dockyard
+// api_key, rsync host/user/path), so read access is as sensitive as write
+// access here.
 func (h *DeployHandler) ListTargets(w http.ResponseWriter, r *http.Request) {
+	if !authmw.RequireOwnerOrAdmin(w, r, h.queries) {
+		return
+	}
 	siteID := urlParam(r, "siteID")
 	rows, err := h.queries.ListDeployTargetsBySite(r.Context(), siteID)
 	if err != nil {
@@ -124,8 +132,12 @@ func (h *DeployHandler) ListTargets(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"targets": out})
 }
 
-// GetTarget returns a single target.
+// GetTarget returns a single target. Owner-gated for the same reason as
+// ListTargets: the response includes the target's credential-bearing config.
 func (h *DeployHandler) GetTarget(w http.ResponseWriter, r *http.Request) {
+	if !authmw.RequireOwnerOrAdmin(w, r, h.queries) {
+		return
+	}
 	siteID := urlParam(r, "siteID")
 	targetID := urlParam(r, "targetID")
 	t, err := h.queries.GetDeployTarget(r.Context(), targetID)
