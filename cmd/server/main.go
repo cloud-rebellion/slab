@@ -61,10 +61,12 @@ func main() {
 	}
 
 	cfg := config.Load()
-	// Refuse to boot in production-like deployments (BaseURL != localhost)
-	// when any documented-default secret is still in place. The seeded
-	// admin password is checked separately at seed time below. Keeps local
-	// dev permissive while making "deployed without env" impossible to miss.
+	// Refuse to boot when any documented-default secret is still in place.
+	// The posture comes from ATOMICSITE_ENV, and an absent ATOMICSITE_ENV
+	// means production, so "deployed without env" is a refusal rather than
+	// a silently unguarded boot. Development opts out explicitly
+	// (`make dev`). The seeded admin password is checked separately at
+	// seed time below.
 	if err := cfg.Validate(); err != nil {
 		slog.Error("config validation failed; refusing to start", "error", err.Error())
 		os.Exit(1)

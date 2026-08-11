@@ -6,10 +6,12 @@ import (
 )
 
 // TestValidate_LocalDevAllowsDefaults confirms the guard does not block
-// `go run ./cmd/server` with no env vars set. Local dev is the only
-// branch where Validate returns nil with sentinel secrets in place.
+// `make dev`, which sets ATOMICSITE_ENV=development. Development is the
+// only branch where Validate returns nil with sentinel secrets in place,
+// and it has to be asked for explicitly.
 func TestValidate_LocalDevAllowsDefaults(t *testing.T) {
 	cfg := &Config{
+		Env:           EnvDevelopment,
 		BaseURL:       "http://localhost:8080",
 		JWTSecret:     DefaultJWTSecret,
 		AnalyticsSalt: DefaultAnalyticsSalt,
@@ -130,9 +132,10 @@ func TestValidateAdminPassword_RejectsDefaultInProd(t *testing.T) {
 }
 
 // TestValidateAdminPassword_LocalDevPermissive confirms the seed-time
-// guard skips local dev so contributors can run the server with no env.
+// guard skips an explicitly declared development environment so
+// contributors can run the server without inventing a password.
 func TestValidateAdminPassword_LocalDevPermissive(t *testing.T) {
-	cfg := &Config{BaseURL: "http://localhost:8080"}
+	cfg := &Config{Env: EnvDevelopment, BaseURL: "http://localhost:8080"}
 	for _, pw := range []string{"", DefaultAdminPassword, "short"} {
 		if err := cfg.ValidateAdminPassword(pw); err != nil {
 			t.Errorf("local dev should accept %q; got %v", pw, err)
@@ -148,19 +151,21 @@ func TestValidate_DeploymentMode_Common(t *testing.T) {
 	cases := []struct {
 		name    string
 		mode    string
+		env     string
 		baseURL string
 		wantErr string
 	}{
-		{name: "empty defaults to single (localhost)", mode: "", baseURL: "http://localhost:8080"},
-		{name: "single explicit (localhost)", mode: "single", baseURL: "http://localhost:8080"},
+		{name: "empty defaults to single (dev)", mode: "", env: EnvDevelopment, baseURL: "http://localhost:8080"},
+		{name: "single explicit (dev)", mode: "single", env: EnvDevelopment, baseURL: "http://localhost:8080"},
 		{name: "single explicit (prod)", mode: "single"},
-		{name: "unknown value rejected (localhost)", mode: "enterprise", baseURL: "http://localhost:8080", wantErr: "is not a recognised value"},
+		{name: "unknown value rejected (dev)", mode: "enterprise", env: EnvDevelopment, baseURL: "http://localhost:8080", wantErr: "is not a recognised value"},
 		{name: "unknown value rejected (prod)", mode: "enterprise", wantErr: "is not a recognised value"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			cfg := goodConfig()
 			cfg.DeploymentMode = tc.mode
+			cfg.Env = tc.env
 			if tc.baseURL != "" {
 				cfg.BaseURL = tc.baseURL
 			}
@@ -178,7 +183,8 @@ func TestValidate_DeploymentMode_Common(t *testing.T) {
 }
 
 // TestIsLocalDev_RecognisesLoopbackVariants: loopback can come in three
-// shapes; all three should bypass the validation guards.
+// shapes. IsLocalDev is now only consulted for cookie Secure and CORS
+// decisions; it deliberately no longer bypasses any validation guard.
 func TestIsLocalDev_RecognisesLoopbackVariants(t *testing.T) {
 	cases := map[string]bool{
 		"http://localhost:8080":  true,

@@ -159,7 +159,12 @@ jobs:
       - name: Boot atomicsite
         run: |
           mkdir -p atomicsite/data
-          ./atomicsite/bin/atomicsite > /tmp/atomicsite.log 2>&1 &
+          # ATOMICSITE_ENV=development: the smoke boot runs on loopback
+          # with the sentinel secrets. Without this the binary correctly
+          # refuses to start, because an absent ATOMICSITE_ENV means
+          # production.
+          ATOMICSITE_ENV=development \
+            ./atomicsite/bin/atomicsite > /tmp/atomicsite.log 2>&1 &
           echo $! > /tmp/atomicsite.pid
 
       - name: Wait for /api/health to respond
@@ -212,6 +217,7 @@ jobs:
         run: |
           mkdir -p /tmp/atomicsite-source/data
           (cd /tmp/atomicsite-source && \
+            ATOMICSITE_ENV=development \
             DATA_DIR=/tmp/atomicsite-source/data \
             $GITHUB_WORKSPACE/atomicsite/bin/atomicsite > /tmp/source.log 2>&1) &
           echo $! > /tmp/source.pid
@@ -248,6 +254,7 @@ jobs:
           mkdir -p /tmp/atomicsite-restored/data
           cp /tmp/atomicsite-backup/snapshot.db /tmp/atomicsite-restored/data/atomicsite.db
           (cd /tmp/atomicsite-restored && \
+            ATOMICSITE_ENV=development \
             DATA_DIR=/tmp/atomicsite-restored/data \
             PORT=8090 \
             BASE_URL=http://localhost:8090 \

@@ -392,6 +392,39 @@ func (s *Server) Router() http.Handler {
 	// before any site exists / before the admin is logged in.
 	r.Get("/api/starter-kits", sh.ListStarterKits)
 
+	// Genuinely public POST endpoints. These are registered HERE, on the
+	// bare router, and not inside the authenticated group below. Both were
+	// previously registered inside that group by mistake: the comments
+	// said "public", chi does not care what a comment says, and
+	// s.authMW.Middleware is strict (no cookie means 401 and it stops
+	// there, it does not defer to a Require* gate). The billing webhook is
+	// the URL we hand to Mollie, so subscription payments could never
+	// confirm; the waitlist form is posted by anonymous visitors.
+	//
+	// Anything added below this point that a browser or a third party must
+	// reach without a session cookie belongs here, not there. The posture
+	// is asserted by TestRoutes_PublicRoutesAreReachableWithoutCookie.
+	billingH := handlers.NewBillingHandler(s.cfg, s.queries)
+	handlers.WireMollie(billingH, os.Getenv("MOLLIE_API_KEY"))
+	// Mollie posts here with no credential of ours. Authenticity does not
+	// come from the request: the body is treated as nothing but a payment
+	// id, and BillingHandler.Webhook hands that id to the Mollie API using
+	// our own key and believes only what comes back. A forged POST can
+	// therefore only name a payment that already exists under our account.
+	// Same posture as the storefront webhook further down.
+	r.Post("/api/billing/webhook", billingH.Webhook)
+
+	// Public waitlist capture. Rate-limited at the handler layer
+	// (5/hour/IP); the admin review + invite routes are separate and stay
+	// behind RequireAdmin.
+	waitlistMailer := email.NewMailerSendClient(
+		os.Getenv("MAILERSEND_API_TOKEN"),
+		os.Getenv("MAIL_FROM"),
+		os.Getenv("MAIL_FROM_NAME"),
+	)
+	publicWaitlistH := handlers.NewWaitlistHandler(s.cfg, s.queries, waitlistMailer)
+	r.Post("/api/waitlist", publicWaitlistH.Submit)
+
 	// Authenticated admin routes
 	r.Group(func(r chi.Router) {
 		r.Use(s.authMW.Middleware)
@@ -447,8 +480,11 @@ func (s *Server) Router() http.Handler {
 			r.Delete("/api/admin/invites/{inviteID}", invH.Delete)
 
 			// Waitlist admin routes (Phase 30.5). Wired here inside
-			// the RequireAdmin group; the public submit endpoint
-			// lives outside auth at /api/waitlist.
+			// the RequireAdmin group. The public submit endpoint is
+			// registered on the bare router at /api/waitlist, before
+			// the authenticated group opens. It used to be registered
+			// inside the group while this comment claimed otherwise,
+			// so anonymous submissions got 401.
 			waitlistAdminH := handlers.NewWaitlistHandler(s.cfg, s.queries, email.NewMailerSendClient(
 				os.Getenv("MAILERSEND_API_TOKEN"),
 				os.Getenv("MAIL_FROM"),
@@ -522,27 +558,14 @@ func (s *Server) Router() http.Handler {
 
 		// Billing (Phase 30.2). The handler is OSS-safe (returns 503
 		// when Mollie not wired); the EE build's cmd/server/main.go
-		// calls WireMollie() to attach the real client. The webhook
-		// route lives outside the workspace group because Mollie
-		// posts unauthenticated; verification is via re-fetching the
-		// payment from the Mollie API (never trust the body).
-		billingH := handlers.NewBillingHandler(s.cfg, s.queries)
-		handlers.WireMollie(billingH, os.Getenv("MOLLIE_API_KEY"))
+		// calls WireMollie() to attach the real client. These two
+		// routes are per-workspace admin surface and belong behind the
+		// session cookie. Mollie's own callback is NOT here: it is
+		// registered on the bare router above, because a route inside
+		// this group answers 401 to anyone without a cookie and Mollie
+		// has none.
 		wsR.Post("/api/workspaces/{workspaceID}/billing/checkout", billingH.StartCheckout)
 		wsR.Get("/api/workspaces/{workspaceID}/billing", billingH.GetBilling)
-		r.Post("/api/billing/webhook", billingH.Webhook)
-
-		// Waitlist (Phase 30.5). Public capture is rate-limited at
-		// the handler layer (5/hour/IP) so a public route is safe
-		// without auth. Admin-only review + invite flow gated by
-		// RequireAdmin.
-		mailer := email.NewMailerSendClient(
-			os.Getenv("MAILERSEND_API_TOKEN"),
-			os.Getenv("MAIL_FROM"),
-			os.Getenv("MAIL_FROM_NAME"),
-		)
-		waitlistH := handlers.NewWaitlistHandler(s.cfg, s.queries, mailer)
-		r.Post("/api/waitlist", waitlistH.Submit)
 
 		// Audit C1: every /api/sites/{siteID}/* route below must verify
 		// the authenticated user has a site_members row for that siteID

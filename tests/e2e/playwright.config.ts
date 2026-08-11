@@ -71,6 +71,12 @@ export default defineConfig({
 			stdout: 'pipe',
 			stderr: 'pipe',
 			env: {
+				// The suite runs on loopback with sentinel-grade secrets, so
+				// it has to declare the development posture explicitly. An
+				// absent ATOMICSITE_ENV means production and the binary
+				// refuses to boot, which is the intended fail-closed
+				// behaviour, not a test-harness problem.
+				ATOMICSITE_ENV: 'development',
 				DATA_DIR,
 				PORT: TEST_PORT,
 				BASE_URL,

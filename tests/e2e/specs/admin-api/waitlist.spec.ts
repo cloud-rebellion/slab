@@ -6,20 +6,28 @@ import { test, expect, u } from '../../fixtures/auth';
 // That's the documented degrade-mode for OSS / local dev.
 
 test.describe('Phase 30.5: waitlist', () => {
-	test('public submit accepts valid email + returns 201', async ({ adminApi }) => {
+	// anonApi, not adminApi: this endpoint is posted by an anonymous
+	// visitor's browser, so the only test that means anything is one
+	// without a session cookie. These two ran on adminApi for months and
+	// stayed green while every real submission got 401.
+	test('public submit accepts valid email + returns 201', async ({ anonApi }) => {
 		const email = `wl-${Date.now()}@example.test`;
-		const res = await adminApi.post(u('/api/waitlist'), {
+		const res = await anonApi.post(u('/api/waitlist'), {
 			data: { email, name: 'Test User', use_case: 'Marketing site for my law firm', region: 'eu' }
 		});
+		expect(res.status(), 'a cookie-less submit must not be rejected by auth').not.toBe(401);
 		expect(res.status()).toBe(201);
 		const body = await res.json();
 		expect(body.status).toBe('ok');
 	});
 
-	test('public submit rejects malformed email with 400', async ({ adminApi }) => {
-		const res = await adminApi.post(u('/api/waitlist'), {
+	test('public submit rejects malformed email with 400', async ({ anonApi }) => {
+		const res = await anonApi.post(u('/api/waitlist'), {
 			data: { email: 'not-an-email', name: 'X' }
 		});
+		// 400 not 401: the request reached the handler and the handler
+		// judged the payload. A 401 here would mean the route moved back
+		// inside the authenticated group.
 		expect(res.status()).toBe(400);
 	});
 

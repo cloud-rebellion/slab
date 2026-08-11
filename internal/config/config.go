@@ -20,6 +20,7 @@ const (
 	DefaultJWTSecret     = "change-me-in-production"
 	DefaultAnalyticsSalt = "atomicsite-default-fingerprint-salt-change-me"
 	DefaultAdminPassword = "changeme123"
+	DefaultBaseURL       = "http://localhost:8080"
 )
 
 // DeploymentMode values. The OSS distribution defaults to "single";
@@ -27,6 +28,28 @@ const (
 const (
 	DeploymentModeSingle = "single"
 	DeploymentModeCloud  = "cloud"
+)
+
+// Deployment environment, read from ATOMICSITE_ENV. This is the EXPLICIT
+// posture signal for the Validate() guards. It is deliberately not derived
+// from BaseURL, a hostname, or anything else a missing config line can
+// change by accident.
+//
+// ABSENT MEANS PRODUCTION. That direction is the whole point: the failure
+// mode of a forgotten line has to be "refuses to start", not "boots healthy
+// with every guard disabled". Local development opts IN with
+// ATOMICSITE_ENV=development, which `make dev` sets for you.
+//
+// The previous design keyed off BaseURL having a localhost prefix, and
+// BaseURL defaults to http://localhost:8080. A single missing BASE_URL line
+// in a container env file therefore disabled the JWT_SECRET, ANALYTICS_SALT,
+// shield-key, HTTPS and ADMIN_PASSWORD guards at once, silently: the
+// container came up healthy, signed sessions with the documented default
+// secret, and ran at-rest encryption as a passthrough. env_file cannot
+// refuse an absence, so the absence had to stop meaning "development".
+const (
+	EnvProduction  = "production"
+	EnvDevelopment = "development"
 )
 
 // RequireMFA values. Read from ATOMICSITE_REQUIRE_MFA. Empty string is
@@ -54,6 +77,11 @@ func (c *Config) MustEnrollMFA(role string) bool {
 }
 
 type Config struct {
+	// Env is the explicit deployment posture (ATOMICSITE_ENV). Empty or
+	// anything other than "development" means production, so the zero
+	// value of Config is production-guarded rather than unguarded.
+	Env string
+
 	Port          int
 	DataDir       string
 	DBPath        string
@@ -271,13 +299,16 @@ type Config struct {
 func Load() *Config {
 	dataDir := envOr("DATA_DIR", "./data")
 	return &Config{
+		// Absent ATOMICSITE_ENV means production. See the Env constants.
+		Env: strings.ToLower(strings.TrimSpace(envOr("ATOMICSITE_ENV", EnvProduction))),
+
 		Port:          envInt("PORT", 8080),
 		DataDir:       dataDir,
 		DBPath:        filepath.Join(dataDir, "atomicsite.db"),
 		MediaDir:      filepath.Join(dataDir, "media"),
 		FontsDir:      filepath.Join(dataDir, "fonts"),
 		JWTSecret:     envOr("JWT_SECRET", "change-me-in-production"),
-		BaseURL:       envOr("BASE_URL", "http://localhost:8080"),
+		BaseURL:       envOr("BASE_URL", DefaultBaseURL),
 		MaxUploadSize: envInt64("MAX_UPLOAD_SIZE", 20<<20), // 20 MB
 		MediaVariants: envIntList("MEDIA_VARIANTS", []int{320, 640, 1280, 1920}),
 
@@ -332,20 +363,30 @@ func Load() *Config {
 }
 
 // Validate returns nil when the loaded config is safe for the deployment
-// shape implied by BaseURL. Production-like deployments (BaseURL != localhost)
-// must override every secret and operational toggle that has a known default;
-// any one still at its sentinel value is treated as a misconfiguration and
-// the server refuses to start.
+// posture declared by ATOMICSITE_ENV. Production (the default when the
+// variable is absent) must override every secret and operational toggle
+// that has a known default; any one still at its sentinel value is treated
+// as a misconfiguration and the server refuses to start.
 //
 // Why a refuse-to-start guard rather than a warning: every previous
 // "warning-only" approach in the codebase has been ignored at least once
 // in production. The boot-time hard fail is the only mechanism that
 // guarantees the operator notices.
 //
-// Local development (BaseURL starts with http://localhost) keeps the
-// permissive behaviour so contributors don't have to set five env vars
-// to run `go test` or `go run`.
+// Local development opts out explicitly with ATOMICSITE_ENV=development so
+// contributors don't have to set five env vars to run `go test` or
+// `make dev`. Opting out is a positive act; forgetting a line is not.
 func (c *Config) Validate() error {
+	// Posture validation runs first and runs everywhere. A typo'd
+	// ATOMICSITE_ENV must be a loud refusal, not a silent slide into
+	// either branch.
+	switch c.envName() {
+	case EnvProduction, EnvDevelopment:
+		// recognised
+	default:
+		return fmt.Errorf("ATOMICSITE_ENV=%q is not a recognised value; use %q (the default when unset) or %q", c.Env, EnvProduction, EnvDevelopment)
+	}
+
 	// Deployment-mode validation runs even on localhost: a misspelt mode
 	// or "cloud" on an OSS binary should fail loudly regardless of where
 	// the operator is running it. Localhost still bypasses the secret /
@@ -372,7 +413,7 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("ATOMICSITE_REQUIRE_MFA=%q is not a recognised value; use %q, %q, or %q", c.RequireMFA, MFAOptional, MFAAdminsOnly, MFAAllUsers)
 	}
 
-	if c.IsLocalDev() {
+	if !c.IsProduction() {
 		return nil
 	}
 
@@ -416,8 +457,18 @@ func (c *Config) Validate() error {
 	// "not localhost"; without HTTPS in production, the cookie still gets
 	// set Secure=true and never travels, which manifests as login that
 	// "doesn't stick". Fail fast with the right error message.
+	//
+	// This is also the guard that catches an ABSENT BASE_URL, because the
+	// fallback is http://localhost:8080. Say so in the message: an
+	// operator reading "BASE_URL=http://localhost:8080 is not HTTPS" on a
+	// server they never set BASE_URL on needs to be told the value is a
+	// default, not something they typed.
 	if !strings.HasPrefix(c.BaseURL, "https://") {
-		problems = append(problems, fmt.Sprintf("BASE_URL=%q is not HTTPS; production deployments must serve over TLS or sessions will not persist", c.BaseURL))
+		hint := ""
+		if c.BaseURL == DefaultBaseURL {
+			hint = " (this is the built-in default, which means BASE_URL is unset or empty in the environment; env_file cannot refuse an absence, so set it explicitly)"
+		}
+		problems = append(problems, fmt.Sprintf("BASE_URL=%q is not HTTPS; production deployments must serve over TLS or sessions will not persist%s", c.BaseURL, hint))
 	}
 
 	// Either ATOMICSITE_PRIMARY_DOMAIN (single-root-domain shape, the
@@ -444,7 +495,7 @@ func (c *Config) Validate() error {
 // fail; the seed path must abort rather than silently use the documented
 // default.
 func (c *Config) ValidateAdminPassword(adminPassword string) error {
-	if c.IsLocalDev() {
+	if !c.IsProduction() {
 		return nil
 	}
 	if adminPassword == "" || adminPassword == DefaultAdminPassword {
@@ -456,10 +507,34 @@ func (c *Config) ValidateAdminPassword(adminPassword string) error {
 	return nil
 }
 
-// IsLocalDev reports whether the BaseURL points at localhost. Local dev
-// keeps the lenient defaults (no secrets, no HTTPS) so contributors can
-// run the server with a single command. The Validate guards bypass on
-// this branch.
+// envName normalises Env, treating absent as production.
+func (c *Config) envName() string {
+	e := strings.ToLower(strings.TrimSpace(c.Env))
+	if e == "" {
+		return EnvProduction
+	}
+	return e
+}
+
+// IsProduction reports whether the production guards apply. It is the ONLY
+// gate on Validate and ValidateAdminPassword.
+//
+// Fail-closed by construction: anything that is not exactly "development"
+// is production, so a typo, an empty value, a zero-value Config or a
+// missing environment file all land on the guarded branch. Validate
+// separately rejects an unrecognised non-empty value outright so the typo
+// is reported as a typo rather than as five downstream secret problems.
+func (c *Config) IsProduction() bool {
+	return c.envName() != EnvDevelopment
+}
+
+// IsLocalDev reports whether the BaseURL points at localhost.
+//
+// This is a statement about the URL, NOT about deployment posture, and it
+// no longer gates any Validate guard: that gate is IsProduction, driven by
+// the explicit ATOMICSITE_ENV. Use IsLocalDev only where the question
+// really is "would a Secure cookie or a strict CORS origin break because
+// we are being served over plain http on loopback".
 func (c *Config) IsLocalDev() bool {
 	return strings.HasPrefix(c.BaseURL, "http://localhost") ||
 		strings.HasPrefix(c.BaseURL, "http://127.0.0.1") ||

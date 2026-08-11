@@ -44,6 +44,7 @@ export async function loginAsAdmin(page: Page): Promise<void> {
 type AuthFixtures = {
 	adminCookie: string;
 	adminApi: APIRequestContext;
+	anonApi: APIRequestContext;
 	loggedInPage: Page;
 };
 
@@ -66,6 +67,23 @@ export const test = base.extend<AuthFixtures>({
 				Cookie: `${E2E_CONSTANTS.COOKIE_NAME}=${adminCookie}`
 			}
 		});
+		await use(ctx);
+		await ctx.dispose();
+	},
+
+	/**
+	 * A request context carrying NO session cookie. Use this for anything
+	 * a stranger must be able to reach: the Mollie billing callback, the
+	 * public waitlist form, the storefront checkout.
+	 *
+	 * Testing a public endpoint with `adminApi` proves nothing about it
+	 * being public, and that is not hypothetical: both the waitlist submit
+	 * and the billing webhook specs did exactly that, stayed green for
+	 * months, and hid two routes that were registered inside the
+	 * authenticated group and 401'd every real caller.
+	 */
+	anonApi: async ({}, use) => {
+		const ctx = await request.newContext();
 		await use(ctx);
 		await ctx.dispose();
 	},

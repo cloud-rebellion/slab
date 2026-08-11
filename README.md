@@ -83,13 +83,24 @@ Copy `.env.example` to `.env` and fill in values. The minimum for a working prod
 
 | Var                            | Why                                                         |
 |--------------------------------|-------------------------------------------------------------|
+| `ATOMICSITE_ENV`               | `production` (the default when unset) or `development`.     |
 | `BASE_URL`                     | Public URL of the admin server (must be HTTPS in prod).     |
 | `JWT_SECRET`                   | Session signing. `openssl rand -hex 32`.                    |
 | `ANALYTICS_SALT`               | Visitor fingerprint salt. `openssl rand -hex 32`.           |
+| `ATOMICSITE_SHIELD_KEY`        | 32-byte at-rest + MCP shield key. `head -c 24 /dev/urandom \| base64`. |
 | `ATOMICSITE_PRIMARY_DOMAIN`    | The apex domain this instance serves (`example.com`).       |
 | `ADMIN_PASSWORD`               | Initial admin login. Min 12 chars. Change before exposing.  |
 
-The server refuses to start if any of these are unset or still equal their documented defaults in non-localhost deployments. Local dev keeps lenient defaults so contributors can run with a single `make dev`.
+The server refuses to start if any of these are unset or still equal their documented defaults.
+
+**An absent `ATOMICSITE_ENV` means production.** That direction is deliberate. The posture used to be inferred from `BASE_URL` starting with `http://localhost`, and `BASE_URL` itself defaults to `http://localhost:8080`, so a single missing line in a deploy env file disabled every guard above at once while the container reported healthy. An env file can hand over a value; it cannot refuse an absence.
+
+Local development opts out explicitly, and `make dev` already does it for you:
+
+```bash
+make dev                                  # sets ATOMICSITE_ENV=development
+ATOMICSITE_ENV=development go run ./cmd/server   # the same thing by hand
+```
 
 Full env-var reference: see `.env.example`.
 

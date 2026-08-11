@@ -29,6 +29,20 @@ services:
     env_file:
       - .env
     environment:
+      # Deployment posture. Absent means production, so a self-host that
+      # forgets this line still gets every boot guard. Set
+      # ATOMICSITE_ENV=development in .env only while working locally.
+      ATOMICSITE_ENV: ${ATOMICSITE_ENV:-production}
+      # BASE_URL guarded rather than merely supplied. env_file hands the
+      # value over when it is present and says nothing when it is absent,
+      # and the absent case is the dangerous one: BASE_URL falls back to
+      # http://localhost:8080, which is not HTTPS. `${VAR:?message}` makes
+      # `docker compose up` refuse instead. Compose interpolation reads the
+      # project-directory .env, the same file this service loads through
+      # env_file, so one line satisfies both and the guard costs nothing.
+      # Verify by ablation: delete the line from a COPY of .env and confirm
+      # `docker compose config` refuses.
+      BASE_URL: "${BASE_URL:?BASE_URL must be set in .env, for example https://cms.example.com. An absent value falls back to http://localhost:8080, which is not HTTPS, and the server then refuses to start in production.}"
       PORT: "8080"
       DATA_DIR: /data
       ATOMICSITE_DEPLOYMENT_MODE: single

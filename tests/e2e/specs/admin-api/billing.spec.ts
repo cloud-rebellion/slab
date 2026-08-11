@@ -49,10 +49,17 @@ test.describe('Phase 30.2: billing (OSS contract)', () => {
 		expect([400, 503]).toContain(res.status());
 	});
 
-	test('Webhook accepts form post + 200s even when Mollie not wired', async ({ adminApi }) => {
-		const res = await adminApi.post(u('/api/billing/webhook'), {
+	// anonApi, not adminApi: Mollie posts this URL from its own servers
+	// with no cookie of ours. Running it on adminApi hid the fact that the
+	// route sat inside the authenticated group and 401'd every real
+	// callback, so subscription payments never confirmed.
+	test('Webhook accepts form post + 200s even when Mollie not wired', async ({ anonApi }) => {
+		const res = await anonApi.post(u('/api/billing/webhook'), {
 			form: { id: 'tr_test_invalid' }
 		});
+		expect(res.status(), 'Mollie has no session cookie; this route must not require one').not.toBe(
+			401
+		);
 		expect(res.status()).toBe(200);
 		const body = await res.json();
 		// Either no-op (Mollie not wired) or fetch-failed (live key
