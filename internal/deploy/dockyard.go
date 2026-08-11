@@ -33,14 +33,18 @@ type DockyardDeployer struct {
 	httpClient *http.Client
 	rsync      *RsyncDeployer
 	client     dockyardClient
+	// allowPrivate disables the SSRF guards on the tenant-supplied
+	// dockyard_url and rsync host. TESTS ONLY: httptest servers bind
+	// loopback. It is unexported and set nowhere in production, so a
+	// deployer built by any real path fails closed. See ssrf.go.
+	allowPrivate bool
 }
 
 // NewDockyardDeployer returns a configured DockyardDeployer with sensible
 // defaults. Tests can swap dockyardClient via SetClient.
 func NewDockyardDeployer() *DockyardDeployer {
-	hc := &http.Client{Timeout: dockyardHTTPTimeout}
 	return &DockyardDeployer{
-		httpClient: hc,
+		httpClient: newGuardedHTTPClient(dockyardHTTPTimeout, false),
 		rsync:      NewRsyncDeployer(),
 	}
 }
@@ -169,6 +173,15 @@ func (d *DockyardDeployer) Validate(target Target) error {
 	if u.Host == "" {
 		return errors.New("dockyard deploy: dockyard_url has no host")
 	}
+	// SSRF: dockyard_url is tenant-supplied and this deployer POSTs to it.
+	// https + non-empty host was the whole check, so 169.254.169.254 and the
+	// Tailscale range both sailed through. Offline forms are refused here at
+	// save time; the resolving guards run at request time in ssrf.go.
+	if !d.allowPrivate {
+		if err := checkTenantURLOffline(cfg.DockyardURL); err != nil {
+			return fmt.Errorf("dockyard deploy: dockyard_url %q is not an allowed destination: %w", cfg.DockyardURL, err)
+		}
+	}
 	if cfg.APIKey == "" {
 		return errors.New("dockyard deploy: api_key is required")
 	}
@@ -205,6 +218,9 @@ func (d *DockyardDeployer) rsyncValidator() *RsyncDeployer {
 	if d.rsync == nil {
 		d.rsync = NewRsyncDeployer()
 	}
+	// The dockyard deploy delegates its whole SSH half to this deployer, so
+	// the test-only escape hatch has to reach it too. Never true in production.
+	d.rsync.allowPrivate = d.allowPrivate
 	return d.rsync
 }
 
@@ -281,12 +297,13 @@ func (d *DockyardDeployer) dockyardClientFor(cfg dockyardConfig) dockyardClient 
 	}
 	hc := d.httpClient
 	if hc == nil {
-		hc = &http.Client{Timeout: dockyardHTTPTimeout}
+		hc = newGuardedHTTPClient(dockyardHTTPTimeout, d.allowPrivate)
 	}
 	return &httpDockyardClient{
-		base:   strings.TrimRight(cfg.DockyardURL, "/"),
-		apiKey: cfg.APIKey,
-		hc:     hc,
+		base:         strings.TrimRight(cfg.DockyardURL, "/"),
+		apiKey:       cfg.APIKey,
+		hc:           hc,
+		allowPrivate: d.allowPrivate,
 	}
 }
 
@@ -295,6 +312,62 @@ type httpDockyardClient struct {
 	base   string
 	apiKey string
 	hc     *http.Client
+	// allowPrivate skips the pre-flight host check. Tests only; see ssrf.go.
+	allowPrivate bool
+}
+
+// dockyardMaxLoggedBody caps how much of an unexpected upstream response is
+// kept for the server-side log. It is a log budget, not a tenant budget: none
+// of it goes into the returned error.
+const dockyardMaxLoggedBody = 4096
+
+// post performs one guarded POST to the Dockyard admin API.
+//
+// Both call sites route through here so the SSRF pre-flight and the
+// body-handling rule cannot be applied to one and forgotten on the other,
+// which is how PutProxyRoute and ApplyProxy drifted apart in the first place.
+//
+// The upstream response body NEVER appears in the returned error. That error
+// reaches the tenant: handlers/build.go appends it to the build log, which the
+// tenant reads back via get_build_status. Returning the body there turned a
+// blind request into a read primitive. It is logged server-side instead, where
+// an operator debugging a real Dockyard failure still has it.
+func (c *httpDockyardClient) post(ctx context.Context, op, endpoint string, payload []byte, accept func(int) bool) error {
+	if !c.allowPrivate {
+		if err := checkTenantURLPublic(endpoint); err != nil {
+			return fmt.Errorf("%s: %w", op, err)
+		}
+	}
+
+	var body io.Reader
+	if payload != nil {
+		body = bytes.NewReader(payload)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, body)
+	if err != nil {
+		return fmt.Errorf("build request: %w", err)
+	}
+	if payload != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	req.Header.Set("X-API-Key", c.apiKey)
+
+	resp, err := c.hc.Do(req)
+	if err != nil {
+		return fmt.Errorf("%s: %w", op, err)
+	}
+	defer resp.Body.Close()
+
+	if accept(resp.StatusCode) {
+		return nil
+	}
+	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, dockyardMaxLoggedBody))
+	slog.Warn("dockyard admin API returned an unexpected status",
+		"op", op,
+		"status", resp.StatusCode,
+		"body", strings.TrimSpace(string(respBody)),
+	)
+	return fmt.Errorf("%s: status %d", op, resp.StatusCode)
 }
 
 // PutProxyRoute POSTs to /api/servers/{serverID}/proxy/routes. 200/201/409
@@ -306,48 +379,16 @@ func (c *httpDockyardClient) PutProxyRoute(ctx context.Context, serverID string,
 		return fmt.Errorf("encode body: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(payload))
-	if err != nil {
-		return fmt.Errorf("build request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-API-Key", c.apiKey)
-
-	resp, err := c.hc.Do(req)
-	if err != nil {
-		return fmt.Errorf("post proxy route: %w", err)
-	}
-	defer resp.Body.Close()
-
-	switch resp.StatusCode {
-	case http.StatusOK, http.StatusCreated, http.StatusConflict:
-		return nil
-	default:
-		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return fmt.Errorf("post proxy route: status %d: %s",
-			resp.StatusCode, strings.TrimSpace(string(respBody)))
-	}
+	return c.post(ctx, "post proxy route", endpoint, payload, func(status int) bool {
+		return status == http.StatusOK || status == http.StatusCreated || status == http.StatusConflict
+	})
 }
 
 // ApplyProxy POSTs to /api/servers/{serverID}/proxy/apply.
 func (c *httpDockyardClient) ApplyProxy(ctx context.Context, serverID string) error {
 	endpoint := fmt.Sprintf("%s/api/servers/%s/proxy/apply", c.base, url.PathEscape(serverID))
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, nil)
-	if err != nil {
-		return fmt.Errorf("build request: %w", err)
-	}
-	req.Header.Set("X-API-Key", c.apiKey)
 
-	resp, err := c.hc.Do(req)
-	if err != nil {
-		return fmt.Errorf("post proxy apply: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-		return nil
-	}
-	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-	return fmt.Errorf("post proxy apply: status %d: %s",
-		resp.StatusCode, strings.TrimSpace(string(respBody)))
+	return c.post(ctx, "post proxy apply", endpoint, nil, func(status int) bool {
+		return status >= 200 && status < 300
+	})
 }
