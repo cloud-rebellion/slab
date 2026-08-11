@@ -34,7 +34,35 @@ LIMIT ?;
 -- name: CountOrdersBySite :one
 SELECT CAST(COUNT(*) AS INTEGER) FROM orders WHERE site_id = ?;
 
--- name: UpdateOrderStatus :exec
+-- name: UpdateOrderStatusFrom :execrows
+-- The ONLY way to write orders.status. There is deliberately no unguarded
+-- sibling: every caller must name the state it believes the row is in, and the
+-- guard lives in the WHERE clause rather than in Go.
+--
+-- Every state-machine caller used to read the order OUTSIDE its transaction,
+-- run canTransition on that snapshot, and then write unconditionally. The
+-- snapshot was never re-checked, so a concurrent writer that moved the row in
+-- between was invisible: an operator cancel racing Mollie's `paid` webhook had
+-- both sides pass their own canTransition on the same stale `pending`, and both
+-- applied their side effects. Money was captured at Mollie, the stock was
+-- restocked, an inventory_adjustments row said `reason='sale'`, and the
+-- reconciliation alarm built for exactly that case never fired because the
+-- snapshot still said `pending`.
+--
+-- rows_affected = 0 means "someone moved it under me": the caller must not
+-- apply the side effects it decided on, and must re-read to decide again.
+-- Same shape as ClaimOrderForRefund, which got this right first.
+--
+-- The unguarded UpdateOrderStatus this replaced was kept for a while for
+-- "bookkeeping" writes that only meant to touch payment_status. That split was
+-- maintained by a comment, and in a codebase whose dominant defect class is a
+-- guard applied to one surface and not its twin, a comment is not a boundary.
+-- A bookkeeping write still knows the state it expects, so it names it like
+-- everyone else and the exception disappears.
+--
+-- internal/handlers/orders_release_coverage_test.go enforces the half of this
+-- that a type system cannot: that every reservation-release path is gated on one
+-- of these compare-and-sets.
 UPDATE orders
 SET status = ?,
     payment_status = ?,
@@ -43,7 +71,7 @@ SET status = ?,
     cancelled_at = CASE WHEN ? = 'cancelled' AND cancelled_at = '' THEN datetime('now') ELSE cancelled_at END,
     refunded_at = CASE WHEN ? = 'refunded' AND refunded_at = '' THEN datetime('now') ELSE refunded_at END,
     updated_at = datetime('now')
-WHERE id = ? AND site_id = ?;
+WHERE id = ? AND site_id = ? AND status = ?;
 
 -- name: UpdateOrderRefundID :exec
 UPDATE orders

@@ -668,7 +668,35 @@ type Querier interface {
 	UpdateOrderNotes(ctx context.Context, arg UpdateOrderNotesParams) error
 	UpdateOrderPayment(ctx context.Context, arg UpdateOrderPaymentParams) error
 	UpdateOrderRefundID(ctx context.Context, arg UpdateOrderRefundIDParams) error
-	UpdateOrderStatus(ctx context.Context, arg UpdateOrderStatusParams) error
+	// The ONLY way to write orders.status. There is deliberately no unguarded
+	// sibling: every caller must name the state it believes the row is in, and the
+	// guard lives in the WHERE clause rather than in Go.
+	//
+	// Every state-machine caller used to read the order OUTSIDE its transaction,
+	// run canTransition on that snapshot, and then write unconditionally. The
+	// snapshot was never re-checked, so a concurrent writer that moved the row in
+	// between was invisible: an operator cancel racing Mollie's `paid` webhook had
+	// both sides pass their own canTransition on the same stale `pending`, and both
+	// applied their side effects. Money was captured at Mollie, the stock was
+	// restocked, an inventory_adjustments row said `reason='sale'`, and the
+	// reconciliation alarm built for exactly that case never fired because the
+	// snapshot still said `pending`.
+	//
+	// rows_affected = 0 means "someone moved it under me": the caller must not
+	// apply the side effects it decided on, and must re-read to decide again.
+	// Same shape as ClaimOrderForRefund, which got this right first.
+	//
+	// The unguarded UpdateOrderStatus this replaced was kept for a while for
+	// "bookkeeping" writes that only meant to touch payment_status. That split was
+	// maintained by a comment, and in a codebase whose dominant defect class is a
+	// guard applied to one surface and not its twin, a comment is not a boundary.
+	// A bookkeeping write still knows the state it expects, so it names it like
+	// everyone else and the exception disappears.
+	//
+	// internal/handlers/orders_release_coverage_test.go enforces the half of this
+	// that a type system cannot: that every reservation-release path is gated on one
+	// of these compare-and-sets.
+	UpdateOrderStatusFrom(ctx context.Context, arg UpdateOrderStatusFromParams) (int64, error)
 	UpdatePage(ctx context.Context, arg UpdatePageParams) error
 	UpdatePageOrder(ctx context.Context, arg UpdatePageOrderParams) error
 	UpdateProduct(ctx context.Context, arg UpdateProductParams) error

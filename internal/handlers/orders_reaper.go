@@ -111,7 +111,12 @@ func (h *OrderHandler) reapOne(ctx context.Context, row store.ListStaleUnpaidOrd
 		return nil
 	}
 
-	if err := qtx.UpdateOrderStatus(ctx, store.UpdateOrderStatusParams{
+	// This path was already correct before the compare-and-set existed: it
+	// re-reads inside the transaction and re-checks the state above, which is
+	// why it was the one release path the concurrency audit did not fault.
+	// Do not "simplify" that re-read away; the compare-and-set here is the
+	// second lock on the same door, not a replacement for it.
+	rows, err := qtx.UpdateOrderStatusFrom(ctx, store.UpdateOrderStatusFromParams{
 		Status:        "failed",
 		PaymentStatus: o.PaymentStatus,
 		Column3:       "failed",
@@ -120,8 +125,15 @@ func (h *OrderHandler) reapOne(ctx context.Context, row store.ListStaleUnpaidOrd
 		Column6:       "failed",
 		ID:            o.ID,
 		SiteID:        o.SiteID,
-	}); err != nil {
+		Status_2:      "pending",
+	})
+	if err != nil {
 		return err
+	}
+	if rows == 0 {
+		// Someone resolved the order between the re-read and this write. Not an
+		// error: the reservation is theirs to account for now.
+		return nil
 	}
 	if err := h.releaseReservations(ctx, qtx, o); err != nil {
 		return err

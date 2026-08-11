@@ -85,7 +85,8 @@ type OrderHandler struct {
 	cfg     *config.Config
 	queries *store.Queries
 	db      *sql.DB
-	// mollieBaseURL overrides the Mollie API base in the webhook path.
+	// mollieBaseURL overrides the Mollie API base for every Mollie call this
+	// handler makes; see mollieClient.
 	// Empty in production (uses the real api.mollie.com); tests set it
 	// to an httptest stub. Same-package field, no constructor change.
 	mollieBaseURL string
@@ -93,6 +94,24 @@ type OrderHandler struct {
 
 func NewOrderHandler(cfg *config.Config, queries *store.Queries, db *sql.DB) *OrderHandler {
 	return &OrderHandler{cfg: cfg, queries: queries, db: db}
+}
+
+// mollieClient builds the Mollie API client, applying the base-URL override.
+//
+// Every Mollie call in this package goes through here. The override used to be
+// applied in the webhook and nowhere else, so checkout and both refund paths
+// could not be pointed at a stub and consequently had no end-to-end test at
+// all: three of four money paths untestable because the two lines were inlined
+// once and then copied without them. That is the same
+// applied-to-one-surface-not-its-twin shape as the concurrency bugs this file
+// has been carrying, showing up in the test seam instead of the logic, which is
+// how it stayed invisible.
+func (h *OrderHandler) mollieClient(apiKey string) *mollie.Client {
+	c := mollie.NewClient(apiKey)
+	if h.mollieBaseURL != "" {
+		c = c.WithBaseURL(h.mollieBaseURL)
+	}
+	return c
 }
 
 func orderInSite(ctx context.Context, q *store.Queries, w http.ResponseWriter, orderID, siteID string) (store.Order, bool) {
@@ -202,9 +221,13 @@ func (h *OrderHandler) UpdateStatus(w http.ResponseWriter, r *http.Request) {
 	// The last unit of a variant became permanently unsellable and the
 	// discrepancy was invisible in the audit view.
 	//
-	// Gated on the FROM state, so this cannot double-release: once the row is
-	// not `pending` the branch cannot be taken again, and `paid -> failed` is
-	// not an edge in orderTransitions.
+	// `releasing` is decided from `o`, which was read BEFORE the transaction
+	// opened. That snapshot is not an invariant on its own: two concurrent
+	// cancels both read `pending`, both set releasing, and both restocked, so a
+	// double-clicked cancel silently inflated the tenant's stock by the order
+	// quantity and they then oversold. The write below is therefore a
+	// compare-and-set on `o.Status`, and the release only runs for the caller
+	// whose UPDATE actually matched a row.
 	releasing := o.Status == "pending" && (next == "cancelled" || next == "failed")
 
 	tx, err := h.db.BeginTx(r.Context(), nil)
@@ -215,7 +238,7 @@ func (h *OrderHandler) UpdateStatus(w http.ResponseWriter, r *http.Request) {
 	defer tx.Rollback()
 	qtx := h.queries.WithTx(tx)
 
-	if err := qtx.UpdateOrderStatus(r.Context(), store.UpdateOrderStatusParams{
+	affected, err := qtx.UpdateOrderStatusFrom(r.Context(), store.UpdateOrderStatusFromParams{
 		Status:        next,
 		PaymentStatus: o.PaymentStatus,
 		Column3:       next,
@@ -224,8 +247,17 @@ func (h *OrderHandler) UpdateStatus(w http.ResponseWriter, r *http.Request) {
 		Column6:       next,
 		ID:            orderID,
 		SiteID:        siteID,
-	}); err != nil {
+		Status_2:      o.Status,
+	})
+	if err != nil {
 		writeError(w, http.StatusInternalServerError, "update status failed")
+		return
+	}
+	if affected == 0 {
+		// Someone moved the order between the read above and this write, so the
+		// transition that was validated no longer applies. Refuse rather than
+		// release a reservation a second time.
+		writeError(w, http.StatusConflict, "order status changed while this request was in flight; re-read the order and retry")
 		return
 	}
 	if releasing {
@@ -302,7 +334,7 @@ func (h *OrderHandler) Refund(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	client := mollie.NewClient(apiKey)
+	client := h.mollieClient(apiKey)
 	refund, err := client.CreateRefund(r.Context(), o.PaymentID, mollie.CreateRefundInput{
 		Amount:      mollie.MoneyValue{Currency: o.Currency, Value: mollie.FormatAmount(o.TotalCents)},
 		Description: "Refund " + o.OrderNumber,
@@ -311,15 +343,21 @@ func (h *OrderHandler) Refund(w http.ResponseWriter, r *http.Request) {
 		// Release the claim: we marked it 'refunded' optimistically, and no
 		// money moved. Leaving it claimed would strand the order in a state
 		// that says refunded while the customer still holds their charge.
-		if rerr := h.queries.UpdateOrderStatus(r.Context(), store.UpdateOrderStatusParams{
+		//
+		// From 'refunded' because that is what ClaimOrderForRefund set and this
+		// request still owns. If it reads anything else, someone else has moved
+		// the order on and un-claiming would trample their write.
+		released, rerr := h.queries.UpdateOrderStatusFrom(r.Context(), store.UpdateOrderStatusFromParams{
 			Status:        o.Status,
 			PaymentStatus: o.PaymentStatus,
 			Column3:       o.Status, Column4: o.Status, Column5: o.Status, Column6: o.Status,
-			ID:     orderID,
-			SiteID: siteID,
-		}); rerr != nil {
+			ID:       orderID,
+			SiteID:   siteID,
+			Status_2: "refunded",
+		})
+		if rerr != nil || released == 0 {
 			slog.Error("refund: Mollie failed AND un-claiming the order failed; it now reads refunded with no money moved",
-				"order_id", orderID, "site_id", siteID, "err", rerr)
+				"order_id", orderID, "site_id", siteID, "err", rerr, "rows", released)
 		}
 		writeError(w, http.StatusBadGateway, "Mollie refund failed: "+err.Error())
 		return
@@ -336,15 +374,20 @@ func (h *OrderHandler) Refund(w http.ResponseWriter, r *http.Request) {
 			"order_id", orderID, "site_id", siteID, "refund_id", refund.ID, "err", err)
 		reconcileWarnings = append(reconcileWarnings, "refund_id not persisted; reconcile manually against Mollie refund "+refund.ID)
 	}
-	if err := h.queries.UpdateOrderStatus(r.Context(), store.UpdateOrderStatusParams{
+	// ClaimOrderForRefund already set status='refunded'; this write exists to
+	// stamp refunded_at and payment_status now that the money has actually
+	// moved. From 'refunded' because this request holds that claim.
+	stamped, err := h.queries.UpdateOrderStatusFrom(r.Context(), store.UpdateOrderStatusFromParams{
 		Status:        "refunded",
 		PaymentStatus: o.PaymentStatus,
 		Column3:       "refunded", Column4: "refunded", Column5: "refunded", Column6: "refunded",
-		ID:     orderID,
-		SiteID: siteID,
-	}); err != nil {
+		ID:       orderID,
+		SiteID:   siteID,
+		Status_2: "refunded",
+	})
+	if err != nil || stamped == 0 {
 		slog.Error("refund: Mollie refund executed but status flip failed",
-			"order_id", orderID, "site_id", siteID, "refund_id", refund.ID, "err", err)
+			"order_id", orderID, "site_id", siteID, "refund_id", refund.ID, "err", err, "rows", stamped)
 		reconcileWarnings = append(reconcileWarnings, "order status still shows the pre-refund value; set it to refunded manually")
 	}
 	updated, _ := h.queries.GetOrderByID(r.Context(), store.GetOrderByIDParams{ID: orderID, SiteID: siteID})
@@ -665,7 +708,7 @@ func (h *OrderHandler) Checkout(w http.ResponseWriter, r *http.Request) {
 	publicBase := strings.TrimRight(h.publicURL(ctx, siteID), "/")
 	apiKey, err := h.mollieAPIKey(ctx, siteID)
 	if err == nil && publicBase != "" {
-		client := mollie.NewClient(apiKey)
+		client := h.mollieClient(apiKey)
 		returnURL := in.ReturnURL
 		if returnURL == "" {
 			returnURL = fmt.Sprintf("%s/checkout/done?order=%s", publicBase, orderNumber)
@@ -686,13 +729,38 @@ func (h *OrderHandler) Checkout(w http.ResponseWriter, r *http.Request) {
 		if pay.Links.Checkout != nil {
 			checkoutURL = pay.Links.Checkout.Href
 		}
-		_ = h.queries.UpdateOrderStatus(ctx, store.UpdateOrderStatusParams{
+		// Record the provider's initial payment_status on the order we just
+		// created. From 'pending' because that is what CreateOrder wrote.
+		//
+		// This is defence in depth, NOT a live bug fix, and the distinction is
+		// worth keeping accurate. It writes a hardcoded status='pending', which
+		// looks like it could clobber an order the webhook already resolved, but
+		// that race is currently unreachable: CreateOrder sets payment_id='',
+		// the webhook finds orders by payment_id, and setOrderPayment does not
+		// write payment_id until after this line. A webhook arriving in this
+		// window cannot locate the order at all, so it 200s as "order not found
+		// for payment" and Mollie retries later.
+		//
+		// The guard is here because the safety of this line rests entirely on
+		// that statement ordering, which nothing enforces. Moving setOrderPayment
+		// above this call, or adding any other writer that can move the order
+		// first, would silently resurrect a resolved order to `pending` and
+		// re-arm every pending-gated path against it. Zero rows now means
+		// someone else owns the row and there is nothing to do.
+		if rows, err := h.queries.UpdateOrderStatusFrom(ctx, store.UpdateOrderStatusFromParams{
 			Status:        "pending",
 			PaymentStatus: pay.Status,
 			Column3:       "pending", Column4: "pending", Column5: "pending", Column6: "pending",
-			ID:     orderID,
-			SiteID: siteID,
-		})
+			ID:       orderID,
+			SiteID:   siteID,
+			Status_2: "pending",
+		}); err != nil {
+			slog.Warn("checkout: could not record initial payment status",
+				"order_id", orderID, "site_id", siteID, "err", err)
+		} else if rows == 0 {
+			slog.Info("checkout: webhook resolved the payment before checkout finished; leaving its status in place",
+				"order_id", orderID, "site_id", siteID)
+		}
 		// Store payment_id + checkout_url via a small follow-up.
 		if err := h.setOrderPayment(ctx, siteID, orderID, pay.ID, checkoutURL); err != nil {
 			writeError(w, http.StatusInternalServerError, "store payment id failed")
@@ -827,10 +895,7 @@ func (h *OrderHandler) Webhook(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "no api key configured"})
 		return
 	}
-	mc := mollie.NewClient(apiKey)
-	if h.mollieBaseURL != "" {
-		mc = mc.WithBaseURL(h.mollieBaseURL)
-	}
+	mc := h.mollieClient(apiKey)
 	pay, err := mc.GetPayment(ctx, paymentID)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, "mollie get payment failed: "+err.Error())
@@ -896,6 +961,49 @@ func (h *OrderHandler) Webhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Re-read the order INSIDE the transaction before deciding anything.
+	//
+	// `order` above was loaded before BeginTx, and every decision below used to
+	// run against that snapshot without the transaction ever re-checking it. An
+	// operator cancel landing in that window left canTransition interrogating a
+	// stale `pending`, so a CAPTURED `paid` payment was applied to an order that
+	// had already gone terminal: the stock was restocked, an
+	// inventory_adjustments row claimed reason='sale', the webhook answered 200
+	// and marked the event processed so Mollie never retried, and the
+	// reconciliation alarm below could not fire because the snapshot still said
+	// `pending`. Nothing anywhere recorded that money had moved.
+	order, err = qtx.GetOrderByID(ctx, store.GetOrderByIDParams{ID: order.ID, SiteID: siteID})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "could not re-read order")
+		return
+	}
+
+	// A CAPTURED payment we cannot apply. This used to fall through silently:
+	// newStatus stayed as-is, the `newStatus != order.Status` guard below skipped
+	// the whole update block so payment_status was never written either, and the
+	// handler returned a bare 200 {"status":"ok"}. Money had moved at Mollie and
+	// the only trace anywhere in the database was the payment_events row. No log
+	// line, no operator signal.
+	//
+	// Reachable whenever a `paid` event lands late on an order that has since
+	// gone terminal: cancelled (empty transition set) or failed (after
+	// releaseReservations already restocked). Loud is the whole point here, so
+	// this logs at ERROR and says so in the response.
+	reconcile := func(reason string) {
+		slog.Error("mollie webhook: PAID event for an order that cannot accept it; payment captured but not applied, needs manual reconciliation",
+			"order_id", order.ID, "site_id", siteID, "order_status", order.Status,
+			"payment_id", paymentID, "amount", pay.Amount.Value+" "+pay.Amount.Currency,
+			"reason", reason)
+		if err := tx.Commit(); err != nil {
+			writeError(w, http.StatusInternalServerError, "commit failed")
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{
+			"status":           "payment captured but order is not in a state that can accept it; flagged for reconciliation",
+			"new_order_status": order.Status,
+		})
+	}
+
 	// Map Mollie status -> our order.status.
 	newStatus := order.Status
 	switch pay.Status {
@@ -919,29 +1027,7 @@ func (h *OrderHandler) Webhook(w http.ResponseWriter, r *http.Request) {
 		if canTransition(order.Status, "paid") {
 			newStatus = "paid"
 		} else {
-			// A CAPTURED payment we cannot apply. This branch used to fall
-			// through silently: newStatus stayed as-is, the `newStatus !=
-			// order.Status` guard below skipped the whole update block so
-			// payment_status was never written either, and the handler returned
-			// a bare 200 {"status":"ok"}. Money had moved at Mollie and the only
-			// trace anywhere in the database was the payment_events row. No log
-			// line, no operator signal.
-			//
-			// Reachable whenever a `paid` event lands late on an order that has
-			// since gone terminal: cancelled (empty transition set) or failed
-			// (after releaseReservations already restocked). Loud is the whole
-			// point here, so this logs at ERROR and says so in the response.
-			slog.Error("mollie webhook: PAID event for an order that cannot accept it; payment captured but not applied, needs manual reconciliation",
-				"order_id", order.ID, "site_id", siteID, "order_status", order.Status,
-				"payment_id", paymentID, "amount", pay.Amount.Value+" "+pay.Amount.Currency)
-			if err := tx.Commit(); err != nil {
-				writeError(w, http.StatusInternalServerError, "commit failed")
-				return
-			}
-			writeJSON(w, http.StatusOK, map[string]string{
-				"status":           "payment captured but order is not in a state that can accept it; flagged for reconciliation",
-				"new_order_status": order.Status,
-			})
+			reconcile("order status cannot accept a paid transition")
 			return
 		}
 	case "failed", "expired", "canceled":
@@ -950,14 +1036,38 @@ func (h *OrderHandler) Webhook(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if newStatus != order.Status {
-		if err := qtx.UpdateOrderStatus(ctx, store.UpdateOrderStatusParams{
+		// Compare-and-set on the from-state, so the write can only land on the
+		// row this transaction actually decided against. Belt and braces with
+		// the in-tx re-read above: the re-read closes the window under the
+		// current single-writer pool, and this closes it regardless of pool or
+		// isolation settings.
+		affected, err := qtx.UpdateOrderStatusFrom(ctx, store.UpdateOrderStatusFromParams{
 			Status:        newStatus,
 			PaymentStatus: pay.Status,
 			Column3:       newStatus, Column4: newStatus, Column5: newStatus, Column6: newStatus,
-			ID:     order.ID,
-			SiteID: siteID,
-		}); err != nil {
+			ID:       order.ID,
+			SiteID:   siteID,
+			Status_2: order.Status,
+		})
+		if err != nil {
 			writeError(w, http.StatusInternalServerError, "could not update order status")
+			return
+		}
+		if affected == 0 {
+			// The row moved under this transaction. Never apply the side
+			// effects that were decided against the old state.
+			if pay.Status == "paid" {
+				reconcile("compare-and-set on the from-state matched no row")
+				return
+			}
+			if err := tx.Commit(); err != nil {
+				writeError(w, http.StatusInternalServerError, "commit failed")
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]string{
+				"status":           "order moved concurrently; no side effects applied",
+				"new_order_status": order.Status,
+			})
 			return
 		}
 		if newStatus == "paid" {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 
 	"github.com/bright-interaction/slab/internal/handlers"
@@ -176,6 +177,15 @@ func (s *Server) registerOrderTools() {
 				return "", err
 			}
 			result, err := s.orders.RefundForAgent(ctx, agent.SiteID, args.OrderID)
+			if errors.Is(err, handlers.ErrRefundAlreadyClaimed) {
+				// A refusal, not a failure. Say so in terms the agent can act on:
+				// no money moved on this call, retrying cannot succeed, and the
+				// order is not left half-refunded. Without this the agent sees a
+				// bare error next to a tool whose whole job is moving money, and
+				// the reasonable-looking move is to retry it.
+				return "", fmt.Errorf("%w. No refund was created for this call and no money moved. "+
+					"Do not retry: read the order with get_order to see who owns it and what state it is in", err)
+			}
 			if err != nil {
 				return "", err
 			}
