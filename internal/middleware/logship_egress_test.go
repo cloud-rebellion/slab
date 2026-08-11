@@ -42,9 +42,43 @@ func TestLogShipScrubsCredentialsOutOfAttrs(t *testing.T) {
 
 // TestLogShipScrubsTheMessageBody covers the other half. The record message is
 // free text an author formats by hand, so it carries the same URLs.
+//
+// The fixture key says out loud that it is synthetic, and that is load bearing.
+// This file ships to a public mirror and the publish gate runs gitleaks over the
+// filtered clone, so a fixture that merely looks like a live key refuses the
+// publish over the product's own test data. It cost five mirrors exactly that.
+// An EXAMPLE marker is skipped by the stopword list gitleaks' generic rules
+// honour, which is a content check, so it survives a rename or a move in a way a
+// path exclusion does not.
+//
+// The const NAME is load bearing for a SECOND and completely separate reason,
+// and it is the one the previous version of this fixture got wrong.
+// mirror-secret-preflight.sh does not look for key-shaped VALUES at all. It
+// looks for the assignment SHAPE: (api_key|secret|password|bearer|private_key),
+// then =, then a QUOTE, then 16+ key characters. The fixture this replaced was a
+// URL, ?api_key=live_..., which has no quote after the = and so never matched
+// that shape. Naming the const apiKey and quoting the value next to it built the
+// shape by hand. Because the preflight runs BEFORE gitleaks in every split
+// script, that did not trade one refusal for another: it moved the refusal
+// EARLIER, and five products went from publishing to refusing over a fixture
+// that had just been made safer.
+//
+// So the name must carry no credential keyword. Do not rename it back to apiKey,
+// nor to secret, password, bearer or privateKey. The value is free to look like
+// a key; the thing to the LEFT of the = is what the gate reads.
+//
+// It does not weaken the test either. scrubLogQuery keys on the PARAMETER NAME,
+// ?api_key=, and never on the shape of the value, so a value that reads as
+// obviously fake drives the identical code path. The proof is the ablation: take
+// api_key out of scrubLogQuery and scrubLogAssign and this test goes red.
 func TestLogShipScrubsTheMessageBody(t *testing.T) {
-	body := scrubLogText("POST https://api.example.com/v1/send?api_key=live_EXAMPLE_NOT_A_REAL_KEY failed")
-	if strings.Contains(body, "live_EXAMPLE_NOT_A_REAL_KEY") {
+	// One const for both the fixture and the assertion. Spelled out twice, an
+	// edit can change the URL and leave the Contains check hunting a string
+	// nothing emits any more, which passes green while proving nothing.
+	const plantedValue = "live_EXAMPLE_NOT_A_REAL_KEY"
+
+	body := scrubLogText("POST https://api.example.com/v1/send?api_key=" + plantedValue + " failed")
+	if strings.Contains(body, plantedValue) {
 		t.Errorf("the api key still ships in the body: %s", body)
 	}
 	if !strings.Contains(body, "api.example.com") {
