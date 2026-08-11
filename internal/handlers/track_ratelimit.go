@@ -19,8 +19,14 @@ import (
 // retention sweep clears it.
 //
 // The receiver is public + cross-origin, so we can't rely on session or
-// CSRF gates — IP throttling is the right hammer here. CF-Connecting-IP
-// and X-Forwarded-For are honoured via the existing clientIP() helper.
+// CSRF gates. IP throttling is the right hammer here, and the key comes
+// from clientIP(), which resolves r.RemoteAddr only. This comment used
+// to say "CF-Connecting-IP and X-Forwarded-For are honoured via the
+// existing clientIP() helper", which described the bug as if it were
+// the design: honouring a caller-supplied header means the caller picks
+// their own bucket and the limiter throttles nobody (audit 2026-08-11
+// finding 9). The trust decision belongs to authmw.TrustedProxyRealIP,
+// which is gated on the peer being a configured proxy.
 type consentRateLimiter struct {
 	mu          sync.Mutex
 	buckets     map[string]*tokenBucket
@@ -105,8 +111,15 @@ func (l *consentRateLimiter) allow(key string) bool {
 	return true
 }
 
-// sweep evicts buckets that haven't been touched within maxIdle. Called
-// from the manager's background goroutine. Idempotent.
+// sweep evicts buckets that haven't been touched within maxIdle.
+// Idempotent.
+//
+// Audit 2026-08-11 finding 9: the previous comment here claimed this
+// was "called from the manager's background goroutine". No such
+// goroutine existed; the only callers were in _test.go, so buckets
+// accumulated for the process lifetime. It is now driven by
+// ratelimit.Sweeper, wired in TrackHandler.RegisterSweeps and started
+// from cmd/server. Do not restore the claim without the wiring.
 func (l *consentRateLimiter) sweep() {
 	cutoff := time.Now().Add(-l.maxIdle).UnixMilli()
 	l.mu.Lock()

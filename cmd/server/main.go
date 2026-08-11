@@ -93,14 +93,28 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Open SQLite DB
-	sqlDB, err := sql.Open("sqlite", cfg.DBPath+"?_journal_mode=WAL&_busy_timeout=5000&_pragma=foreign_keys(1)")
+	// Open SQLite DB. dbpkg.DSN builds the only spelling
+	// modernc.org/sqlite actually honours; see its doc comment for what
+	// the old string silently dropped (audit 2026-08-11 finding 10).
+	sqlDB, err := sql.Open("sqlite", dbpkg.DSN(cfg.DBPath, dbpkg.DefaultBusyTimeoutMs))
 	if err != nil {
 		slog.Error("open db", "error", err)
 		os.Exit(1)
 	}
 	sqlDB.SetMaxOpenConns(1)
 	defer sqlDB.Close()
+
+	// Boot assertion: read the pragmas back and refuse to start on a
+	// mismatch. A DSN whose options are ignored is indistinguishable
+	// from a correct one at open time, which is how the server ran with
+	// busy_timeout=0 and journal_mode=delete while its own code
+	// documented WAL plus a 5s wait. Failing loudly here is the only
+	// thing that makes a future typo in this string survivable.
+	if err := dbpkg.AssertPragmas(sqlDB, dbpkg.DefaultBusyTimeoutMs); err != nil {
+		slog.Error("sqlite configuration rejected", "error", err, "db_path", cfg.DBPath)
+		os.Exit(1)
+	}
+	slog.Info("sqlite opened", "db_path", cfg.DBPath, "pragmas", dbpkg.PragmaSnapshot(sqlDB))
 
 	// Apply schema
 	if err := applySchema(sqlDB); err != nil {
@@ -844,12 +858,16 @@ func resetPasswordCLI(args []string) {
 		fmt.Fprintln(os.Stderr, "create data dir:", err)
 		os.Exit(1)
 	}
-	sqlDB, err := sql.Open("sqlite", cfg.DBPath+"?_journal_mode=WAL&_busy_timeout=5000&_pragma=foreign_keys(1)")
+	sqlDB, err := sql.Open("sqlite", dbpkg.DSN(cfg.DBPath, dbpkg.DefaultBusyTimeoutMs))
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "open db:", err)
 		os.Exit(1)
 	}
 	defer sqlDB.Close()
+	if err := dbpkg.AssertPragmas(sqlDB, dbpkg.DefaultBusyTimeoutMs); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
 	queries := store.New(sqlDB)
 
 	ctx := context.Background()
@@ -974,12 +992,19 @@ func backupDBCLI(args []string) {
 		os.Exit(1)
 	}
 
-	sqlDB, err := sql.Open("sqlite", cfg.DBPath+"?_journal_mode=WAL&_busy_timeout=10000")
+	// Backup gets a longer busy timeout: VACUUM INTO holds a read lock
+	// for the whole copy and must not give up on a concurrent writer.
+	const backupBusyTimeoutMs = 10000
+	sqlDB, err := sql.Open("sqlite", dbpkg.DSN(cfg.DBPath, backupBusyTimeoutMs))
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "open db:", err)
 		os.Exit(1)
 	}
 	defer sqlDB.Close()
+	if err := dbpkg.AssertPragmas(sqlDB, backupBusyTimeoutMs); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
 
 	if gzipOut {
 		// Two-phase: VACUUM INTO a tmp file, then stream-gzip it to the
@@ -1051,12 +1076,16 @@ func listOrphansCLI(args []string) {
 		os.Exit(1)
 	}
 
-	sqlDB, err := sql.Open("sqlite", cfg.DBPath+"?_journal_mode=WAL&_busy_timeout=5000")
+	sqlDB, err := sql.Open("sqlite", dbpkg.DSN(cfg.DBPath, dbpkg.DefaultBusyTimeoutMs))
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "open db:", err)
 		os.Exit(1)
 	}
 	defer sqlDB.Close()
+	if err := dbpkg.AssertPragmas(sqlDB, dbpkg.DefaultBusyTimeoutMs); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
 	queries := store.New(sqlDB)
 	sites, err := queries.ListSites(context.Background())
 	if err != nil {
@@ -1108,5 +1137,9 @@ func dirSizeBytes(root string) int64 {
 func handlerWithCRMOutbox(srv *server.Server, ctx context.Context) http.Handler {
 	h := srv.Router()
 	srv.StartCRMOutbox(ctx)
+	// Same ordering rule as the outbox: Router() is where every rate
+	// limiter is constructed and registered, so the sweeper has to
+	// start after it. Audit 2026-08-11 finding 9, second half.
+	srv.StartLimiterSweeper(ctx)
 	return h
 }

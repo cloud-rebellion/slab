@@ -29,6 +29,7 @@ import (
 	"github.com/bright-interaction/slab/internal/mcp"
 	authmw "github.com/bright-interaction/slab/internal/middleware"
 	"github.com/bright-interaction/slab/internal/migration"
+	"github.com/bright-interaction/slab/internal/ratelimit"
 	"github.com/bright-interaction/slab/internal/retention"
 	"github.com/bright-interaction/slab/internal/revisions"
 	"github.com/bright-interaction/slab/internal/shield"
@@ -53,6 +54,12 @@ type Server struct {
 	crmClient     *crmsync.Client
 	agentMW       *authmw.AgentAuthMiddleware
 	adminWriteLim *authmw.AdminWriteLimiter
+	// limiterSweeper evicts idle entries from every process-local rate
+	// limiter. Populated during Router() as each limiter is built and
+	// started by StartLimiterSweeper from cmd/server. Audit 2026-08-11
+	// finding 9: without it every limiter map grows for the life of
+	// the process.
+	limiterSweeper *ratelimit.Sweeper
 	// AnalyticsDB is the read-only DuckDB ATTACH on the SQLite file.
 	// Optional: nil when DuckDB couldn't open at boot. Handlers that
 	// depend on it return 503 in that case rather than crashing.
@@ -153,7 +160,31 @@ func New(cfg *config.Config, db *sql.DB, queries *store.Queries, st storage.Stor
 		authMW:        authmw.NewAuthMiddleware(cfg, queries),
 		agentMW:       authmw.NewAgentAuthMiddleware(queries),
 		adminWriteLim: newAdminWriteLimiter(cfg),
+
+		limiterSweeper: ratelimit.New(ratelimit.DefaultInterval),
 	}
+}
+
+// StartLimiterSweeper launches the periodic eviction pass over every
+// rate limiter registered during Router(). Must be called AFTER
+// Router(), which is where the limiters are constructed and
+// registered; calling it first would start a sweeper with nothing to
+// sweep. Same ordering constraint as StartCRMOutbox, and both are
+// called from handlerWithCRMOutbox in cmd/server for that reason.
+func (s *Server) StartLimiterSweeper(ctx context.Context) {
+	if s == nil {
+		return
+	}
+	s.limiterSweeper.Start(ctx)
+}
+
+// LimiterSweeper exposes the sweeper so tests can assert that Router()
+// actually registered the live limiters and that a sweep evicts.
+func (s *Server) LimiterSweeper() *ratelimit.Sweeper {
+	if s == nil {
+		return nil
+	}
+	return s.limiterSweeper
 }
 
 // Router builds and returns the chi router.
@@ -274,6 +305,12 @@ func (s *Server) Router() http.Handler {
 	// middleware runs only on this group so admin requests don't pick up
 	// visitor cookies.
 	trackH := handlers.NewTrackHandler(s.cfg, s.queries, s.db)
+	trackH.RegisterSweeps(s.limiterSweeper)
+	// The admin write throttle is built in New (it needs only cfg), so
+	// register it here where every other limiter registration lives.
+	if s.adminWriteLim != nil {
+		s.limiterSweeper.Register("admin.writes", s.adminWriteLim.Sweep)
+	}
 	// Keep a reference so StartCRMOutbox can drain using the SAME client
 	// instance that /admin/reload-secrets rotates. A second client built from
 	// cfg would keep signing with the boot-time secret after a rotation and
@@ -331,6 +368,7 @@ func (s *Server) Router() http.Handler {
 
 	// Auth (public)
 	ah := handlers.NewAuthHandler(s.cfg, s.queries)
+	ah.RegisterSweeps(s.limiterSweeper)
 	r.Post("/api/auth/login", ah.Login)
 	r.Post("/api/auth/logout", ah.Logout)
 	// Forgot-password flow. All three endpoints unauthenticated by
@@ -367,6 +405,7 @@ func (s *Server) Router() http.Handler {
 	// injected so every identify path -- explicit /t/identify and
 	// auto-form -- runs the same DB update + crmsync dispatch.
 	formsH := handlers.NewFormHandler(s.cfg, s.queries, ah.MailSender, trackH.IdentifyRecorder())
+	formsH.RegisterSweeps(s.limiterSweeper)
 	r.With(authmw.FingerprintMiddleware(s.cfg)).Post("/t/forms/{formID}/submit", formsH.Submit)
 
 	// TOTP MFA enrollment + verify + status + disable. All four

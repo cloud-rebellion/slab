@@ -127,7 +127,13 @@ func (l *loginRateLimiter) recordSuccess(key string) {
 }
 
 // sweep evicts entries that haven't been touched within maxIdleEntries.
-// Idempotent; designed to be called from a periodic goroutine.
+// Idempotent.
+//
+// Audit 2026-08-11 finding 9: "designed to be called from a periodic
+// goroutine" was as far as it got. Nothing called it outside tests, so
+// the failure map grew one entry per distinct (email, IP) key forever.
+// Now driven by ratelimit.Sweeper via AuthHandler.RegisterSweeps and
+// FormHandler.RegisterSweeps.
 func (l *loginRateLimiter) sweep() {
 	cutoff := time.Now().Add(-l.maxIdleEntries).UnixMilli()
 	l.mu.Lock()
