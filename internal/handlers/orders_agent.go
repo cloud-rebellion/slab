@@ -98,7 +98,7 @@ func (h *OrderHandler) RefundForAgent(ctx context.Context, siteID, orderID strin
 	if err != nil {
 		return nil, err
 	}
-	client := mollie.NewClient(apiKey)
+	client := h.mollieClient(apiKey)
 	refund, err := client.CreateRefund(ctx, o.PaymentID, mollie.CreateRefundInput{
 		Amount:      mollie.MoneyValue{Currency: o.Currency, Value: mollie.FormatAmount(o.TotalCents)},
 		Description: "Refund " + o.OrderNumber,
@@ -117,15 +117,21 @@ func (h *OrderHandler) RefundForAgent(ctx context.Context, siteID, orderID strin
 			"order_id", orderID, "site_id", siteID, "refund_id", refund.ID, "err", err)
 		reconcileWarnings = append(reconcileWarnings, "refund_id not persisted; reconcile manually against Mollie refund "+refund.ID)
 	}
-	if err := h.queries.UpdateOrderStatus(ctx, store.UpdateOrderStatusParams{
+	// From o.Status (the pre-refund state this call validated), not from
+	// 'refunded': unlike the REST Refund handler this path never claimed the
+	// order, so nothing has moved it to 'refunded' yet. See the note on
+	// RefundForAgent about the claim that is missing here.
+	rows, err := h.queries.UpdateOrderStatusFrom(ctx, store.UpdateOrderStatusFromParams{
 		Status:        "refunded",
 		PaymentStatus: o.PaymentStatus,
 		Column3:       "refunded", Column4: "refunded", Column5: "refunded", Column6: "refunded",
-		ID:     orderID,
-		SiteID: siteID,
-	}); err != nil {
+		ID:       orderID,
+		SiteID:   siteID,
+		Status_2: o.Status,
+	})
+	if err != nil || rows == 0 {
 		slog.Error("refund: Mollie refund executed but status flip failed",
-			"order_id", orderID, "site_id", siteID, "refund_id", refund.ID, "err", err)
+			"order_id", orderID, "site_id", siteID, "refund_id", refund.ID, "err", err, "rows", rows)
 		reconcileWarnings = append(reconcileWarnings, "order status still shows the pre-refund value; flag to the operator")
 	}
 	updated, _ := h.queries.GetOrderByID(ctx, store.GetOrderByIDParams{ID: orderID, SiteID: siteID})

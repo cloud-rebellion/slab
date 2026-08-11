@@ -535,43 +535,6 @@ func (q *Queries) UpdateOrderRefundID(ctx context.Context, arg UpdateOrderRefund
 	return err
 }
 
-const updateOrderStatus = `-- name: UpdateOrderStatus :exec
-UPDATE orders
-SET status = ?,
-    payment_status = ?,
-    paid_at = CASE WHEN ? = 'paid' AND paid_at = '' THEN datetime('now') ELSE paid_at END,
-    fulfilled_at = CASE WHEN ? = 'fulfilled' AND fulfilled_at = '' THEN datetime('now') ELSE fulfilled_at END,
-    cancelled_at = CASE WHEN ? = 'cancelled' AND cancelled_at = '' THEN datetime('now') ELSE cancelled_at END,
-    refunded_at = CASE WHEN ? = 'refunded' AND refunded_at = '' THEN datetime('now') ELSE refunded_at END,
-    updated_at = datetime('now')
-WHERE id = ? AND site_id = ?
-`
-
-type UpdateOrderStatusParams struct {
-	Status        string      `json:"status"`
-	PaymentStatus string      `json:"payment_status"`
-	Column3       interface{} `json:"column_3"`
-	Column4       interface{} `json:"column_4"`
-	Column5       interface{} `json:"column_5"`
-	Column6       interface{} `json:"column_6"`
-	ID            string      `json:"id"`
-	SiteID        string      `json:"site_id"`
-}
-
-func (q *Queries) UpdateOrderStatus(ctx context.Context, arg UpdateOrderStatusParams) error {
-	_, err := q.db.ExecContext(ctx, updateOrderStatus,
-		arg.Status,
-		arg.PaymentStatus,
-		arg.Column3,
-		arg.Column4,
-		arg.Column5,
-		arg.Column6,
-		arg.ID,
-		arg.SiteID,
-	)
-	return err
-}
-
 const updateOrderStatusFrom = `-- name: UpdateOrderStatusFrom :execrows
 UPDATE orders
 SET status = ?,
@@ -596,8 +559,9 @@ type UpdateOrderStatusFromParams struct {
 	Status_2      string      `json:"status_2"`
 }
 
-// Compare-and-set on the FROM state. This is UpdateOrderStatus with the
-// state-machine guard moved out of Go and into the WHERE clause.
+// The ONLY way to write orders.status. There is deliberately no unguarded
+// sibling: every caller must name the state it believes the row is in, and the
+// guard lives in the WHERE clause rather than in Go.
 //
 // Every state-machine caller used to read the order OUTSIDE its transaction,
 // run canTransition on that snapshot, and then write unconditionally. The
@@ -613,9 +577,16 @@ type UpdateOrderStatusFromParams struct {
 // apply the side effects it decided on, and must re-read to decide again.
 // Same shape as ClaimOrderForRefund, which got this right first.
 //
-// Bookkeeping writes that are not state-machine transitions (recording a
-// payment_status against an unchanged status, un-claiming a refund) stay on
-// plain UpdateOrderStatus.
+// The unguarded UpdateOrderStatus this replaced was kept for a while for
+// "bookkeeping" writes that only meant to touch payment_status. That split was
+// maintained by a comment, and in a codebase whose dominant defect class is a
+// guard applied to one surface and not its twin, a comment is not a boundary.
+// A bookkeeping write still knows the state it expects, so it names it like
+// everyone else and the exception disappears.
+//
+// internal/handlers/orders_release_coverage_test.go enforces the half of this
+// that a type system cannot: that every reservation-release path is gated on one
+// of these compare-and-sets.
 func (q *Queries) UpdateOrderStatusFrom(ctx context.Context, arg UpdateOrderStatusFromParams) (int64, error) {
 	result, err := q.db.ExecContext(ctx, updateOrderStatusFrom,
 		arg.Status,

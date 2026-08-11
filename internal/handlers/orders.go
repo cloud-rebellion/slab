@@ -85,7 +85,8 @@ type OrderHandler struct {
 	cfg     *config.Config
 	queries *store.Queries
 	db      *sql.DB
-	// mollieBaseURL overrides the Mollie API base in the webhook path.
+	// mollieBaseURL overrides the Mollie API base for every Mollie call this
+	// handler makes; see mollieClient.
 	// Empty in production (uses the real api.mollie.com); tests set it
 	// to an httptest stub. Same-package field, no constructor change.
 	mollieBaseURL string
@@ -93,6 +94,24 @@ type OrderHandler struct {
 
 func NewOrderHandler(cfg *config.Config, queries *store.Queries, db *sql.DB) *OrderHandler {
 	return &OrderHandler{cfg: cfg, queries: queries, db: db}
+}
+
+// mollieClient builds the Mollie API client, applying the base-URL override.
+//
+// Every Mollie call in this package goes through here. The override used to be
+// applied in the webhook and nowhere else, so checkout and both refund paths
+// could not be pointed at a stub and consequently had no end-to-end test at
+// all: three of four money paths untestable because the two lines were inlined
+// once and then copied without them. That is the same
+// applied-to-one-surface-not-its-twin shape as the concurrency bugs this file
+// has been carrying, showing up in the test seam instead of the logic, which is
+// how it stayed invisible.
+func (h *OrderHandler) mollieClient(apiKey string) *mollie.Client {
+	c := mollie.NewClient(apiKey)
+	if h.mollieBaseURL != "" {
+		c = c.WithBaseURL(h.mollieBaseURL)
+	}
+	return c
 }
 
 func orderInSite(ctx context.Context, q *store.Queries, w http.ResponseWriter, orderID, siteID string) (store.Order, bool) {
@@ -315,7 +334,7 @@ func (h *OrderHandler) Refund(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	client := mollie.NewClient(apiKey)
+	client := h.mollieClient(apiKey)
 	refund, err := client.CreateRefund(r.Context(), o.PaymentID, mollie.CreateRefundInput{
 		Amount:      mollie.MoneyValue{Currency: o.Currency, Value: mollie.FormatAmount(o.TotalCents)},
 		Description: "Refund " + o.OrderNumber,
@@ -324,15 +343,21 @@ func (h *OrderHandler) Refund(w http.ResponseWriter, r *http.Request) {
 		// Release the claim: we marked it 'refunded' optimistically, and no
 		// money moved. Leaving it claimed would strand the order in a state
 		// that says refunded while the customer still holds their charge.
-		if rerr := h.queries.UpdateOrderStatus(r.Context(), store.UpdateOrderStatusParams{
+		//
+		// From 'refunded' because that is what ClaimOrderForRefund set and this
+		// request still owns. If it reads anything else, someone else has moved
+		// the order on and un-claiming would trample their write.
+		released, rerr := h.queries.UpdateOrderStatusFrom(r.Context(), store.UpdateOrderStatusFromParams{
 			Status:        o.Status,
 			PaymentStatus: o.PaymentStatus,
 			Column3:       o.Status, Column4: o.Status, Column5: o.Status, Column6: o.Status,
-			ID:     orderID,
-			SiteID: siteID,
-		}); rerr != nil {
+			ID:       orderID,
+			SiteID:   siteID,
+			Status_2: "refunded",
+		})
+		if rerr != nil || released == 0 {
 			slog.Error("refund: Mollie failed AND un-claiming the order failed; it now reads refunded with no money moved",
-				"order_id", orderID, "site_id", siteID, "err", rerr)
+				"order_id", orderID, "site_id", siteID, "err", rerr, "rows", released)
 		}
 		writeError(w, http.StatusBadGateway, "Mollie refund failed: "+err.Error())
 		return
@@ -349,15 +374,20 @@ func (h *OrderHandler) Refund(w http.ResponseWriter, r *http.Request) {
 			"order_id", orderID, "site_id", siteID, "refund_id", refund.ID, "err", err)
 		reconcileWarnings = append(reconcileWarnings, "refund_id not persisted; reconcile manually against Mollie refund "+refund.ID)
 	}
-	if err := h.queries.UpdateOrderStatus(r.Context(), store.UpdateOrderStatusParams{
+	// ClaimOrderForRefund already set status='refunded'; this write exists to
+	// stamp refunded_at and payment_status now that the money has actually
+	// moved. From 'refunded' because this request holds that claim.
+	stamped, err := h.queries.UpdateOrderStatusFrom(r.Context(), store.UpdateOrderStatusFromParams{
 		Status:        "refunded",
 		PaymentStatus: o.PaymentStatus,
 		Column3:       "refunded", Column4: "refunded", Column5: "refunded", Column6: "refunded",
-		ID:     orderID,
-		SiteID: siteID,
-	}); err != nil {
+		ID:       orderID,
+		SiteID:   siteID,
+		Status_2: "refunded",
+	})
+	if err != nil || stamped == 0 {
 		slog.Error("refund: Mollie refund executed but status flip failed",
-			"order_id", orderID, "site_id", siteID, "refund_id", refund.ID, "err", err)
+			"order_id", orderID, "site_id", siteID, "refund_id", refund.ID, "err", err, "rows", stamped)
 		reconcileWarnings = append(reconcileWarnings, "order status still shows the pre-refund value; set it to refunded manually")
 	}
 	updated, _ := h.queries.GetOrderByID(r.Context(), store.GetOrderByIDParams{ID: orderID, SiteID: siteID})
@@ -678,7 +708,7 @@ func (h *OrderHandler) Checkout(w http.ResponseWriter, r *http.Request) {
 	publicBase := strings.TrimRight(h.publicURL(ctx, siteID), "/")
 	apiKey, err := h.mollieAPIKey(ctx, siteID)
 	if err == nil && publicBase != "" {
-		client := mollie.NewClient(apiKey)
+		client := h.mollieClient(apiKey)
 		returnURL := in.ReturnURL
 		if returnURL == "" {
 			returnURL = fmt.Sprintf("%s/checkout/done?order=%s", publicBase, orderNumber)
@@ -699,13 +729,38 @@ func (h *OrderHandler) Checkout(w http.ResponseWriter, r *http.Request) {
 		if pay.Links.Checkout != nil {
 			checkoutURL = pay.Links.Checkout.Href
 		}
-		_ = h.queries.UpdateOrderStatus(ctx, store.UpdateOrderStatusParams{
+		// Record the provider's initial payment_status on the order we just
+		// created. From 'pending' because that is what CreateOrder wrote.
+		//
+		// This is defence in depth, NOT a live bug fix, and the distinction is
+		// worth keeping accurate. It writes a hardcoded status='pending', which
+		// looks like it could clobber an order the webhook already resolved, but
+		// that race is currently unreachable: CreateOrder sets payment_id='',
+		// the webhook finds orders by payment_id, and setOrderPayment does not
+		// write payment_id until after this line. A webhook arriving in this
+		// window cannot locate the order at all, so it 200s as "order not found
+		// for payment" and Mollie retries later.
+		//
+		// The guard is here because the safety of this line rests entirely on
+		// that statement ordering, which nothing enforces. Moving setOrderPayment
+		// above this call, or adding any other writer that can move the order
+		// first, would silently resurrect a resolved order to `pending` and
+		// re-arm every pending-gated path against it. Zero rows now means
+		// someone else owns the row and there is nothing to do.
+		if rows, err := h.queries.UpdateOrderStatusFrom(ctx, store.UpdateOrderStatusFromParams{
 			Status:        "pending",
 			PaymentStatus: pay.Status,
 			Column3:       "pending", Column4: "pending", Column5: "pending", Column6: "pending",
-			ID:     orderID,
-			SiteID: siteID,
-		})
+			ID:       orderID,
+			SiteID:   siteID,
+			Status_2: "pending",
+		}); err != nil {
+			slog.Warn("checkout: could not record initial payment status",
+				"order_id", orderID, "site_id", siteID, "err", err)
+		} else if rows == 0 {
+			slog.Info("checkout: webhook resolved the payment before checkout finished; leaving its status in place",
+				"order_id", orderID, "site_id", siteID)
+		}
 		// Store payment_id + checkout_url via a small follow-up.
 		if err := h.setOrderPayment(ctx, siteID, orderID, pay.ID, checkoutURL); err != nil {
 			writeError(w, http.StatusInternalServerError, "store payment id failed")
@@ -840,10 +895,7 @@ func (h *OrderHandler) Webhook(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "no api key configured"})
 		return
 	}
-	mc := mollie.NewClient(apiKey)
-	if h.mollieBaseURL != "" {
-		mc = mc.WithBaseURL(h.mollieBaseURL)
-	}
+	mc := h.mollieClient(apiKey)
 	pay, err := mc.GetPayment(ctx, paymentID)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, "mollie get payment failed: "+err.Error())
