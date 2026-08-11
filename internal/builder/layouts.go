@@ -152,8 +152,8 @@ func RenderLayouts(ctx context.Context, queries *store.Queries, siteID string, w
 	// styled).
 
 	// Open Graph
-	b.WriteString(fmt.Sprintf("  <meta property=\"og:site_name\" content=\"%s\" />\n", escapeAttr(site.Name)))
-	b.WriteString(fmt.Sprintf("  <meta property=\"og:locale\" content=\"%s\" />\n", escapeAttr(ogLocaleFromLang(site.Lang))))
+	b.WriteString(fmt.Sprintf("  <meta property=\"og:site_name\" content=\"%s\" />\n", escapeAttrForAstro(site.Name)))
+	b.WriteString(fmt.Sprintf("  <meta property=\"og:locale\" content=\"%s\" />\n", escapeAttrForAstro(ogLocaleFromLang(site.Lang))))
 	b.WriteString("  <meta property=\"og:title\" content={title} />\n")
 	b.WriteString("  {description && <meta property=\"og:description\" content={description} />}\n")
 	b.WriteString("  {ogImage && <meta property=\"og:image\" content={ogImage} />}\n")
@@ -185,11 +185,11 @@ func RenderLayouts(ctx context.Context, queries *store.Queries, siteID string, w
 		return fmt.Errorf("build security headers for layout: %w", err)
 	}
 	if headers.ReferrerPolicy != "" {
-		b.WriteString(fmt.Sprintf("  <meta name=\"referrer\" content=\"%s\" />\n", escapeAttr(headers.ReferrerPolicy)))
+		b.WriteString(fmt.Sprintf("  <meta name=\"referrer\" content=\"%s\" />\n", escapeAttrForAstro(headers.ReferrerPolicy)))
 	}
 	// Use meta-safe CSP subset -- frame-ancestors etc. only work in headers.
 	if metaCSP := CSPForMeta(headers.CSP); metaCSP != "" {
-		b.WriteString(fmt.Sprintf("  <meta http-equiv=\"Content-Security-Policy\" content=\"%s\" />\n", escapeAttr(metaCSP)))
+		b.WriteString(fmt.Sprintf("  <meta http-equiv=\"Content-Security-Policy\" content=\"%s\" />\n", escapeAttrForAstro(metaCSP)))
 	}
 
 	// JSON-LD Organization schema for AI search / knowledge graph entity anchoring.
@@ -218,7 +218,7 @@ func RenderLayouts(ctx context.Context, queries *store.Queries, siteID string, w
 		// `https://x/a"></script><script>...` as umami_url and land a real
 		// inline script in the <head> of every published page.
 		b.WriteString(fmt.Sprintf("  <script is:inline defer src=\"%s/script.js\" data-website-id=\"%s\"></script>\n",
-			escapeAttr(analytics.UmamiURL), escapeAttr(analytics.UmamiSiteID)))
+			escapeAttrForAstro(analytics.UmamiURL), escapeAttrForAstro(analytics.UmamiSiteID)))
 	}
 	if analytics.GA4Enabled && analytics.GA4ID != "" {
 		// gtag.js + GA4 config. Emitted as an honest static snippet (no consent
@@ -228,12 +228,18 @@ func RenderLayouts(ctx context.Context, queries *store.Queries, siteID string, w
 		// on every visit (legitimate-interest aligned with the always-on log
 		// tail). Operators who want hard consent gating should keep
 		// CookieProof on; that is the documented setup.
-		b.WriteString(fmt.Sprintf("  <script is:inline async src=\"https://www.googletagmanager.com/gtag/js?id=%s\"></script>\n", escapeAttr(analytics.GA4ID)))
+		b.WriteString(fmt.Sprintf("  <script is:inline async src=\"https://www.googletagmanager.com/gtag/js?id=%s\"></script>\n", escapeAttrForAstro(analytics.GA4ID)))
 		b.WriteString("  <script is:inline>\n")
 		b.WriteString("    window.dataLayer = window.dataLayer || [];\n")
 		b.WriteString("    function gtag(){dataLayer.push(arguments);}\n")
 		b.WriteString("    gtag('js', new Date());\n")
-		b.WriteString(fmt.Sprintf("    gtag('config', '%s', { anonymize_ip: true });\n", escapeAttr(analytics.GA4ID)))
+		// Exit 3, script half. This sat on escapeAttr, which is entity
+		// encoding: it could not break out (both `<` and `'` become
+		// entities) but nothing decodes an entity inside a script body, so a
+		// GA4 ID carrying one of those characters silently configured
+		// analytics with a mangled string. One escaper away from being a real
+		// hole, and the right escaper already exists.
+		b.WriteString(fmt.Sprintf("    gtag('config', '%s', { anonymize_ip: true });\n", escapeJSStringForAstro(analytics.GA4ID)))
 		b.WriteString("  </script>\n")
 	}
 
@@ -309,20 +315,13 @@ func RenderLayouts(ctx context.Context, queries *store.Queries, siteID string, w
 		for _, f := range fontRows {
 			src := fmt.Sprintf("/atomicsite-fonts/%s/%s.woff2", siteID, f.ID)
 			rangeDecl := UnicodeRangeFor(f.Subset)
-			if rangeDecl != "" {
-				b.WriteString(fmt.Sprintf(
-					"    @font-face { font-family: %q; font-style: %s; font-weight: %d; font-display: swap; src: url(%q) format('woff2'); unicode-range: %s; }\n",
-					f.FamilyName, f.Style, f.Weight, src, rangeDecl,
-				))
-			} else {
-				b.WriteString(fmt.Sprintf(
-					"    @font-face { font-family: %q; font-style: %s; font-weight: %d; font-display: swap; src: url(%q) format('woff2'); }\n",
-					f.FamilyName, f.Style, f.Weight, src,
-				))
-			}
+			// Exit 3, style half, through the shared formatter in
+			// preview_fonts.go so this emission and the preview one cannot
+			// drift apart again.
+			b.WriteString("    " + fontFaceDecl(f.FamilyName, f.Style, f.Weight, src, rangeDecl) + "\n")
 			b.WriteString(fmt.Sprintf(
-				"    /* preload-hint: %q subset=%s */\n",
-				f.FamilyName, fontSubsetOrAll(f.Subset),
+				"    /* preload-hint: \"%s\" subset=%s */\n",
+				cssCommentSafe(escapeCSSStringForAstro(f.FamilyName)), fontSubsetOrAll(f.Subset),
 			))
 		}
 		b.WriteString("  </style>\n")
@@ -598,9 +597,15 @@ func extractHTMLFromGlobalBlock(gb store.GlobalBlock) string {
 	if err := json.Unmarshal([]byte(gb.DataJson), &data); err != nil {
 		return ""
 	}
-	// Raw HTML override: if the block stores `data.html`, use that verbatim.
+	// Raw HTML override: if the block stores `data.html`, that markup is the
+	// header or footer of EVERY page, and it used to be emitted verbatim into
+	// Base.astro. Verbatim there means two things at once: stored XSS on every
+	// page, and a build-time JavaScript expression, because `{...}` in .astro
+	// source is evaluated by Astro in Node during the build. The custom-block
+	// variant is the right sanitizer for it: a header carries its own <style>,
+	// inline SVG and aria-*, and rawHTMLPolicy would delete all of that.
 	if html, ok := data["html"].(string); ok && html != "" {
-		return html
+		return sanitizeCustomBlockForAstro(html)
 	}
 
 	// Structured data path. Render the canonical header/footer shapes so the
@@ -638,12 +643,12 @@ func renderHeaderHTML(data map[string]any) string {
 		wordmark, _ := brand["wordmark"].(string)
 		accentFrom, _ := brand["accent_from"].(string)
 		b.WriteString(`<a class="brand-mark" href="`)
-		b.WriteString(escapeAttr(href))
+		b.WriteString(escapeAttrForAstro(href))
 		b.WriteString(`" aria-label="`)
 		if label != "" {
-			b.WriteString(escapeAttr(label))
+			b.WriteString(escapeAttrForAstro(label))
 		} else if wordmark != "" {
-			b.WriteString(escapeAttr(wordmark))
+			b.WriteString(escapeAttrForAstro(wordmark))
 		} else {
 			b.WriteString("Home")
 		}
@@ -653,13 +658,13 @@ func renderHeaderHTML(data map[string]any) string {
 		// Vercel, Stripe, etc. Falls back to image_id when no badge is set.
 		if badge != "" {
 			b.WriteString(`<span class="brand-badge" aria-hidden="true">`)
-			b.WriteString(escapeText(badge))
+			b.WriteString(escapeTextForAstro(badge))
 			b.WriteString(`</span>`)
 		} else if imageID != "" {
 			b.WriteString(`<img src="/media/`)
-			b.WriteString(escapeAttr(imageID))
+			b.WriteString(escapeAttrForAstro(imageID))
 			b.WriteString(`/original.png" alt="`)
-			b.WriteString(escapeAttr(label))
+			b.WriteString(escapeAttrForAstro(label))
 			b.WriteString(`" />`)
 		}
 		// Wordmark: optional text wordmark next to the badge. accent_from
@@ -670,17 +675,17 @@ func renderHeaderHTML(data map[string]any) string {
 			b.WriteString(`<span class="brand-wordmark">`)
 			if accentFrom != "" && strings.Contains(wordmark, accentFrom) {
 				idx := strings.Index(wordmark, accentFrom)
-				b.WriteString(escapeText(wordmark[:idx]))
+				b.WriteString(escapeTextForAstro(wordmark[:idx]))
 				b.WriteString(`<span class="brand-wordmark-accent">`)
-				b.WriteString(escapeText(wordmark[idx:]))
+				b.WriteString(escapeTextForAstro(wordmark[idx:]))
 				b.WriteString(`</span>`)
 			} else {
-				b.WriteString(escapeText(wordmark))
+				b.WriteString(escapeTextForAstro(wordmark))
 			}
 			b.WriteString(`</span>`)
 		} else if label != "" {
 			b.WriteString(`<span class="brand-wordmark">`)
-			b.WriteString(escapeText(label))
+			b.WriteString(escapeTextForAstro(label))
 			b.WriteString(`</span>`)
 		}
 		b.WriteString(`</a>`)
@@ -706,9 +711,9 @@ func renderHeaderHTML(data map[string]any) string {
 			b.WriteString(`<nav class="site-nav site-nav-primary" aria-label="Primary"><ul>`)
 			for _, l := range primary {
 				b.WriteString(`<li><a href="`)
-				b.WriteString(escapeAttr(l.href))
+				b.WriteString(escapeAttrForAstro(l.href))
 				b.WriteString(`">`)
-				b.WriteString(escapeText(l.label))
+				b.WriteString(escapeTextForAstro(l.label))
 				b.WriteString(`</a></li>`)
 			}
 			b.WriteString(`</ul></nav>`)
@@ -724,12 +729,12 @@ func renderHeaderHTML(data map[string]any) string {
 				}
 				liData := ""
 				if l.lang != "" {
-					liData = fmt.Sprintf(` data-lang="%s"`, escapeAttr(l.lang))
+					liData = fmt.Sprintf(` data-lang="%s"`, escapeAttrForAstro(l.lang))
 				}
 				b.WriteString(`<li` + liCls + liData + `><a href="`)
-				b.WriteString(escapeAttr(l.href))
+				b.WriteString(escapeAttrForAstro(l.href))
 				b.WriteString(`"` + aCls + `>`)
-				b.WriteString(escapeText(l.label))
+				b.WriteString(escapeTextForAstro(l.label))
 				b.WriteString(`</a></li>`)
 			}
 			b.WriteString(`</ul></div>`)
@@ -757,16 +762,16 @@ func renderFooterHTML(data map[string]any) string {
 		b.WriteString(`<nav aria-label="Footer"><ul>`)
 		for _, l := range links {
 			b.WriteString(`<li><a href="`)
-			b.WriteString(escapeAttr(l.href))
+			b.WriteString(escapeAttrForAstro(l.href))
 			b.WriteString(`">`)
-			b.WriteString(escapeText(l.label))
+			b.WriteString(escapeTextForAstro(l.label))
 			b.WriteString(`</a></li>`)
 		}
 		b.WriteString(`</ul></nav>`)
 	}
 	if copyright != "" {
 		b.WriteString(`<p class="site-footer-copy">&copy; `)
-		b.WriteString(escapeText(copyright))
+		b.WriteString(escapeTextForAstro(copyright))
 		b.WriteString(`</p>`)
 	}
 	b.WriteString(`</div></footer>`)
@@ -792,7 +797,7 @@ func renderFooterColumnsHTML(data map[string]any, columnsRaw []any) string {
 		b.WriteString(`<div class="footer-column">`)
 		if title != "" {
 			b.WriteString(`<h3>`)
-			b.WriteString(escapeText(title))
+			b.WriteString(escapeTextForAstro(title))
 			b.WriteString(`</h3>`)
 		}
 		if linksRaw, ok := col["links"].([]any); ok && len(linksRaw) > 0 {
@@ -805,16 +810,16 @@ func renderFooterColumnsHTML(data map[string]any, columnsRaw []any) string {
 				href, _ := link["href"].(string)
 				label, _ := link["label"].(string)
 				b.WriteString(`<li><a href="`)
-				b.WriteString(escapeAttr(href))
+				b.WriteString(escapeAttrForAstro(href))
 				b.WriteString(`">`)
-				b.WriteString(escapeText(label))
+				b.WriteString(escapeTextForAstro(label))
 				b.WriteString(`</a></li>`)
 			}
 			b.WriteString(`</ul>`)
 		}
 		if body, _ := col["body"].(string); body != "" {
 			b.WriteString(`<p>`)
-			b.WriteString(escapeText(body))
+			b.WriteString(escapeTextForAstro(body))
 			b.WriteString(`</p>`)
 		}
 		b.WriteString(`</div>`)
@@ -828,7 +833,7 @@ func renderFooterColumnsHTML(data map[string]any, columnsRaw []any) string {
 		b.WriteString(`<div class="footer-bottom">`)
 		if tagline != "" {
 			b.WriteString(`<p class="footer-tagline">`)
-			b.WriteString(escapeText(tagline))
+			b.WriteString(escapeTextForAstro(tagline))
 			b.WriteString(`</p>`)
 		}
 		if hasSocial && len(socialRaw) > 0 {
@@ -842,18 +847,18 @@ func renderFooterColumnsHTML(data map[string]any, columnsRaw []any) string {
 				label, _ := s["label"].(string)
 				icon, _ := s["icon"].(string)
 				b.WriteString(`<a href="`)
-				b.WriteString(escapeAttr(href))
+				b.WriteString(escapeAttrForAstro(href))
 				b.WriteString(`" aria-label="`)
-				b.WriteString(escapeAttr(label))
+				b.WriteString(escapeAttrForAstro(label))
 				b.WriteString(`">`)
 				if icon != "" {
 					if svg := renderLucideIcon(icon); svg != "" {
 						b.WriteString(svg)
 					} else {
-						b.WriteString(escapeText(label))
+						b.WriteString(escapeTextForAstro(label))
 					}
 				} else {
-					b.WriteString(escapeText(label))
+					b.WriteString(escapeTextForAstro(label))
 				}
 				b.WriteString(`</a>`)
 			}
@@ -861,7 +866,7 @@ func renderFooterColumnsHTML(data map[string]any, columnsRaw []any) string {
 		}
 		if copyright != "" {
 			b.WriteString(`<p class="site-footer-copy">&copy; `)
-			b.WriteString(escapeText(copyright))
+			b.WriteString(escapeTextForAstro(copyright))
 			b.WriteString(`</p>`)
 		}
 		b.WriteString(`</div>`)
@@ -900,13 +905,6 @@ func extractNavLinks(raw any) []navLink {
 		out = append(out, navLink{label: label, href: href, cta: cta, lang: strings.TrimSpace(lang)})
 	}
 	return out
-}
-
-func escapeText(s string) string {
-	s = strings.ReplaceAll(s, "&", "&amp;")
-	s = strings.ReplaceAll(s, "<", "&lt;")
-	s = strings.ReplaceAll(s, ">", "&gt;")
-	return s
 }
 
 func escapeAstroString(s string) string {

@@ -56,8 +56,14 @@ func renderSearchBoxBlock(data map[string]any) string {
 	b.WriteString("          if (!mount || mount.hasAttribute('data-pagefind-init')) return;\n")
 	b.WriteString("          if (typeof PagefindUI !== 'function') return;\n")
 	b.WriteString("          mount.setAttribute('data-pagefind-init', '1');\n")
-	b.WriteString(fmt.Sprintf("          new PagefindUI({ element: '#search', showImages: false, resetStyles: false, translations: { placeholder: %q, zero_results: %q } });\n",
-		placeholder, zeroResultsCopy(showEmpty)))
+	// Exit 3, script half. %q quoted these for JavaScript, which is the wrong
+	// language to quote for: the HTML parser decides where a <script> ends, so
+	// a block placeholder of `</script><script>...` closed this element and the
+	// rest became live markup. escapeJSStringForAstro escapes `<` as well, and
+	// leaves braces alone because Astro does not evaluate them in a script body
+	// and an entity would not be decoded there.
+	b.WriteString(fmt.Sprintf("          new PagefindUI({ element: '#search', showImages: false, resetStyles: false, translations: { placeholder: '%s', zero_results: '%s' } });\n",
+		escapeJSStringForAstro(placeholder), escapeJSStringForAstro(zeroResultsCopy(showEmpty))))
 	b.WriteString("          var sr = document.querySelector('#search .pagefind-ui__results-area'); if (sr) sr.style.maxHeight = 'none';\n")
 	b.WriteString("        }\n")
 	b.WriteString("        if (document.readyState !== 'loading') { initSearch(); } else { window.addEventListener('DOMContentLoaded', initSearch); }\n")

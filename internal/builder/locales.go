@@ -228,9 +228,9 @@ func renderLocaleSwitcherBlock(data map[string]any) string {
 	}
 
 	var b strings.Builder
-	b.WriteString(fmt.Sprintf("  <nav class=\"block block--locale_switcher block--locale_switcher--%s\" aria-label=\"%s\">\n", escapeAttr(style), escapeAttr(label)))
+	b.WriteString(fmt.Sprintf("  <nav class=\"block block--locale_switcher block--locale_switcher--%s\" aria-label=\"%s\">\n", escapeAttrForAstro(style), escapeAttrForAstro(label)))
 	if showLabel {
-		b.WriteString(fmt.Sprintf("    <span class=\"locale-switcher-label\">%s</span>\n", escapeHTML(label)))
+		b.WriteString(fmt.Sprintf("    <span class=\"locale-switcher-label\">%s</span>\n", escapeTextForAstro(label)))
 	}
 	switch style {
 	case "dropdown":
@@ -250,7 +250,7 @@ func renderLocaleSwitcherBlock(data map[string]any) string {
 			if isCurr {
 				selected = " selected"
 			}
-			b.WriteString(fmt.Sprintf("        <option value=\"%s\"%s>%s</option>\n", escapeAttr(url), selected, escapeHTML(loc)))
+			b.WriteString(fmt.Sprintf("        <option value=\"%s\"%s>%s</option>\n", escapeAttrForAstro(url), selected, escapeTextForAstro(loc)))
 		}
 		b.WriteString("      </select>\n")
 		b.WriteString("    </form>\n")
@@ -261,16 +261,16 @@ func renderLocaleSwitcherBlock(data map[string]any) string {
 		if style == "inline" {
 			ulClass += " locale-switcher-list--inline"
 		}
-		b.WriteString(fmt.Sprintf("    <ul class=\"%s\">\n", escapeAttr(ulClass)))
+		b.WriteString(fmt.Sprintf("    <ul class=\"%s\">\n", escapeAttrForAstro(ulClass)))
 		for _, raw := range resolved {
 			m, _ := raw.(map[string]any)
 			loc := stringOrEmpty(m["locale"])
 			url := stringOrEmpty(m["url"])
 			isCurr, _ := m["is_current"].(bool)
 			if isCurr || loc == current {
-				b.WriteString(fmt.Sprintf("      <li><span class=\"locale-switcher-current\" aria-current=\"true\">%s</span></li>\n", escapeHTML(loc)))
+				b.WriteString(fmt.Sprintf("      <li><span class=\"locale-switcher-current\" aria-current=\"true\">%s</span></li>\n", escapeTextForAstro(loc)))
 			} else {
-				b.WriteString(fmt.Sprintf("      <li><a href=\"%s\" hreflang=\"%s\">%s</a></li>\n", escapeAttr(url), escapeAttr(loc), escapeHTML(loc)))
+				b.WriteString(fmt.Sprintf("      <li><a href=\"%s\" hreflang=\"%s\">%s</a></li>\n", escapeAttrForAstro(url), escapeAttrForAstro(loc), escapeTextForAstro(loc)))
 			}
 		}
 		b.WriteString("    </ul>\n")

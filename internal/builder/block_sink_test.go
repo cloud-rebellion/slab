@@ -1,8 +1,14 @@
 package builder
 
 import (
+	"encoding/json"
+	"os"
+	"regexp"
+	"sort"
 	"strings"
 	"testing"
+
+	"github.com/bright-interaction/slab/internal/store"
 )
 
 // Every block renderer is a tenant-content sink. Two of the three raw-markup
@@ -78,6 +84,268 @@ func TestRawBlockSinksKeepLegitimateMarkup(t *testing.T) {
 	for _, want := range []string{"<p>", "<strong>", "world", `href="https://example.com"`} {
 		if !strings.Contains(out, want) {
 			t.Errorf("legitimate markup %q was stripped from: %q", want, out)
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// The guard. This class has recurred three times in this package, so the tests
+// below enumerate the sinks from the SOURCE rather than from what a reviewer
+// remembered to list.
+// ---------------------------------------------------------------------------
+
+// astroRawFields are the data keys whose value is written into generated
+// .astro output as markup rather than as escaped text. Every one of them is a
+// build-time code sink, because `{...}` in .astro source is JavaScript that
+// Astro evaluates in Node during the build.
+var astroRawFields = []string{"markup", "code", "html"}
+
+// astroExprPayloads are real attacks, not shapes. The first reads the
+// multi-tenant SQLite file onto the attacker's own published page; the second
+// prints a build-environment secret. Neither needs a single character that an
+// HTML sanitizer has any reason to touch.
+var astroExprPayloads = []string{
+	`<b>{(await import('node:fs')).readFileSync('/app/data/atomicsite.db','utf8')}</b>`,
+	`<p>hello {process.env.LITESTREAM_SECRET_ACCESS_KEY} world</p>`,
+}
+
+// liveAstroExpressions are fragments that can only exist if a tenant-supplied
+// brace reached the .astro source unneutralised. Checking these rather than
+// "the output contains no brace at all" keeps the guard honest for renderers
+// that emit braces of their own (search_box ships an inline script).
+var liveAstroExpressions = []string{"{(await", "{process.env", "'utf8')}", "_ACCESS_KEY}"}
+
+// rawTextElementRE matches a <script> or <style> element and captures its body.
+// Those two are raw-text elements: measured against a real Astro build, the
+// compiler does not evaluate `{...}` inside them and nothing decodes an entity
+// there. So the guard has to judge them by different rules than markup, and
+// saying so here is what stops the next person from "fixing" JSON-LD by
+// entity-encoding the braces that hold the JSON together.
+var rawTextElementRE = regexp.MustCompile(`(?is)<(script|style)\b[^>]*>(.*?)</\s*(script|style)\s*>`)
+
+func assertNoLiveAstroExpression(t *testing.T, where, out string) {
+	t.Helper()
+
+	// Rule for <script> and <style> bodies: braces are fine, breaking out of
+	// the element is not, and an HTML entity is a bug rather than a defence.
+	for _, m := range rawTextElementRE.FindAllStringSubmatch(out, -1) {
+		body := m[2]
+		low := strings.ToLower(body)
+		for _, bad := range []string{"</script", "</style", "<!--"} {
+			if strings.Contains(low, bad) {
+				t.Errorf("%s: %q inside a <%s> body ends the element and returns the parser to markup:\n%s", where, bad, m[1], out)
+			}
+		}
+		for _, wrong := range []string{"&#123;", "&#125;"} {
+			if strings.Contains(body, wrong) {
+				t.Errorf("%s: %q inside a <%s> body is not decoded by anything, so this is broken code, not an escape:\n%s", where, wrong, m[1], out)
+			}
+		}
+	}
+
+	// Rule for markup context, the one place Astro evaluates braces.
+	markup := rawTextElementRE.ReplaceAllString(out, "")
+	for _, bad := range liveAstroExpressions {
+		if strings.Contains(markup, bad) {
+			t.Errorf("%s: build-time expression %q reached .astro markup:\n%s", where, bad, out)
+		}
+	}
+	// If the payload survived at all it has to be there in neutralised form, so
+	// a renderer cannot pass by dropping the field instead of sanitizing it and
+	// then quietly start emitting it again later.
+	if strings.Contains(markup, "readFileSync") || strings.Contains(markup, "LITESTREAM") {
+		if !strings.Contains(markup, "&#123;") {
+			t.Errorf("%s: payload survived but carries no neutralised brace:\n%s", where, out)
+		}
+	}
+}
+
+// renderDataBlockCaseTypes reads the block types out of renderDataBlock's
+// switch in pages.go, so a new block type joins this guard the moment it is
+// added rather than when somebody remembers to add it.
+func renderDataBlockCaseTypes(t *testing.T) []string {
+	t.Helper()
+	src, err := os.ReadFile("pages.go")
+	if err != nil {
+		t.Fatalf("read pages.go: %v", err)
+	}
+	body := string(src)
+	start := strings.Index(body, "func renderDataBlock(")
+	if start < 0 {
+		t.Fatal("renderDataBlock not found in pages.go; this guard is keyed on it")
+	}
+	end := strings.Index(body[start:], "\n}\n")
+	if end < 0 {
+		t.Fatal("could not find the end of renderDataBlock")
+	}
+	caseRE := regexp.MustCompile(`case "([a-z0-9_]+)":`)
+	var types []string
+	for _, m := range caseRE.FindAllStringSubmatch(body[start:start+end], -1) {
+		types = append(types, m[1])
+	}
+	if len(types) < 20 {
+		t.Fatalf("only %d block types parsed out of renderDataBlock; the parser has drifted", len(types))
+	}
+	return types
+}
+
+// blockDataKeyREs harvest, from the package source, every key a renderer reads
+// out of a block's data map. The first cut of this guard covered three fields
+// by name, which is how it missed that escapeHTML leaves braces alone and
+// therefore that an ordinary heading was the same code sink as a raw-markup
+// block. Reading the keys out of the source means a field added tomorrow is
+// covered tomorrow.
+// The leading underscore matters: the store and locale blocks read their real
+// content from _resolved_product / _resolved_locales, which the resolver puts
+// into the same map, and leaving those out made this guard vacuous for two
+// block types while still reporting them as covered.
+var blockDataKeyREs = []*regexp.Regexp{
+	regexp.MustCompile(`dataString\([A-Za-z_][A-Za-z0-9_]*, "([a-z_][a-z0-9_]*)"\)`),
+	regexp.MustCompile(`[a-z][A-Za-z0-9_]*\["([a-z_][a-z0-9_]*)"\]`),
+	regexp.MustCompile(`stringField\([A-Za-z_][A-Za-z0-9_]*, "([a-z_][a-z0-9_]*)"`),
+	regexp.MustCompile(`"([a-z_][a-z0-9_]*)", "[a-z_][a-z0-9_]*"\)`),
+}
+
+func harvestBlockDataFields(t *testing.T) []string {
+	t.Helper()
+	entries, err := os.ReadDir(".")
+	if err != nil {
+		t.Fatalf("read package dir: %v", err)
+	}
+	seen := map[string]bool{}
+	for _, e := range entries {
+		name := e.Name()
+		if e.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		src, err := os.ReadFile(name)
+		if err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		for _, re := range blockDataKeyREs {
+			for _, m := range re.FindAllStringSubmatch(string(src), -1) {
+				seen[m[1]] = true
+			}
+		}
+	}
+	fields := make([]string, 0, len(seen))
+	for f := range seen {
+		fields = append(fields, f)
+	}
+	sort.Strings(fields)
+	if len(fields) < 50 {
+		t.Fatalf("only %d data fields harvested from the package source; the harvester has drifted", len(fields))
+	}
+	return fields
+}
+
+// TestEveryBlockTypeIsAstroExpressionSafe walks renderDataBlock's switch and
+// pushes a real build-time expression through EVERY data field of every block
+// type, not only the raw-markup ones. Three shapes, because a renderer that
+// bails when its list is empty would otherwise never reach its own text fields:
+//
+//	A  every field a string
+//	B  every field a list of items whose every field is a string
+//	C  one field a string at a time, every other field a list
+//
+// Fields come from the source, types come from the switch, so neither list is a
+// thing a reviewer has to remember to update.
+func TestEveryBlockTypeIsAstroExpressionSafe(t *testing.T) {
+	types := append(renderDataBlockCaseTypes(t), "some_block_type_that_does_not_exist")
+	fields := harvestBlockDataFields(t)
+
+	for _, bt := range types {
+		for _, payload := range astroExprPayloads {
+			strs := make(map[string]any, len(fields))
+			for _, f := range fields {
+				strs[f] = payload
+			}
+			assertNoLiveAstroExpression(t, "A "+bt, renderDataBlock(bt, strs, nil, "site-1"))
+
+			item := make(map[string]any, len(fields))
+			for _, f := range fields {
+				item[f] = payload
+			}
+			lists := make(map[string]any, len(fields))
+			for _, f := range fields {
+				lists[f] = []any{item, item}
+			}
+			assertNoLiveAstroExpression(t, "B "+bt, renderDataBlock(bt, lists, nil, "site-1"))
+
+			// D: every field a map. The product block resolves its content
+			// into _resolved_product as a map, so neither A nor B reaches it.
+			maps := make(map[string]any, len(fields))
+			for _, f := range fields {
+				maps[f] = item
+			}
+			assertNoLiveAstroExpression(t, "D "+bt, renderDataBlock(bt, maps, nil, "site-1"))
+
+			for _, target := range fields {
+				mixed := make(map[string]any, len(fields))
+				for _, f := range fields {
+					mixed[f] = []any{item, item}
+				}
+				mixed[target] = payload
+				assertNoLiveAstroExpression(t, "C "+bt+"."+target, renderDataBlock(bt, mixed, nil, "site-1"))
+			}
+		}
+	}
+}
+
+// TestRenderBlockHTMLPathIsAstroExpressionSafe covers the data.html branch in
+// renderBlock, a different sink from the switch below it and the third of the
+// four to be missed.
+func TestRenderBlockHTMLPathIsAstroExpressionSafe(t *testing.T) {
+	for _, payload := range astroExprPayloads {
+		data, err := json.Marshal(map[string]any{"html": payload})
+		if err != nil {
+			t.Fatal(err)
+		}
+		bl := store.Block{ID: "b1", BlockType: "custom", DataJson: string(data)}
+		assertNoLiveAstroExpression(t, "renderBlock data.html", renderBlock(bl, nil, nil, "site-1"))
+	}
+}
+
+// TestGlobalBlockPathIsAstroExpressionSafe covers the fourth sink. A global
+// block renders into Base.astro, so it is the header or footer of every page,
+// and it had no sanitizer of any kind.
+func TestGlobalBlockPathIsAstroExpressionSafe(t *testing.T) {
+	for _, slot := range []string{"header", "footer"} {
+		for _, payload := range astroExprPayloads {
+			data, err := json.Marshal(map[string]any{"html": payload})
+			if err != nil {
+				t.Fatal(err)
+			}
+			gb := store.GlobalBlock{ID: "g1", Slot: slot, BlockType: slot, DataJson: string(data)}
+			assertNoLiveAstroExpression(t, "extractHTMLFromGlobalBlock("+slot+")", extractHTMLFromGlobalBlock(gb))
+			assertNoLiveAstroExpression(t, "ExtractHTMLFromGlobalBlock("+slot+")", ExtractHTMLFromGlobalBlock(gb))
+		}
+	}
+}
+
+// TestRawSinksUseTheSharedAstroHelper is the structural half. Output tests only
+// catch the sinks somebody thought to test; this one fails when a renderer
+// reaches for the markup-only sanitizer, which is exactly how three of the four
+// sinks got the markup half of the defence and missed the code half.
+func TestRawSinksUseTheSharedAstroHelper(t *testing.T) {
+	entries, err := os.ReadDir(".")
+	if err != nil {
+		t.Fatalf("read package dir: %v", err)
+	}
+	forbidden := []string{"sanitizeRawHTML(", "neutraliseAstroExpressions(", "customBlockPolicy.Sanitize("}
+	for _, e := range entries {
+		name := e.Name()
+		if e.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") || name == "sanitize.go" {
+			continue
+		}
+		src, err := os.ReadFile(name)
+		if err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		for _, bad := range forbidden {
+			if strings.Contains(string(src), bad) {
+				t.Errorf("%s calls %s directly; a raw sink must route through sanitizeForAstro or sanitizeCustomBlockForAstro", name, bad)
+			}
 		}
 	}
 }

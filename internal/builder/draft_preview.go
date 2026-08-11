@@ -118,12 +118,12 @@ func RenderPageDraft(ctx context.Context, queries *store.Queries, siteID, pageID
 
 	var doc strings.Builder
 	doc.WriteString("<!DOCTYPE html>\n")
-	doc.WriteString(fmt.Sprintf(`<html lang="%s">`, escapeAttr(lang)))
+	doc.WriteString(fmt.Sprintf(`<html lang="%s">`, escapeAttrForAstro(lang)))
 	doc.WriteString("<head>")
 	doc.WriteString(`<meta charset="UTF-8">`)
 	doc.WriteString(`<meta name="viewport" content="width=device-width, initial-scale=1.0">`)
 	doc.WriteString(`<meta name="robots" content="noindex, nofollow">`)
-	doc.WriteString(fmt.Sprintf(`<title>%s · Preview</title>`, escapeAttr(title)))
+	doc.WriteString(fmt.Sprintf(`<title>%s · Preview</title>`, escapeAttrForAstro(title)))
 	doc.WriteString(`<style data-atomicsite-preview="reset">html,body{margin:0;padding:0}body{min-height:100vh;background:#fafaf9;color:#18181b;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}*{box-sizing:border-box}img{max-width:100%;height:auto}.atomicsite-preview-component-stub{margin:1.5rem auto;max-width:60rem;padding:1.25rem 1.5rem;border:1px dashed #d6d3d1;border-radius:0.75rem;background:#fff7ed;color:#9a3412;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:0.8125rem;line-height:1.55}</style>`)
 	if fontFace != "" {
 		doc.WriteString(`<style data-atomicsite-preview="fonts">`)
@@ -179,9 +179,9 @@ func componentBlockPlaceholder(bl store.Block, componentExts map[string]string) 
 	}
 	return fmt.Sprintf(
 		`<aside class="atomicsite-preview-component-stub" data-block-id="%s" data-block-type="%s"><strong>Component block:</strong> &lt;%s /&gt;. Preview shows the rendered output after the next build.</aside>`,
-		escapeAttr(bl.ID),
-		escapeAttr(bl.BlockType),
-		escapeAttr(pascalCase(compName)),
+		escapeAttrForAstro(bl.ID),
+		escapeAttrForAstro(bl.BlockType),
+		escapeAttrForAstro(pascalCase(compName)),
 	)
 }
 
@@ -262,7 +262,7 @@ func substituteAstroProps(body string, props map[string]any) string {
 		}
 		val, ok := propAsString(props, name)
 		if !ok {
-			val = escapeHTML(fallback)
+			val = escapeTextForAstro(fallback)
 		}
 		return wrapAttrIfNeeded(prefix, val)
 	})
@@ -304,7 +304,7 @@ func propAsString(props map[string]any, name string) (string, bool) {
 	}
 	switch val := v.(type) {
 	case string:
-		return escapeHTML(val), true
+		return escapeTextForAstro(val), true
 	case float64:
 		return fmt.Sprintf("%g", val), true
 	case bool:
@@ -316,6 +316,6 @@ func propAsString(props map[string]any, name string) (string, bool) {
 		return "", true
 	default:
 		b, _ := json.Marshal(val)
-		return escapeHTML(string(b)), true
+		return escapeTextForAstro(string(b)), true
 	}
 }

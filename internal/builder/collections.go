@@ -207,9 +207,9 @@ func renderCollectionIndex(c store.Collection, fields []collectionFieldDef, item
 
 	title := c.Name
 	desc := fmt.Sprintf("All %s", strings.ToLower(c.Name))
-	b.WriteString(fmt.Sprintf("<Base title=\"%s\" description=\"%s\"", escapeAttr(title), escapeAttr(desc)))
+	b.WriteString(fmt.Sprintf("<Base title=\"%s\" description=\"%s\"", escapeAstroPropString(title), escapeAstroPropString(desc)))
 	if locale != "" && locale != site.Lang {
-		b.WriteString(fmt.Sprintf(` lang="%s"`, escapeAttr(locale)))
+		b.WriteString(fmt.Sprintf(` lang="%s"`, escapeAstroPropString(locale)))
 	}
 	if alts := computeCollectionIndexAlternates(c.Slug, items, site, i18n); len(alts) > 0 {
 		b.WriteString(" alternates={")
@@ -218,8 +218,8 @@ func renderCollectionIndex(c store.Collection, fields []collectionFieldDef, item
 	}
 	b.WriteString(">\n")
 
-	b.WriteString(fmt.Sprintf("  <section class=\"block block--collection-index\" data-collection=\"%s\">\n", escapeAttr(c.Slug)))
-	b.WriteString(fmt.Sprintf("    <h1>%s</h1>\n", escapeHTML(title)))
+	b.WriteString(fmt.Sprintf("  <section class=\"block block--collection-index\" data-collection=\"%s\">\n", escapeAttrForAstro(c.Slug)))
+	b.WriteString(fmt.Sprintf("    <h1>%s</h1>\n", escapeTextForAstro(title)))
 	b.WriteString("    <ul class=\"collection-list\">\n")
 	emitted := 0
 	for _, item := range items {
@@ -232,7 +232,7 @@ func renderCollectionIndex(c store.Collection, fields []collectionFieldDef, item
 		}
 		href := "/" + collectionItemPath(c.Slug, item.Slug, loc, site.Lang) + "/"
 		b.WriteString("      <li>\n")
-		b.WriteString(fmt.Sprintf("        <a href=\"%s\">%s</a>\n", escapeAttr(href), escapeHTML(item.Title)))
+		b.WriteString(fmt.Sprintf("        <a href=\"%s\">%s</a>\n", escapeAttrForAstro(href), escapeTextForAstro(item.Title)))
 		b.WriteString("      </li>\n")
 		emitted++
 	}
@@ -265,12 +265,12 @@ func renderCollectionItem(c store.Collection, fields []collectionFieldDef, item 
 	title := item.Title
 	desc := stringField(data, "description", "summary", "lead")
 
-	b.WriteString(fmt.Sprintf("<Base title=\"%s\"", escapeAttr(title)))
+	b.WriteString(fmt.Sprintf("<Base title=\"%s\"", escapeAstroPropString(title)))
 	if desc != "" {
-		b.WriteString(fmt.Sprintf(" description=\"%s\"", escapeAttr(desc)))
+		b.WriteString(fmt.Sprintf(" description=\"%s\"", escapeAstroPropString(desc)))
 	}
 	if loc != "" && loc != site.Lang {
-		b.WriteString(fmt.Sprintf(` lang="%s"`, escapeAttr(loc)))
+		b.WriteString(fmt.Sprintf(` lang="%s"`, escapeAstroPropString(loc)))
 	}
 	if alts := computeCollectionItemAlternates(c.Slug, item.Slug, slugLocaleMap, site, i18n); len(alts) > 0 {
 		b.WriteString(" alternates={")
@@ -281,13 +281,13 @@ func renderCollectionItem(c store.Collection, fields []collectionFieldDef, item 
 
 	// Personalization condition wrapper.
 	if cond, _ := data["condition"].(string); cond != "" {
-		b.WriteString(fmt.Sprintf("  <div data-asp-when=\"%s\" hidden>\n", escapeAttr(cond)))
+		b.WriteString(fmt.Sprintf("  <div data-asp-when=\"%s\" hidden>\n", escapeAttrForAstro(cond)))
 	}
 
-	b.WriteString(fmt.Sprintf("  <article class=\"block block--collection-item\" data-collection=\"%s\" data-item=\"%s\">\n", escapeAttr(c.Slug), escapeAttr(item.Slug)))
-	b.WriteString(fmt.Sprintf("    <h1>%s</h1>\n", escapeHTML(title)))
+	b.WriteString(fmt.Sprintf("  <article class=\"block block--collection-item\" data-collection=\"%s\" data-item=\"%s\">\n", escapeAttrForAstro(c.Slug), escapeAttrForAstro(item.Slug)))
+	b.WriteString(fmt.Sprintf("    <h1>%s</h1>\n", escapeTextForAstro(title)))
 	if desc != "" {
-		b.WriteString(fmt.Sprintf("    <p class=\"lead\">%s</p>\n", escapeHTML(desc)))
+		b.WriteString(fmt.Sprintf("    <p class=\"lead\">%s</p>\n", escapeTextForAstro(desc)))
 	}
 
 	// Render each schema field in declared order.
@@ -332,13 +332,13 @@ func renderCollectionFieldHTML(f collectionFieldDef, v any, mediaByID map[string
 		if s == "" {
 			return ""
 		}
-		b.WriteString(fmt.Sprintf("    <p class=\"field field-%s\"><strong>%s:</strong> %s</p>\n", escapeAttr(f.Name), escapeHTML(label), escapeHTML(s)))
+		b.WriteString(fmt.Sprintf("    <p class=\"field field-%s\"><strong>%s:</strong> %s</p>\n", escapeAttrForAstro(f.Name), escapeTextForAstro(label), escapeTextForAstro(s)))
 	case "textarea", "richtext":
 		s, _ := v.(string)
 		if s == "" {
 			return ""
 		}
-		b.WriteString(fmt.Sprintf("    <div class=\"field field-%s\">%s</div>\n", escapeAttr(f.Name), escapeHTML(s)))
+		b.WriteString(fmt.Sprintf("    <div class=\"field field-%s\">%s</div>\n", escapeAttrForAstro(f.Name), escapeTextForAstro(s)))
 	case "image":
 		id, _ := v.(string)
 		if id == "" {
@@ -351,7 +351,7 @@ func renderCollectionFieldHTML(f collectionFieldDef, v any, mediaByID map[string
 		if len(arr) == 0 {
 			return ""
 		}
-		b.WriteString(fmt.Sprintf("    <div class=\"gallery field-%s\">\n", escapeAttr(f.Name)))
+		b.WriteString(fmt.Sprintf("    <div class=\"gallery field-%s\">\n", escapeAttrForAstro(f.Name)))
 		for _, item := range arr {
 			id, _ := item.(string)
 			if id == "" {
@@ -361,26 +361,26 @@ func renderCollectionFieldHTML(f collectionFieldDef, v any, mediaByID map[string
 		}
 		b.WriteString("    </div>\n")
 	case "number":
-		b.WriteString(fmt.Sprintf("    <p class=\"field field-%s\"><strong>%s:</strong> %v</p>\n", escapeAttr(f.Name), escapeHTML(label), v))
+		b.WriteString(fmt.Sprintf("    <p class=\"field field-%s\"><strong>%s:</strong> %v</p>\n", escapeAttrForAstro(f.Name), escapeTextForAstro(label), v))
 	case "boolean":
 		bv, _ := v.(bool)
 		val := "no"
 		if bv {
 			val = "yes"
 		}
-		b.WriteString(fmt.Sprintf("    <p class=\"field field-%s\"><strong>%s:</strong> %s</p>\n", escapeAttr(f.Name), escapeHTML(label), val))
+		b.WriteString(fmt.Sprintf("    <p class=\"field field-%s\"><strong>%s:</strong> %s</p>\n", escapeAttrForAstro(f.Name), escapeTextForAstro(label), val))
 	case "date", "datetime":
 		s, _ := v.(string)
 		if s == "" {
 			return ""
 		}
-		b.WriteString(fmt.Sprintf("    <p class=\"field field-%s\"><strong>%s:</strong> <time datetime=\"%s\">%s</time></p>\n", escapeAttr(f.Name), escapeHTML(label), escapeAttr(s), escapeHTML(s)))
+		b.WriteString(fmt.Sprintf("    <p class=\"field field-%s\"><strong>%s:</strong> <time datetime=\"%s\">%s</time></p>\n", escapeAttrForAstro(f.Name), escapeTextForAstro(label), escapeAttrForAstro(s), escapeTextForAstro(s)))
 	case "select":
 		s, _ := v.(string)
 		if s == "" {
 			return ""
 		}
-		b.WriteString(fmt.Sprintf("    <p class=\"field field-%s\"><strong>%s:</strong> %s</p>\n", escapeAttr(f.Name), escapeHTML(label), escapeHTML(s)))
+		b.WriteString(fmt.Sprintf("    <p class=\"field field-%s\"><strong>%s:</strong> %s</p>\n", escapeAttrForAstro(f.Name), escapeTextForAstro(label), escapeTextForAstro(s)))
 	case "multiselect":
 		arr, _ := v.([]any)
 		if len(arr) == 0 {
@@ -392,7 +392,7 @@ func renderCollectionFieldHTML(f collectionFieldDef, v any, mediaByID map[string
 				strs = append(strs, s)
 			}
 		}
-		b.WriteString(fmt.Sprintf("    <p class=\"field field-%s\"><strong>%s:</strong> %s</p>\n", escapeAttr(f.Name), escapeHTML(label), escapeHTML(strings.Join(strs, ", "))))
+		b.WriteString(fmt.Sprintf("    <p class=\"field field-%s\"><strong>%s:</strong> %s</p>\n", escapeAttrForAstro(f.Name), escapeTextForAstro(label), escapeTextForAstro(strings.Join(strs, ", "))))
 	}
 	return b.String()
 }
@@ -682,12 +682,12 @@ func renderCollectionListBlock(data map[string]any, mediaByID map[string]store.M
 	}
 	collectionSlug, _ := data["_collection_slug"].(string)
 
-	b.WriteString(fmt.Sprintf("  <section class=\"block block--collection-list block--collection-list--%s\" data-collection=\"%s\">\n", escapeAttr(cardTemplate), escapeAttr(collectionSlug)))
+	b.WriteString(fmt.Sprintf("  <section class=\"block block--collection-list block--collection-list--%s\" data-collection=\"%s\">\n", escapeAttrForAstro(cardTemplate), escapeAttrForAstro(collectionSlug)))
 	if heading != "" {
-		b.WriteString(fmt.Sprintf("    <h2>%s</h2>\n", escapeHTML(heading)))
+		b.WriteString(fmt.Sprintf("    <h2>%s</h2>\n", escapeTextForAstro(heading)))
 	}
 	if subheading != "" {
-		b.WriteString(fmt.Sprintf("    <p class=\"subheading\">%s</p>\n", escapeHTML(subheading)))
+		b.WriteString(fmt.Sprintf("    <p class=\"subheading\">%s</p>\n", escapeTextForAstro(subheading)))
 	}
 
 	resolved, _ := data["_resolved_items"].([]any)
@@ -706,7 +706,7 @@ func renderCollectionListBlock(data map[string]any, mediaByID map[string]store.M
 	case "grid_3":
 		listClass = "collection-cards collection-cards--grid-3"
 	}
-	b.WriteString(fmt.Sprintf("    <ul class=\"%s\">\n", escapeAttr(listClass)))
+	b.WriteString(fmt.Sprintf("    <ul class=\"%s\">\n", escapeAttrForAstro(listClass)))
 	for _, raw := range resolved {
 		item, ok := raw.(map[string]any)
 		if !ok {
@@ -729,20 +729,20 @@ func renderCollectionListBlock(data map[string]any, mediaByID map[string]store.M
 			if imageHTML != "" {
 				b.WriteString("        " + imageHTML + "\n")
 			}
-			b.WriteString(fmt.Sprintf("        <a href=\"%s\"><h3>%s</h3></a>\n", escapeAttr(href), escapeHTML(title)))
+			b.WriteString(fmt.Sprintf("        <a href=\"%s\"><h3>%s</h3></a>\n", escapeAttrForAstro(href), escapeTextForAstro(title)))
 		case "compact":
-			b.WriteString(fmt.Sprintf("        <a href=\"%s\">%s</a>\n", escapeAttr(href), escapeHTML(title)))
+			b.WriteString(fmt.Sprintf("        <a href=\"%s\">%s</a>\n", escapeAttrForAstro(href), escapeTextForAstro(title)))
 		default: // title_image, grid_2, grid_3
-			b.WriteString(fmt.Sprintf("        <a href=\"%s\"><h3>%s</h3></a>\n", escapeAttr(href), escapeHTML(title)))
+			b.WriteString(fmt.Sprintf("        <a href=\"%s\"><h3>%s</h3></a>\n", escapeAttrForAstro(href), escapeTextForAstro(title)))
 			if imageHTML != "" {
 				b.WriteString("        " + imageHTML + "\n")
 			}
 		}
 		if idata != nil {
 			if lead, _ := idata["lead"].(string); lead != "" {
-				b.WriteString(fmt.Sprintf("        <p class=\"card-lead\">%s</p>\n", escapeHTML(lead)))
+				b.WriteString(fmt.Sprintf("        <p class=\"card-lead\">%s</p>\n", escapeTextForAstro(lead)))
 			} else if desc, _ := idata["description"].(string); desc != "" {
-				b.WriteString(fmt.Sprintf("        <p class=\"card-lead\">%s</p>\n", escapeHTML(desc)))
+				b.WriteString(fmt.Sprintf("        <p class=\"card-lead\">%s</p>\n", escapeTextForAstro(desc)))
 			}
 		}
 		b.WriteString("      </li>\n")

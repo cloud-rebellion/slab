@@ -1,8 +1,10 @@
 package builder
 
 import (
-	"fmt"
+	"crypto/rand"
+	"encoding/hex"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/microcosm-cc/bluemonday"
@@ -146,11 +148,79 @@ var customBlockPolicy = func() *bluemonday.Policy {
 	p.AllowAttrs("media", "srcset", "type").OnElements("source")
 	p.AllowAttrs("datetime").OnElements("time")
 	p.AllowAttrs("open").OnElements("details")
+	allowFormControls(p)
 	p.AllowElements(svgElements...)
 	p.AllowAttrs(svgAttrs...).OnElements(svgElements...)
 	p.AllowAttrs("href").Matching(fragmentRefRE).OnElements("use", "textPath")
 	return p
 }()
+
+// formControlElements is the form surface a custom block is allowed to author.
+// bluemonday's UGC policy drops every one of them, which is why a contact
+// section written as a custom block published as the run-on string
+// "E-postaSkicka": the labels and the button vanished and their text nodes ran
+// together. A header override lost its mobile-menu button the same way.
+var formControlElements = []string{"form", "label", "button", "input", "select", "option", "textarea"}
+
+// safeFormActionRE bounds where a custom-block form may submit: a same-origin
+// path, a fragment, or an https URL. Nothing that could carry javascript: or
+// data:, and no scheme-relative URL.
+//
+// The path branch is deliberately fussy about the SECOND character. A first cut
+// wrote it as `/[^\s"'<>\\]*`, which reads like "a path" and happily matched
+// `//evil.tld/steal`: a browser resolves that as scheme-relative and posts the
+// form offsite, so the allowlist would have shipped the exact bypass it exists
+// to stop. A backslash is excluded there too, because browsers normalise `/\`
+// to `//`.
+var safeFormActionRE = regexp.MustCompile(`^(?:#[A-Za-z0-9_:.-]*|/(?:[^/\\\s"'<>][^\s"'<>\\]*)?|https://[A-Za-z0-9.-]+(?::[0-9]{1,5})?(?:/[^\s"'<>\\]*)?)$`)
+
+var (
+	formMethodRE = regexp.MustCompile(`(?i)^(?:get|post)$`)
+	buttonTypeRE = regexp.MustCompile(`(?i)^(?:button|submit|reset)$`)
+	// input types minus `image`, which is a submit control that also fetches a
+	// URL, so it carries both the formaction problem and an outbound request.
+	inputTypeRE = regexp.MustCompile(`(?i)^(?:text|email|tel|url|number|password|search|checkbox|radio|date|time|datetime-local|month|week|hidden|file|submit|reset|range|color)$`)
+)
+
+// allowFormControls opens exactly the form surface and nothing around it.
+//
+// The attribute lists are allowlists, so formaction, formmethod, formtarget,
+// formenctype and formnovalidate are all absent and therefore stripped. That
+// matters more than it looks: formaction on a submit control OVERRIDES the
+// form's own action, and it accepts a javascript: URL, so it is the one
+// attribute here that turns a button into script execution and a form into a
+// navigation primitive pointed wherever the author likes. `target` on the form
+// is left out for the same reason.
+//
+// AllowNoAttrs is the other half and is easy to miss. bluemonday drops an
+// allowed element that ends up with zero attributes (sanitize.go:898 in
+// v1.0.27), so without this a bare <button>Skicka</button> is still deleted and
+// the E-postaSkicka regression survives the fix meant to close it.
+func allowFormControls(p *bluemonday.Policy) {
+	p.AllowElements(formControlElements...)
+	p.AllowNoAttrs().OnElements(formControlElements...)
+
+	p.AllowAttrs("action").Matching(safeFormActionRE).OnElements("form")
+	p.AllowAttrs("method").Matching(formMethodRE).OnElements("form")
+
+	p.AllowAttrs("type").Matching(buttonTypeRE).OnElements("button")
+	p.AllowAttrs("disabled", "name", "value").OnElements("button")
+
+	p.AllowAttrs("type").Matching(inputTypeRE).OnElements("input")
+	p.AllowAttrs(
+		"name", "value", "placeholder", "required", "disabled", "readonly",
+		"checked", "min", "max", "step", "minlength", "maxlength", "pattern",
+		"autocomplete", "inputmode", "size",
+	).OnElements("input")
+
+	p.AllowAttrs("for").OnElements("label")
+	p.AllowAttrs(
+		"name", "rows", "cols", "placeholder", "required", "disabled",
+		"readonly", "minlength", "maxlength", "wrap",
+	).OnElements("textarea")
+	p.AllowAttrs("name", "required", "disabled", "multiple", "size").OnElements("select")
+	p.AllowAttrs("value", "selected", "disabled", "label").OnElements("option")
+}
 
 // styleBlockRE matches a whole <style> element, including its CSS text.
 var styleBlockRE = regexp.MustCompile(`(?is)<style\b[^>]*>(.*?)</style\s*>`)
@@ -168,26 +238,86 @@ func sanitizeBlockCSS(css string) string {
 // element while the surrounding markup goes through bluemonday. Letters and
 // digits only, so the sanitizer passes it through as ordinary text and no
 // entity encoding can break the round trip.
+//
+// The middle of the placeholder is a per-call random nonce. It used to be a
+// fixed literal, and CSS text never passes through bluemonday, so an author
+// could write a valid placeholder inside style block 0: splice 1 then replaced
+// the FIRST occurrence of its token, which by then sat inside the CSS spliced
+// for block 0. That closed the outer <style> early and handed the parser back
+// to markup context, so `<img src=x onerror=...>` became a live element node.
+// A nonce the author cannot predict makes the token unforgeable, and the splice
+// below is a single left-to-right pass that never rescans what it inserted.
 const (
 	styleSlotPrefix = "slabstyleslot"
 	styleSlotSuffix = "endslabstyleslot"
+	styleSlotNonceN = 12 // bytes, hex-encoded into the placeholder
 )
 
-// sanitizeCustomBlockHTML sanitizes custom-block markup while preserving the
-// author's CSS. <style> is lifted out first because bluemonday deletes the
-// element and its text no matter how the policy is configured, so the CSS gets
-// its own filter (sanitizeBlockCSS) and is spliced back at the same position.
-func sanitizeCustomBlockHTML(s string) string {
+// styleSlotRE matches a placeholder of the shape
+// slabstyleslot<nonce>s<index>endslabstyleslot. The nonce is checked against
+// the one this call generated, so a token an author planted with some other
+// nonce is left alone as the inert text it is.
+var styleSlotRE = regexp.MustCompile(`slabstyleslot([0-9a-f]{` + strconv.Itoa(styleSlotNonceN*2) + `})s([0-9]{1,6})endslabstyleslot`)
+
+// styleSlotRejected replaces the whole block when the CSS splice cannot be
+// completed safely. Dropping the block is the fail-closed answer: the only way
+// to reach it is a forged placeholder, and splicing anyway is exactly the
+// sanitizer bypass this guard exists for.
+const styleSlotRejected = "<!-- custom block: style placeholder rejected, content removed -->"
+
+// sanitizeCustomBlockForAstro sanitizes custom-block markup while preserving the
+// author's CSS, and neutralises Astro's build-time expression syntax in the
+// markup. <style> is lifted out first because bluemonday deletes the element
+// and its text no matter how the policy is configured, so the CSS gets its own
+// filter (sanitizeBlockCSS) and is spliced back at the same position.
+//
+// Order matters. The brace neutralisation runs on the sanitized markup BEFORE
+// the CSS is spliced back in, because the two contexts want opposite things:
+// this output lands in generated .astro source, where `{...}` in markup is
+// JavaScript that Astro evaluates in Node at build time, while `<style>`
+// content is raw text to the Astro compiler and its CSS braces must stay
+// literal. Neutralising after the splice would entity-encode every CSS rule and
+// publish the site unstyled.
+func sanitizeCustomBlockForAstro(s string) string {
+	nonceBytes := make([]byte, styleSlotNonceN)
+	if _, err := rand.Read(nonceBytes); err != nil {
+		return styleSlotRejected
+	}
+	nonce := hex.EncodeToString(nonceBytes)
+
 	var css []string
 	withSlots := styleBlockRE.ReplaceAllStringFunc(s, func(m string) string {
 		inner := styleBlockRE.FindStringSubmatch(m)[1]
 		css = append(css, sanitizeBlockCSS(inner))
-		return fmt.Sprintf("%s%d%s", styleSlotPrefix, len(css)-1, styleSlotSuffix)
+		return styleSlotPrefix + nonce + "s" + strconv.Itoa(len(css)-1) + styleSlotSuffix
 	})
+
+	// Belt to the nonce's braces: if a live token somehow appears inside CSS
+	// text, refuse rather than splice CSS into CSS.
+	for _, c := range css {
+		if strings.Contains(c, styleSlotPrefix+nonce) {
+			return styleSlotRejected
+		}
+	}
+
 	out := svgCaseRestorer.Replace(customBlockPolicy.Sanitize(withSlots))
-	for i, c := range css {
-		slot := fmt.Sprintf("%s%d%s", styleSlotPrefix, i, styleSlotSuffix)
-		out = strings.Replace(out, slot, "<style>"+c+"</style>", 1)
+	out = neutraliseAstroExpressions(out)
+
+	rejected := false
+	out = styleSlotRE.ReplaceAllStringFunc(out, func(tok string) string {
+		m := styleSlotRE.FindStringSubmatch(tok)
+		if m[1] != nonce {
+			return tok
+		}
+		i, err := strconv.Atoi(m[2])
+		if err != nil || i < 0 || i >= len(css) {
+			rejected = true
+			return ""
+		}
+		return "<style>" + css[i] + "</style>"
+	})
+	if rejected {
+		return styleSlotRejected
 	}
 	return out
 }
@@ -219,11 +349,15 @@ var svgCaseRestorer = strings.NewReplacer(
 
 // astroExpressionReplacer neutralises Astro's build-time expression syntax.
 //
-// The raw_astro block's output is written into a generated .astro file, so
-// `{...}` there is a JavaScript expression Astro evaluates in Node during the
-// build, with access to the build process environment. That makes it a code
+// Block output is written into a generated .astro file, so `{...}` there is a
+// JavaScript expression Astro evaluates in Node during the build, with access
+// to the build process environment and to the filesystem. That makes it a code
 // sink, not a markup sink, and sanitizing HTML alone does not close it:
-// bluemonday has no reason to strip braces from text.
+// bluemonday has no reason to strip braces from text. The allowlist that bounds
+// the build environment does not help either: it bounds what process.env holds,
+// not what the expression may do, and
+// `{(await import('node:fs')).readFileSync('/app/data/atomicsite.db')}` reads
+// the multi-tenant database onto the attacker's own public page.
 //
 // Entities render as literal braces in the finished page and mean nothing to
 // the Astro compiler, so tenant text still displays as written.
@@ -231,4 +365,158 @@ var astroExpressionReplacer = strings.NewReplacer("{", "&#123;", "}", "&#125;")
 
 func neutraliseAstroExpressions(s string) string {
 	return astroExpressionReplacer.Replace(s)
+}
+
+// sanitizeForAstro is the one choke point for tenant markup that is emitted
+// verbatim into generated .astro source. Every raw-markup sink routes through
+// it (or through sanitizeCustomBlockForAstro, the authoring-surface variant
+// that also preserves <style>, SVG and aria-*), so a sink cannot get the
+// markup half of the defence and miss the code half. Three of the four sinks
+// had exactly that shape: the fix landed on raw_astro, the only admin-only one,
+// and the three a plain site member can reach were missed.
+func sanitizeForAstro(s string) string {
+	return neutraliseAstroExpressions(sanitizeRawHTML(s))
+}
+
+// ---------------------------------------------------------------------------
+// The Astro escaping engine.
+//
+// Everything this package writes lands in a generated .astro file, and .astro
+// is not one output language. It is four, and the escape that makes one safe
+// breaks another. Measured against a real Astro 5 build rather than reasoned
+// about, because the two halves disagree in a way that is easy to get backwards:
+//
+//	context                    braces evaluated?   entity decoded on render?
+//	markup text                YES  <- the sink    yes
+//	quoted HTML attribute      no                  yes
+//	quoted component prop      no                  yes
+//	<style> body               no                  NO
+//	<script> body              no                  NO
+//
+// So brace neutralisation is required in markup text, harmless in attributes,
+// and actively wrong inside <script> or <style>, where an entity is not decoded
+// by anything and `&#123;` stays seven literal characters in the JavaScript.
+// That is the whole reason a blanket pass over rendered output cannot work, and
+// why every tenant string takes a NAMED exit for the context it lands in.
+//
+// Exit 1: escapeTextForAstro       markup text
+// Exit 2: escapeAttrForAstro       quoted HTML attribute
+// Exit 3: escapeJSStringForAstro   inside a <script> the renderer writes
+//         escapeCSSStringForAstro  inside a <style> the renderer writes
+// Exit 4: escapeAstroPropString    a quoted prop on an Astro component
+//
+// A fifth context exists and is deliberately not an exit: JSON-LD, which is
+// produced by json.Marshal. encoding/json escapes < > and & to \uXXXX by
+// default, so it is already a correct raw-text escape, and routing it through
+// exit 1 or 2 would corrupt the JSON.
+// ---------------------------------------------------------------------------
+
+// escapeTextForAstro is exit 1: tenant text in markup context. This is the one
+// exit where the neutralisation is load-bearing rather than defensive, because
+// markup text is the only measured context in which Astro evaluates `{...}`.
+// escapeHTML replaces < > and & only, which leaves exactly the braces Astro
+// runs, so the two steps belong together behind one name.
+func escapeTextForAstro(s string) string {
+	return neutraliseAstroExpressions(escapeHTML(s))
+}
+
+// escapeAttrForAstro is exit 2: tenant text in a quoted HTML attribute.
+//
+// The neutralisation here is defence in depth, not a live fix: a quoted
+// attribute value is inert to the Astro compiler today, measured. It is applied
+// anyway because the difference between an attribute and markup text is one
+// refactor wide, the rendered result is identical either way (the browser
+// decodes the entity), and the alternative is a rule that says "braces are
+// dangerous except in the places somebody checked once".
+func escapeAttrForAstro(s string) string {
+	return neutraliseAstroExpressions(escapeAttr(s))
+}
+
+// jsStringReplacer escapes a value for use inside a single- or double-quoted
+// JavaScript string literal that sits inside a <script> element.
+//
+// Braces are deliberately absent. Astro does not evaluate them inside a script
+// body, and an HTML entity is not decoded there by anything, so neutralising
+// would replace working JavaScript with the seven characters `&#123;`.
+//
+// `<` and `>` become < and > because the HTML parser, not the JS
+// parser, decides where a script element ends: a literal `</script` inside a
+// string closes the element and everything after it is markup again. That is a
+// live hole today wherever a tenant value reaches a script body through %q,
+// which quotes for JavaScript and does nothing about HTML.
+// jsBackslash is one backslash, kept as its own constant so the escapes below
+// read as the data they are and cannot be mangled by anything that rewrites Go
+// escape sequences.
+const jsBackslash = `\`
+
+var jsStringReplacer = strings.NewReplacer(
+	`\`, `\\`,
+	`'`, `\'`,
+	`"`, `\"`,
+	"`", "\\`",
+	"\n", `\n`,
+	"\r", `\r`,
+	// JS line terminators: legal inside a JSON string, fatal inside a JS one.
+	string(rune(0x2028)), jsBackslash+"u2028",
+	string(rune(0x2029)), jsBackslash+"u2029",
+	"<", jsBackslash+"u003c",
+	">", jsBackslash+"u003e",
+)
+
+// escapeJSStringForAstro is exit 3, script half. It returns the BODY of a JS
+// string literal, without the surrounding quotes, so a call site keeps its own
+// quoting style visible.
+func escapeJSStringForAstro(s string) string {
+	return jsStringReplacer.Replace(s)
+}
+
+// cssStringReplacer escapes a value for use inside a quoted CSS string token
+// (a font-family name, a url(...) target) inside a <style> element.
+//
+// Same reasoning as the JS half, same reason braces are untouched. The hex
+// escapes carry a trailing space, which is how CSS terminates a hex escape
+// sequence, and a newline inside a string token is a parse error in CSS so it
+// becomes \A instead.
+var cssStringReplacer = strings.NewReplacer(
+	`\`, `\\`,
+	`"`, `\"`,
+	`'`, `\'`,
+	"\n", `\A `,
+	"\r", `\A `,
+	"<", `\3c `,
+	">", `\3e `,
+)
+
+// escapeCSSStringForAstro is exit 3, style half. Like the JS half it returns
+// the body of a string token, without the surrounding quotes.
+func escapeCSSStringForAstro(s string) string {
+	return cssStringReplacer.Replace(s)
+}
+
+// cssFontStyleKeyword clamps a stored font-style to the three keywords the CSS
+// property accepts. The uploaded value was interpolated into a <style> body
+// with a bare %s, so it was not an escaping problem at all: it was a keyword
+// slot taking arbitrary CSS text. An unrecognised value becomes normal, which
+// is the browser's own default for the property.
+func cssFontStyleKeyword(s string) string {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "italic":
+		return "italic"
+	case "oblique":
+		return "oblique"
+	default:
+		return "normal"
+	}
+}
+
+// escapeAstroPropString is exit 4: a quoted attribute on an Astro COMPONENT,
+// which is a prop rather than markup.
+//
+// It deliberately does not neutralise. Measured on a real build:
+// `<Base title="{process.env.SECRET}">` renders the literal text, so the value
+// is inert, and Astro decodes an entity in a quoted prop before handing it to
+// the component. The exit exists so these call sites read as a decision rather
+// than as the ones somebody forgot, and so the guard test can tell them apart.
+func escapeAstroPropString(s string) string {
+	return escapeAttr(s)
 }

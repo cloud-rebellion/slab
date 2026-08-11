@@ -92,14 +92,14 @@ func RenderPictureWithPriority(m store.Medium, cssClassName string, priority boo
 			b.WriteString(`"`)
 		}
 		b.WriteString(fmt.Sprintf(` width="%d" height="%d"`, fallback.Width, fallback.Height))
-		b.WriteString(fmt.Sprintf(` alt="%s"`, escapeAttr(m.AltText)))
+		b.WriteString(fmt.Sprintf(` alt="%s"`, escapeAttrForAstro(m.AltText)))
 		if priority {
 			b.WriteString(` loading="eager" fetchpriority="high" decoding="async"`)
 		} else {
 			b.WriteString(` loading="lazy" decoding="async"`)
 		}
 		if cssClassName != "" {
-			b.WriteString(fmt.Sprintf(` class="%s"`, escapeAttr(cssClassName)))
+			b.WriteString(fmt.Sprintf(` class="%s"`, escapeAttrForAstro(cssClassName)))
 		}
 		// Sprint 5 quick-win (2026-05-24): per-image focal point.
 		// Default 50/50 = centered; CSS object-position only emits
