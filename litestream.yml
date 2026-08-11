@@ -33,21 +33,39 @@
 # without litestream wrapping (the entrypoint detects the empty var
 # and execs the server directly). No replication, no cost.
 
+# Ported to the litestream 0.5 config model (2026-08-11, with the 0.3.13 ->
+# 0.5.16 bump in the Dockerfile).
+#
+# 0.5 renamed all of these keys AND its parser ignores unknown ones silently,
+# so leaving the 0.3 spellings in place would have produced a file that still
+# looked like a retention policy and enforced nothing. Verified by running
+# 0.5.16 against a local file replica and reading back the monitors it
+# actually starts.
+#
+#   0.3 snapshot-interval: 6h        -> snapshot.interval  (level 9 compaction)
+#   0.3 retention: 720h              -> snapshot.retention
+#   0.3 retention-check-interval:24h -> l0-retention-check-interval
+#   0.3 validation-interval: 1h      -> validation.{enabled,interval}
+#   0.3 dbs[].replicas[]             -> dbs[].replica (plural is deprecated)
+
+# Snapshot every 6 hours (4/day). Writes stream continuously as LTX files;
+# snapshots are the GC point so the bucket does not grow unbounded.
+snapshot:
+  interval: 6h
+  # Keep snapshots for 30 days, the GDPR-friendly default. Operators can
+  # extend it.
+  retention: 720h
+
+# Validate the replica every hour so a silent S3 outage surfaces in the logs
+# before the next restore, rather than at the restore.
+validation:
+  enabled: true
+  interval: 1h
+
+# How often the short-lived L0 files are swept.
+l0-retention-check-interval: 24h
+
 dbs:
   - path: /app/data/atomicsite.db
-    replicas:
-      - url: ${LITESTREAM_REPLICA_URL}
-        # Snapshot every 6 hours (4/day). WAL segments stream
-        # continuously; snapshots are the GC point so the bucket
-        # doesn't grow unbounded.
-        snapshot-interval: 6h
-        # Keep snapshots for 30 days. After that, the retention
-        # sweep prunes them. WAL segments older than the oldest
-        # surviving snapshot also get pruned. 30 days is the
-        # GDPR-friendly retention default; operators can extend
-        # via LITESTREAM_RETENTION env if needed.
-        retention: 720h
-        retention-check-interval: 24h
-        # Validate the replica every hour so a silent S3 outage
-        # surfaces in the logs before the next restore.
-        validation-interval: 1h
+    replica:
+      url: ${LITESTREAM_REPLICA_URL}
