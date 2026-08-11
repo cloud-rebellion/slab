@@ -1,8 +1,13 @@
 package builder
 
 import (
+	"encoding/json"
+	"os"
+	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/bright-interaction/slab/internal/store"
 )
 
 // Every block renderer is a tenant-content sink. Two of the three raw-markup
@@ -78,6 +83,152 @@ func TestRawBlockSinksKeepLegitimateMarkup(t *testing.T) {
 	for _, want := range []string{"<p>", "<strong>", "world", `href="https://example.com"`} {
 		if !strings.Contains(out, want) {
 			t.Errorf("legitimate markup %q was stripped from: %q", want, out)
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// The guard. This class has recurred three times in this package, so the tests
+// below enumerate the sinks from the SOURCE rather than from what a reviewer
+// remembered to list.
+// ---------------------------------------------------------------------------
+
+// astroRawFields are the data keys whose value is written into generated
+// .astro output as markup rather than as escaped text. Every one of them is a
+// build-time code sink, because `{...}` in .astro source is JavaScript that
+// Astro evaluates in Node during the build.
+var astroRawFields = []string{"markup", "code", "html"}
+
+// astroExprPayloads are real attacks, not shapes. The first reads the
+// multi-tenant SQLite file onto the attacker's own published page; the second
+// prints a build-environment secret. Neither needs a single character that an
+// HTML sanitizer has any reason to touch.
+var astroExprPayloads = []string{
+	`<b>{(await import('node:fs')).readFileSync('/app/data/atomicsite.db','utf8')}</b>`,
+	`<p>hello {process.env.LITESTREAM_SECRET_ACCESS_KEY} world</p>`,
+}
+
+// liveAstroExpressions are fragments that can only exist if a tenant-supplied
+// brace reached the .astro source unneutralised. Checking these rather than
+// "the output contains no brace at all" keeps the guard honest for renderers
+// that emit braces of their own (search_box ships an inline script).
+var liveAstroExpressions = []string{"{(await", "{process.env", "'utf8')}", "_ACCESS_KEY}"}
+
+func assertNoLiveAstroExpression(t *testing.T, where, out string) {
+	t.Helper()
+	for _, bad := range liveAstroExpressions {
+		if strings.Contains(out, bad) {
+			t.Errorf("%s: build-time expression %q reached .astro output:\n%s", where, bad, out)
+		}
+	}
+	// If the payload survived at all it has to be there in neutralised form, so
+	// a renderer cannot pass by dropping the field instead of sanitizing it and
+	// then quietly start emitting it again later.
+	if strings.Contains(out, "readFileSync") || strings.Contains(out, "LITESTREAM") {
+		if !strings.Contains(out, "&#123;") {
+			t.Errorf("%s: payload survived but carries no neutralised brace:\n%s", where, out)
+		}
+	}
+}
+
+// renderDataBlockCaseTypes reads the block types out of renderDataBlock's
+// switch in pages.go, so a new block type joins this guard the moment it is
+// added rather than when somebody remembers to add it.
+func renderDataBlockCaseTypes(t *testing.T) []string {
+	t.Helper()
+	src, err := os.ReadFile("pages.go")
+	if err != nil {
+		t.Fatalf("read pages.go: %v", err)
+	}
+	body := string(src)
+	start := strings.Index(body, "func renderDataBlock(")
+	if start < 0 {
+		t.Fatal("renderDataBlock not found in pages.go; this guard is keyed on it")
+	}
+	end := strings.Index(body[start:], "\n}\n")
+	if end < 0 {
+		t.Fatal("could not find the end of renderDataBlock")
+	}
+	caseRE := regexp.MustCompile(`case "([a-z0-9_]+)":`)
+	var types []string
+	for _, m := range caseRE.FindAllStringSubmatch(body[start:start+end], -1) {
+		types = append(types, m[1])
+	}
+	if len(types) < 20 {
+		t.Fatalf("only %d block types parsed out of renderDataBlock; the parser has drifted", len(types))
+	}
+	return types
+}
+
+// TestEveryBlockTypeIsAstroExpressionSafe walks renderDataBlock's switch and
+// pushes a build-time expression through every raw-markup field of every block
+// type, plus the unknown-type default.
+func TestEveryBlockTypeIsAstroExpressionSafe(t *testing.T) {
+	types := append(renderDataBlockCaseTypes(t), "some_block_type_that_does_not_exist")
+	for _, bt := range types {
+		for _, field := range astroRawFields {
+			for _, payload := range astroExprPayloads {
+				out := renderDataBlock(bt, map[string]any{field: payload}, nil, "site-1")
+				assertNoLiveAstroExpression(t, "renderDataBlock("+bt+")."+field, out)
+			}
+		}
+	}
+}
+
+// TestRenderBlockHTMLPathIsAstroExpressionSafe covers the data.html branch in
+// renderBlock, a different sink from the switch below it and the third of the
+// four to be missed.
+func TestRenderBlockHTMLPathIsAstroExpressionSafe(t *testing.T) {
+	for _, payload := range astroExprPayloads {
+		data, err := json.Marshal(map[string]any{"html": payload})
+		if err != nil {
+			t.Fatal(err)
+		}
+		bl := store.Block{ID: "b1", BlockType: "custom", DataJson: string(data)}
+		assertNoLiveAstroExpression(t, "renderBlock data.html", renderBlock(bl, nil, nil, "site-1"))
+	}
+}
+
+// TestGlobalBlockPathIsAstroExpressionSafe covers the fourth sink. A global
+// block renders into Base.astro, so it is the header or footer of every page,
+// and it had no sanitizer of any kind.
+func TestGlobalBlockPathIsAstroExpressionSafe(t *testing.T) {
+	for _, slot := range []string{"header", "footer"} {
+		for _, payload := range astroExprPayloads {
+			data, err := json.Marshal(map[string]any{"html": payload})
+			if err != nil {
+				t.Fatal(err)
+			}
+			gb := store.GlobalBlock{ID: "g1", Slot: slot, BlockType: slot, DataJson: string(data)}
+			assertNoLiveAstroExpression(t, "extractHTMLFromGlobalBlock("+slot+")", extractHTMLFromGlobalBlock(gb))
+			assertNoLiveAstroExpression(t, "ExtractHTMLFromGlobalBlock("+slot+")", ExtractHTMLFromGlobalBlock(gb))
+		}
+	}
+}
+
+// TestRawSinksUseTheSharedAstroHelper is the structural half. Output tests only
+// catch the sinks somebody thought to test; this one fails when a renderer
+// reaches for the markup-only sanitizer, which is exactly how three of the four
+// sinks got the markup half of the defence and missed the code half.
+func TestRawSinksUseTheSharedAstroHelper(t *testing.T) {
+	entries, err := os.ReadDir(".")
+	if err != nil {
+		t.Fatalf("read package dir: %v", err)
+	}
+	forbidden := []string{"sanitizeRawHTML(", "neutraliseAstroExpressions(", "customBlockPolicy.Sanitize("}
+	for _, e := range entries {
+		name := e.Name()
+		if e.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") || name == "sanitize.go" {
+			continue
+		}
+		src, err := os.ReadFile(name)
+		if err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		for _, bad := range forbidden {
+			if strings.Contains(string(src), bad) {
+				t.Errorf("%s calls %s directly; a raw sink must route through sanitizeForAstro or sanitizeCustomBlockForAstro", name, bad)
+			}
 		}
 	}
 }

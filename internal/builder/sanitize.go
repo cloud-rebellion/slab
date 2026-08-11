@@ -1,8 +1,10 @@
 package builder
 
 import (
-	"fmt"
+	"crypto/rand"
+	"encoding/hex"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/microcosm-cc/bluemonday"
@@ -168,26 +170,86 @@ func sanitizeBlockCSS(css string) string {
 // element while the surrounding markup goes through bluemonday. Letters and
 // digits only, so the sanitizer passes it through as ordinary text and no
 // entity encoding can break the round trip.
+//
+// The middle of the placeholder is a per-call random nonce. It used to be a
+// fixed literal, and CSS text never passes through bluemonday, so an author
+// could write a valid placeholder inside style block 0: splice 1 then replaced
+// the FIRST occurrence of its token, which by then sat inside the CSS spliced
+// for block 0. That closed the outer <style> early and handed the parser back
+// to markup context, so `<img src=x onerror=...>` became a live element node.
+// A nonce the author cannot predict makes the token unforgeable, and the splice
+// below is a single left-to-right pass that never rescans what it inserted.
 const (
 	styleSlotPrefix = "slabstyleslot"
 	styleSlotSuffix = "endslabstyleslot"
+	styleSlotNonceN = 12 // bytes, hex-encoded into the placeholder
 )
 
-// sanitizeCustomBlockHTML sanitizes custom-block markup while preserving the
-// author's CSS. <style> is lifted out first because bluemonday deletes the
-// element and its text no matter how the policy is configured, so the CSS gets
-// its own filter (sanitizeBlockCSS) and is spliced back at the same position.
-func sanitizeCustomBlockHTML(s string) string {
+// styleSlotRE matches a placeholder of the shape
+// slabstyleslot<nonce>s<index>endslabstyleslot. The nonce is checked against
+// the one this call generated, so a token an author planted with some other
+// nonce is left alone as the inert text it is.
+var styleSlotRE = regexp.MustCompile(`slabstyleslot([0-9a-f]{` + strconv.Itoa(styleSlotNonceN*2) + `})s([0-9]{1,6})endslabstyleslot`)
+
+// styleSlotRejected replaces the whole block when the CSS splice cannot be
+// completed safely. Dropping the block is the fail-closed answer: the only way
+// to reach it is a forged placeholder, and splicing anyway is exactly the
+// sanitizer bypass this guard exists for.
+const styleSlotRejected = "<!-- custom block: style placeholder rejected, content removed -->"
+
+// sanitizeCustomBlockForAstro sanitizes custom-block markup while preserving the
+// author's CSS, and neutralises Astro's build-time expression syntax in the
+// markup. <style> is lifted out first because bluemonday deletes the element
+// and its text no matter how the policy is configured, so the CSS gets its own
+// filter (sanitizeBlockCSS) and is spliced back at the same position.
+//
+// Order matters. The brace neutralisation runs on the sanitized markup BEFORE
+// the CSS is spliced back in, because the two contexts want opposite things:
+// this output lands in generated .astro source, where `{...}` in markup is
+// JavaScript that Astro evaluates in Node at build time, while `<style>`
+// content is raw text to the Astro compiler and its CSS braces must stay
+// literal. Neutralising after the splice would entity-encode every CSS rule and
+// publish the site unstyled.
+func sanitizeCustomBlockForAstro(s string) string {
+	nonceBytes := make([]byte, styleSlotNonceN)
+	if _, err := rand.Read(nonceBytes); err != nil {
+		return styleSlotRejected
+	}
+	nonce := hex.EncodeToString(nonceBytes)
+
 	var css []string
 	withSlots := styleBlockRE.ReplaceAllStringFunc(s, func(m string) string {
 		inner := styleBlockRE.FindStringSubmatch(m)[1]
 		css = append(css, sanitizeBlockCSS(inner))
-		return fmt.Sprintf("%s%d%s", styleSlotPrefix, len(css)-1, styleSlotSuffix)
+		return styleSlotPrefix + nonce + "s" + strconv.Itoa(len(css)-1) + styleSlotSuffix
 	})
+
+	// Belt to the nonce's braces: if a live token somehow appears inside CSS
+	// text, refuse rather than splice CSS into CSS.
+	for _, c := range css {
+		if strings.Contains(c, styleSlotPrefix+nonce) {
+			return styleSlotRejected
+		}
+	}
+
 	out := svgCaseRestorer.Replace(customBlockPolicy.Sanitize(withSlots))
-	for i, c := range css {
-		slot := fmt.Sprintf("%s%d%s", styleSlotPrefix, i, styleSlotSuffix)
-		out = strings.Replace(out, slot, "<style>"+c+"</style>", 1)
+	out = neutraliseAstroExpressions(out)
+
+	rejected := false
+	out = styleSlotRE.ReplaceAllStringFunc(out, func(tok string) string {
+		m := styleSlotRE.FindStringSubmatch(tok)
+		if m[1] != nonce {
+			return tok
+		}
+		i, err := strconv.Atoi(m[2])
+		if err != nil || i < 0 || i >= len(css) {
+			rejected = true
+			return ""
+		}
+		return "<style>" + css[i] + "</style>"
+	})
+	if rejected {
+		return styleSlotRejected
 	}
 	return out
 }
@@ -219,11 +281,15 @@ var svgCaseRestorer = strings.NewReplacer(
 
 // astroExpressionReplacer neutralises Astro's build-time expression syntax.
 //
-// The raw_astro block's output is written into a generated .astro file, so
-// `{...}` there is a JavaScript expression Astro evaluates in Node during the
-// build, with access to the build process environment. That makes it a code
+// Block output is written into a generated .astro file, so `{...}` there is a
+// JavaScript expression Astro evaluates in Node during the build, with access
+// to the build process environment and to the filesystem. That makes it a code
 // sink, not a markup sink, and sanitizing HTML alone does not close it:
-// bluemonday has no reason to strip braces from text.
+// bluemonday has no reason to strip braces from text. The allowlist that bounds
+// the build environment does not help either: it bounds what process.env holds,
+// not what the expression may do, and
+// `{(await import('node:fs')).readFileSync('/app/data/atomicsite.db')}` reads
+// the multi-tenant database onto the attacker's own public page.
 //
 // Entities render as literal braces in the finished page and mean nothing to
 // the Astro compiler, so tenant text still displays as written.
@@ -231,4 +297,23 @@ var astroExpressionReplacer = strings.NewReplacer("{", "&#123;", "}", "&#125;")
 
 func neutraliseAstroExpressions(s string) string {
 	return astroExpressionReplacer.Replace(s)
+}
+
+// sanitizeForAstro is the one choke point for tenant markup that is emitted
+// verbatim into generated .astro source. Every raw-markup sink routes through
+// it (or through sanitizeCustomBlockForAstro, the authoring-surface variant
+// that also preserves <style>, SVG and aria-*), so a sink cannot get the
+// markup half of the defence and miss the code half. Three of the four sinks
+// had exactly that shape: the fix landed on raw_astro, the only admin-only one,
+// and the three a plain site member can reach were missed.
+func sanitizeForAstro(s string) string {
+	return neutraliseAstroExpressions(sanitizeRawHTML(s))
+}
+
+// escapeTextForAstro is the variant for tenant text that is HTML-escaped rather
+// than sanitized, and that has to survive verbatim once it is on the page (a
+// code sample). escapeHTML replaces < > and & only, which leaves the braces
+// Astro evaluates, so the two steps belong together at one name.
+func escapeTextForAstro(s string) string {
+	return neutraliseAstroExpressions(escapeHTML(s))
 }

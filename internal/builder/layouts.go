@@ -598,9 +598,15 @@ func extractHTMLFromGlobalBlock(gb store.GlobalBlock) string {
 	if err := json.Unmarshal([]byte(gb.DataJson), &data); err != nil {
 		return ""
 	}
-	// Raw HTML override: if the block stores `data.html`, use that verbatim.
+	// Raw HTML override: if the block stores `data.html`, that markup is the
+	// header or footer of EVERY page, and it used to be emitted verbatim into
+	// Base.astro. Verbatim there means two things at once: stored XSS on every
+	// page, and a build-time JavaScript expression, because `{...}` in .astro
+	// source is evaluated by Astro in Node during the build. The custom-block
+	// variant is the right sanitizer for it: a header carries its own <style>,
+	// inline SVG and aria-*, and rawHTMLPolicy would delete all of that.
 	if html, ok := data["html"].(string); ok && html != "" {
-		return html
+		return sanitizeCustomBlockForAstro(html)
 	}
 
 	// Structured data path. Render the canonical header/footer shapes so the

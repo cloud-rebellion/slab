@@ -1057,7 +1057,13 @@ func renderCodeBlock(data map[string]any) string {
 		b.WriteString(fmt.Sprintf("    <p class=\"code-label\">%s</p>\n", escapeHTML(lang)))
 	}
 	if code := dataString(data, "code"); code != "" {
-		b.WriteString(fmt.Sprintf("    <pre><code>%s</code></pre>\n", escapeHTML(code)))
+		// escapeHTML alone is not enough here. A code sample is written into
+		// the page's .astro source, and escapeHTML touches < > and & only, so
+		// `{process.env.SECRET}` pasted into a code block was still evaluated
+		// by Astro at build time and printed the secret into the published
+		// page. This is the same sink as the custom and raw_astro blocks, just
+		// wearing an escaped-text disguise.
+		b.WriteString(fmt.Sprintf("    <pre><code>%s</code></pre>\n", escapeTextForAstro(code)))
 	}
 	b.WriteString("  </section>\n")
 	return b.String()
@@ -1639,8 +1645,14 @@ func renderCustomBlock(data map[string]any) string {
 	// <style>, inline SVG and aria-*/data-* attributes. rawHTMLPolicy drops
 	// all of those, which took the CSS off every custom block estate-wide the
 	// first time a site was rebuilt after that call landed.
+	//
+	// It is also a build-time CODE sink, not only a markup sink: this string
+	// lands in the page's .astro source, where `{...}` is JavaScript Astro runs
+	// in Node during the build. sanitizeCustomBlockForAstro closes both halves,
+	// and it neutralises the braces before splicing the author's CSS back, so
+	// CSS rules keep their literal braces.
 	if markup := dataString(data, "markup"); markup != "" {
-		b.WriteString("    " + sanitizeCustomBlockHTML(markup) + "\n")
+		b.WriteString("    " + sanitizeCustomBlockForAstro(markup) + "\n")
 	}
 	b.WriteString("  </section>\n")
 	return b.String()
@@ -1679,7 +1691,7 @@ func renderRawAstroBlock(data map[string]any) string {
 	// Sanitize first, then neutralise the brace syntax so nothing surviving
 	// sanitization can still be evaluated. Braces are replaced with their
 	// HTML entities, which render as literal braces and are inert to Astro.
-	code = neutraliseAstroExpressions(sanitizeRawHTML(code))
+	code = sanitizeForAstro(code)
 	if code == "" {
 		return "  <!-- raw_astro block: content removed by sanitizer -->\n"
 	}

@@ -351,8 +351,11 @@ func renderBlock(bl store.Block, components map[string]string, mediaByID map[str
 		// Raw HTML, sanitized at this render choke point so agent-authored
 		// markup cannot inject <script>/event-handlers/javascript: into the
 		// built page or the editor preview (both renderers route through here).
+		// sanitizeForAstro, not sanitizeRawHTML: this string is written into
+		// .astro source, so the braces have to go too or the sanitized markup
+		// still carries a build-time expression.
 		rawHTML, _ := data["html"].(string)
-		inner = fmt.Sprintf("  %s\n", sanitizeRawHTML(rawHTML))
+		inner = fmt.Sprintf("  %s\n", sanitizeForAstro(rawHTML))
 	default:
 		// Default: render as a section with data-driven content
 		inner = renderDataBlock(bl.BlockType, data, mediaByID, siteID)
