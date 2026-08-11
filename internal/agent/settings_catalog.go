@@ -4,32 +4,43 @@ import (
 	"strings"
 
 	"github.com/bright-interaction/slab/internal/settingspolicy"
+	"github.com/bright-interaction/slab/internal/store"
 )
 
-// secretSettingKeys are the "<category>.<key>" settings whose VALUE is a
-// bearer-equivalent secret and must never be returned to an LLM/agent (the
-// agent may read the descriptor, not the value). Kept in sync with the catalog
-// entries marked sensitive (Mollie key, CRM webhook HMAC secret).
-var secretSettingKeys = map[string]bool{
-	"payments.mollie_api_key":      true,
-	"analytics.crm_webhook_secret": true,
-}
+// RedactedSettingValue is the mask literal. Aliased from settingspolicy, which
+// owns it, so existing callers keep working and no surface writes its own
+// literal.
+const RedactedSettingValue = settingspolicy.RedactedValue
 
 // IsSecretSetting reports whether the value for category.key is a secret that
-// must be masked before exposure over the agent API / MCP. It checks the
-// explicit allowlist plus a defensive suffix heuristic so a future secret key
-// is masked by default rather than leaked.
+// must be masked before exposure over the agent API / MCP.
+//
+// Thin delegate: the policy and its suffix heuristic live in
+// settingspolicy.IsSecretValue, which is the single authority. Do not
+// reimplement the check here or at a call site.
 func IsSecretSetting(category, key string) bool {
-	if secretSettingKeys[category+"."+key] {
-		return true
+	return settingspolicy.IsSecretValue(category, key)
+}
+
+// MaskSettingRows is the ONE row-shaped masker. Every surface that returns
+// store.SiteSetting rows to an agent calls this: the MCP list_settings and
+// bulk_upsert_settings tools, and the REST GET /api/agent/settings,
+// GET /api/agent/settings/{category} and PATCH /api/agent/settings handlers.
+//
+// It lives in package agent rather than settingspolicy on purpose.
+// settingspolicy is deliberately stdlib-only (it is pure policy), and a
+// row-shaped helper would force it to import the sqlc persistence layer,
+// inverting the dependency. Package agent already imports store and is already
+// imported by both the mcp and handlers call sites, so this costs no new
+// coupling while still giving all five row surfaces one implementation.
+//
+// Mutates in place and returns the slice for call-site convenience; callers
+// already own these rows, having just read them.
+func MaskSettingRows(rows []store.SiteSetting) []store.SiteSetting {
+	for i := range rows {
+		rows[i].Value = settingspolicy.MaskValue(rows[i].Category, rows[i].Key, rows[i].Value)
 	}
-	k := strings.ToLower(key)
-	for _, suffix := range []string{"_secret", "_api_key", "_apikey", "_token", "_password", "_private_key"} {
-		if strings.HasSuffix(k, suffix) {
-			return true
-		}
-	}
-	return false
+	return rows
 }
 
 // SettingDescriptor describes one setting key the agent can reason about.
@@ -85,6 +96,18 @@ type SettingDescriptor struct {
 	// IsDefault is true when CurrentValue came from the documented default
 	// rather than an explicit row. Use this to spot un-configured settings.
 	IsDefault bool `json:"is_default"`
+	// IsSecret is true when this setting's VALUE is bearer-equivalent and is
+	// therefore never returned to the agent: CurrentValue reads
+	// RedactedSettingValue instead. IsSecret=true with IsDefault=false means
+	// "configured, but you may not see it"; combined with IsDefault=true it
+	// means the tenant has not set a key yet.
+	//
+	// DERIVED, never hand-declared. buildSettingsCatalog sets this from
+	// IsSecretSetting, which owns the policy and carries a suffix heuristic
+	// so a newly added *_api_key / *_secret / *_token is masked by default.
+	// Making this an author-supplied field on each descriptor would reopen
+	// exactly the hole this fixes: one forgotten flag equals one leaked key.
+	IsSecret bool `json:"is_secret,omitempty"`
 	// AgentWritable mirrors agentWritableSettingsCategories on the
 	// handler side. When false, the agent must ask the human admin to
 	// flip the setting (point them at HumanAdminURL).
@@ -708,10 +731,30 @@ func buildSettingsCatalog(siteID string, settingsMap map[string]string) Settings
 		d := &descriptors[i]
 		fqn := d.Category + "." + d.Key
 		current, present := settingsMap[fqn]
-		if !present || current == "" {
+		switch {
+		case !present || current == "":
+			// Absent or blank: report the documented default. Nothing to
+			// mask, and an unset secret must NOT read as redacted or the
+			// agent cannot tell "configured" from "never set".
 			d.CurrentValue = defaultsByKey[fqn]
 			d.IsDefault = true
-		} else {
+		case IsSecretSetting(d.Category, d.Key):
+			// This struct is serialised verbatim onto four LLM-facing
+			// surfaces: the get_settings_catalog and get_site_context MCP
+			// tools, and the atomicsite://site/settings_catalog and
+			// atomicsite://site/context resources. Masking HERE, at the one
+			// place the catalog is built, is what covers all four at once.
+			// The previous guard lived on list_settings only, which is why
+			// every Mollie-configured tenant shipped a live API key to the
+			// model provider on the other four.
+			//
+			// IsDefault stays false: the agent still learns the key IS
+			// configured (so it can stop nagging the human to set one)
+			// without ever seeing the value.
+			d.CurrentValue = RedactedSettingValue
+			d.IsDefault = false
+			d.IsSecret = true
+		default:
 			d.CurrentValue = current
 			d.IsDefault = false
 		}
