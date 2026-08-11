@@ -15,6 +15,12 @@ var secretSettingKeys = map[string]bool{
 	"analytics.crm_webhook_secret": true,
 }
 
+// RedactedSettingValue is the single literal substituted for any secret
+// setting value on every LLM-facing surface. Shared so the catalog masker and
+// the MCP list_settings masker can never drift to different strings (an agent
+// that learns to recognise one mask must recognise all of them).
+const RedactedSettingValue = "***redacted***"
+
 // IsSecretSetting reports whether the value for category.key is a secret that
 // must be masked before exposure over the agent API / MCP. It checks the
 // explicit allowlist plus a defensive suffix heuristic so a future secret key
@@ -85,6 +91,18 @@ type SettingDescriptor struct {
 	// IsDefault is true when CurrentValue came from the documented default
 	// rather than an explicit row. Use this to spot un-configured settings.
 	IsDefault bool `json:"is_default"`
+	// IsSecret is true when this setting's VALUE is bearer-equivalent and is
+	// therefore never returned to the agent: CurrentValue reads
+	// RedactedSettingValue instead. IsSecret=true with IsDefault=false means
+	// "configured, but you may not see it"; combined with IsDefault=true it
+	// means the tenant has not set a key yet.
+	//
+	// DERIVED, never hand-declared. buildSettingsCatalog sets this from
+	// IsSecretSetting, which owns the policy and carries a suffix heuristic
+	// so a newly added *_api_key / *_secret / *_token is masked by default.
+	// Making this an author-supplied field on each descriptor would reopen
+	// exactly the hole this fixes: one forgotten flag equals one leaked key.
+	IsSecret bool `json:"is_secret,omitempty"`
 	// AgentWritable mirrors agentWritableSettingsCategories on the
 	// handler side. When false, the agent must ask the human admin to
 	// flip the setting (point them at HumanAdminURL).
@@ -708,10 +726,30 @@ func buildSettingsCatalog(siteID string, settingsMap map[string]string) Settings
 		d := &descriptors[i]
 		fqn := d.Category + "." + d.Key
 		current, present := settingsMap[fqn]
-		if !present || current == "" {
+		switch {
+		case !present || current == "":
+			// Absent or blank: report the documented default. Nothing to
+			// mask, and an unset secret must NOT read as redacted or the
+			// agent cannot tell "configured" from "never set".
 			d.CurrentValue = defaultsByKey[fqn]
 			d.IsDefault = true
-		} else {
+		case IsSecretSetting(d.Category, d.Key):
+			// This struct is serialised verbatim onto four LLM-facing
+			// surfaces: the get_settings_catalog and get_site_context MCP
+			// tools, and the atomicsite://site/settings_catalog and
+			// atomicsite://site/context resources. Masking HERE, at the one
+			// place the catalog is built, is what covers all four at once.
+			// The previous guard lived on list_settings only, which is why
+			// every Mollie-configured tenant shipped a live API key to the
+			// model provider on the other four.
+			//
+			// IsDefault stays false: the agent still learns the key IS
+			// configured (so it can stop nagging the human to set one)
+			// without ever seeing the value.
+			d.CurrentValue = RedactedSettingValue
+			d.IsDefault = false
+			d.IsSecret = true
+		default:
 			d.CurrentValue = current
 			d.IsDefault = false
 		}

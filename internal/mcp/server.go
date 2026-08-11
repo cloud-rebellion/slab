@@ -410,7 +410,7 @@ func (s *Server) guardrailBlockWrite(ctx context.Context, siteID, blockType, dat
 func (s *Server) maskSecretSettings(rows []store.SiteSetting) []store.SiteSetting {
 	for i := range rows {
 		if agent.IsSecretSetting(rows[i].Category, rows[i].Key) && rows[i].Value != "" {
-			rows[i].Value = "***redacted***"
+			rows[i].Value = agent.RedactedSettingValue
 		}
 	}
 	return rows
