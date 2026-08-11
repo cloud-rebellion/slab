@@ -148,11 +148,79 @@ var customBlockPolicy = func() *bluemonday.Policy {
 	p.AllowAttrs("media", "srcset", "type").OnElements("source")
 	p.AllowAttrs("datetime").OnElements("time")
 	p.AllowAttrs("open").OnElements("details")
+	allowFormControls(p)
 	p.AllowElements(svgElements...)
 	p.AllowAttrs(svgAttrs...).OnElements(svgElements...)
 	p.AllowAttrs("href").Matching(fragmentRefRE).OnElements("use", "textPath")
 	return p
 }()
+
+// formControlElements is the form surface a custom block is allowed to author.
+// bluemonday's UGC policy drops every one of them, which is why a contact
+// section written as a custom block published as the run-on string
+// "E-postaSkicka": the labels and the button vanished and their text nodes ran
+// together. A header override lost its mobile-menu button the same way.
+var formControlElements = []string{"form", "label", "button", "input", "select", "option", "textarea"}
+
+// safeFormActionRE bounds where a custom-block form may submit: a same-origin
+// path, a fragment, or an https URL. Nothing that could carry javascript: or
+// data:, and no scheme-relative URL.
+//
+// The path branch is deliberately fussy about the SECOND character. A first cut
+// wrote it as `/[^\s"'<>\\]*`, which reads like "a path" and happily matched
+// `//evil.tld/steal`: a browser resolves that as scheme-relative and posts the
+// form offsite, so the allowlist would have shipped the exact bypass it exists
+// to stop. A backslash is excluded there too, because browsers normalise `/\`
+// to `//`.
+var safeFormActionRE = regexp.MustCompile(`^(?:#[A-Za-z0-9_:.-]*|/(?:[^/\\\s"'<>][^\s"'<>\\]*)?|https://[A-Za-z0-9.-]+(?::[0-9]{1,5})?(?:/[^\s"'<>\\]*)?)$`)
+
+var (
+	formMethodRE = regexp.MustCompile(`(?i)^(?:get|post)$`)
+	buttonTypeRE = regexp.MustCompile(`(?i)^(?:button|submit|reset)$`)
+	// input types minus `image`, which is a submit control that also fetches a
+	// URL, so it carries both the formaction problem and an outbound request.
+	inputTypeRE = regexp.MustCompile(`(?i)^(?:text|email|tel|url|number|password|search|checkbox|radio|date|time|datetime-local|month|week|hidden|file|submit|reset|range|color)$`)
+)
+
+// allowFormControls opens exactly the form surface and nothing around it.
+//
+// The attribute lists are allowlists, so formaction, formmethod, formtarget,
+// formenctype and formnovalidate are all absent and therefore stripped. That
+// matters more than it looks: formaction on a submit control OVERRIDES the
+// form's own action, and it accepts a javascript: URL, so it is the one
+// attribute here that turns a button into script execution and a form into a
+// navigation primitive pointed wherever the author likes. `target` on the form
+// is left out for the same reason.
+//
+// AllowNoAttrs is the other half and is easy to miss. bluemonday drops an
+// allowed element that ends up with zero attributes (sanitize.go:898 in
+// v1.0.27), so without this a bare <button>Skicka</button> is still deleted and
+// the E-postaSkicka regression survives the fix meant to close it.
+func allowFormControls(p *bluemonday.Policy) {
+	p.AllowElements(formControlElements...)
+	p.AllowNoAttrs().OnElements(formControlElements...)
+
+	p.AllowAttrs("action").Matching(safeFormActionRE).OnElements("form")
+	p.AllowAttrs("method").Matching(formMethodRE).OnElements("form")
+
+	p.AllowAttrs("type").Matching(buttonTypeRE).OnElements("button")
+	p.AllowAttrs("disabled", "name", "value").OnElements("button")
+
+	p.AllowAttrs("type").Matching(inputTypeRE).OnElements("input")
+	p.AllowAttrs(
+		"name", "value", "placeholder", "required", "disabled", "readonly",
+		"checked", "min", "max", "step", "minlength", "maxlength", "pattern",
+		"autocomplete", "inputmode", "size",
+	).OnElements("input")
+
+	p.AllowAttrs("for").OnElements("label")
+	p.AllowAttrs(
+		"name", "rows", "cols", "placeholder", "required", "disabled",
+		"readonly", "minlength", "maxlength", "wrap",
+	).OnElements("textarea")
+	p.AllowAttrs("name", "required", "disabled", "multiple", "size").OnElements("select")
+	p.AllowAttrs("value", "selected", "disabled", "label").OnElements("option")
+}
 
 // styleBlockRE matches a whole <style> element, including its CSS text.
 var styleBlockRE = regexp.MustCompile(`(?is)<style\b[^>]*>(.*?)</style\s*>`)
