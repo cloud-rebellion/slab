@@ -84,29 +84,43 @@ func RunAccessibilityChecks(site *SiteContext) []CheckResult {
 	}, "Every <img> needs alt= (use alt=\"\" for decorative)."))
 
 	checks = append(checks, perPageCheck("Form Inputs Have Labels", "forms", 3, site, func(p PageContext) (bool, string) {
-		labels := elementsByTag(p.Doc, "label")
 		labelFor := map[string]bool{}
-		for _, l := range labels {
+		// An IMPLICIT label (<label>Email <input></label>) is valid HTML and a
+		// valid accessible name; rejecting it failed correct markup at weight
+		// 3. The label has to carry text of its own, otherwise it names
+		// nothing.
+		wrapped := map[*html.Node]bool{}
+		for _, l := range elementsByTag(p.Doc, "label") {
 			if v := attr(l, "for"); v != "" {
 				labelFor[v] = true
 			}
-		}
-		for _, in := range elementsByTag(p.Doc, "input") {
-			t := strings.ToLower(attr(in, "type"))
-			if t == "hidden" || t == "submit" || t == "button" || t == "reset" {
+			if textContent(l) == "" {
 				continue
 			}
-			id := attr(in, "id")
+			for _, f := range findAll(l, isFormField) {
+				wrapped[f] = true
+			}
+		}
+		// textarea and select need a label exactly as much as input does and
+		// were never examined at all.
+		for _, in := range findAll(p.Doc, isFormField) {
+			t := strings.ToLower(attr(in, "type"))
+			if in.Data == "input" && (t == "hidden" || t == "submit" || t == "button" || t == "reset" || t == "image") {
+				continue
+			}
 			if attr(in, "aria-label") != "" || attr(in, "aria-labelledby") != "" {
 				continue
 			}
-			if id != "" && labelFor[id] {
+			if id := attr(in, "id"); id != "" && labelFor[id] {
 				continue
 			}
-			return false, "input without associated <label> or aria-label"
+			if wrapped[in] {
+				continue
+			}
+			return false, fmt.Sprintf("<%s%s> without associated <label> or aria-label", in.Data, typeSuffix(t))
 		}
 		return true, ""
-	}, "Associate every input with a <label for=id> or aria-label."))
+	}, "Associate every input, textarea and select with a <label for=id>, a wrapping <label>, or an aria-label."))
 
 	checks = append(checks, perPageCheck("Buttons Have Labels", "forms", 2, site, func(p PageContext) (bool, string) {
 		for _, b := range elementsByTag(p.Doc, "button") {
@@ -201,13 +215,16 @@ func RunAccessibilityChecks(site *SiteContext) []CheckResult {
 		return true, ""
 	}, "Add autocomplete=\"email|tel|name|organization|...\" so password managers and assistive tech can fill in correct values."))
 
-	checks = append(checks, func() CheckResult {
-		// Site-wide: at least one .css file or inline <style> in any page must
-		// declare :focus or :focus-visible. Default visible focus indicators
-		// are essential for keyboard users.
+	checks = append(checks, siteWideCheck("Focus Indicators", "focus", site, func() CheckResult {
+		// Site-wide: at least one inline <style> or linked .css file must
+		// declare a :focus / :focus-visible rule that actually PAINTS
+		// something. Default visible focus indicators are essential for
+		// keyboard users.
 		for _, p := range site.Pages {
-			if hasFocusIndicator(p.HTML) {
-				return Pass("Focus Indicators", "focus", 2, "Found :focus or :focus-visible CSS rule")
+			for _, st := range elementsByTag(p.Doc, "style") {
+				if hasFocusIndicator(textContent(st)) {
+					return Pass("Focus Indicators", "focus", 2, "Found a :focus or :focus-visible rule with a visible indicator in inline CSS")
+				}
 			}
 			for _, link := range elementsByTag(p.Doc, "link") {
 				if strings.EqualFold(attr(link, "rel"), "stylesheet") {
@@ -217,15 +234,15 @@ func RunAccessibilityChecks(site *SiteContext) []CheckResult {
 					}
 					// Read the linked CSS from dist/ relative to the page.
 					if css := readDistCSS(site.DistDir, href); hasFocusIndicator(css) {
-						return Pass("Focus Indicators", "focus", 2, "Found :focus or :focus-visible CSS rule in linked stylesheet")
+						return Pass("Focus Indicators", "focus", 2, "Found a :focus or :focus-visible rule with a visible indicator in a linked stylesheet")
 					}
 				}
 			}
 		}
 		return Fail("Focus Indicators", "focus", 2, SeverityWarning,
-			"no :focus or :focus-visible rule found in built CSS",
+			"no :focus or :focus-visible rule that paints a visible indicator was found in the built CSS",
 			"Keep visible focus styles in your CSS (avoid outline:none without a replacement). Tailwind ships them via focus-visible utilities.")
-	}())
+	}))
 
 	checks = append(checks, perPageCheck("No Focusable in aria-hidden", "focus", 2, site, func(p PageContext) (bool, string) {
 		for _, hidden := range findAll(p.Doc, func(n *html.Node) bool {
@@ -254,11 +271,132 @@ func RunAccessibilityChecks(site *SiteContext) []CheckResult {
 	return checks
 }
 
-// hasFocusIndicator returns true if the source declares a :focus or
-// :focus-visible CSS rule. Keeps the check fast — substring match is enough
-// because false positives are extremely rare in built Astro CSS.
-func hasFocusIndicator(src string) bool {
-	return strings.Contains(src, ":focus") || strings.Contains(src, ":focus-visible")
+// isFormField matches the three labelable form controls.
+func isFormField(n *html.Node) bool {
+	if n.Type != html.ElementNode {
+		return false
+	}
+	switch n.Data {
+	case "input", "textarea", "select":
+		return true
+	}
+	return false
+}
+
+func typeSuffix(t string) string {
+	if t == "" {
+		return ""
+	}
+	return " type=\"" + t + "\""
+}
+
+// focusIndicatorProps are the declarations that can actually paint a focus
+// ring. outline-offset alone moves a ring that may not exist, so it is not on
+// the list.
+var focusIndicatorProps = map[string]bool{
+	"outline": true, "outline-color": true, "outline-width": true, "outline-style": true,
+	"box-shadow": true, "border": true, "border-color": true, "border-width": true,
+	"border-bottom": true, "border-block-end": true,
+	"background": true, "background-color": true, "color": true,
+	"text-decoration": true, "text-decoration-color": true, "filter": true,
+}
+
+// hasFocusIndicator reports whether the CSS source declares a :focus or
+// :focus-visible rule that paints a visible indicator.
+//
+// The old implementation was a substring match for ":focus" over the RAW PAGE
+// HTML, so it passed on `:focus { outline: none }` (the exact anti-pattern the
+// check exists to catch) and on a Tailwind class string like
+// "md:focus:ring-2", which is an HTML attribute value and not CSS at all.
+// Callers now pass stylesheet sources only.
+func hasFocusIndicator(css string) bool {
+	found := false
+	forEachCSSRule(css, 0, func(selector, body string) {
+		if found || !strings.Contains(strings.ToLower(selector), ":focus") {
+			return
+		}
+		if declarationsPaintFocus(body) {
+			found = true
+		}
+	})
+	return found
+}
+
+// declarationsPaintFocus reports whether a rule body sets at least one
+// indicator property to something other than "none" / zero.
+func declarationsPaintFocus(body string) bool {
+	for _, decl := range strings.Split(body, ";") {
+		name, value, ok := strings.Cut(decl, ":")
+		if !ok {
+			continue
+		}
+		prop := strings.ToLower(strings.TrimSpace(name))
+		val := strings.ToLower(strings.TrimSpace(value))
+		val = strings.TrimSpace(strings.TrimSuffix(val, "!important"))
+		if val == "" {
+			continue
+		}
+		if strings.HasPrefix(prop, "--tw-ring") {
+			// Tailwind's ring utilities set custom properties that feed a
+			// box-shadow; a non-zero width is a real indicator.
+			if val != "0" && val != "0px" && val != "none" {
+				return true
+			}
+			continue
+		}
+		if !focusIndicatorProps[prop] {
+			continue
+		}
+		switch val {
+		case "none", "0", "0px", "unset", "initial", "revert", "transparent":
+			continue
+		}
+		return true
+	}
+	return false
+}
+
+// maxCSSNesting bounds recursion into @media / @supports / @layer blocks.
+const maxCSSNesting = 8
+
+// forEachCSSRule walks top-level rules, descending into at-rule blocks so a
+// focus rule inside @media still counts. Brace matching only; CSS comments
+// carrying unbalanced braces are not a shape any minifier emits.
+func forEachCSSRule(css string, depth int, fn func(selector, body string)) {
+	if depth > maxCSSNesting {
+		return
+	}
+	i := 0
+	for i < len(css) {
+		open := strings.IndexByte(css[i:], '{')
+		if open < 0 {
+			return
+		}
+		selector := strings.TrimSpace(css[i : i+open])
+		start := i + open + 1
+		nest := 1
+		j := start
+		for j < len(css) && nest > 0 {
+			switch css[j] {
+			case '{':
+				nest++
+			case '}':
+				nest--
+			}
+			j++
+		}
+		end := j
+		if nest == 0 {
+			end = j - 1
+		}
+		body := css[start:end]
+		if strings.HasPrefix(selector, "@") {
+			forEachCSSRule(body, depth+1, fn)
+		} else {
+			fn(selector, body)
+		}
+		i = j
+	}
 }
 
 // readDistCSS resolves a stylesheet href relative to the dist root and reads

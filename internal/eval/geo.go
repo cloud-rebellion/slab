@@ -3,6 +3,7 @@ package eval
 import (
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
@@ -41,11 +42,11 @@ func RunGEOChecks(site *SiteContext) []CheckResult {
 	}, "Add max-image-preview:large to <meta name=robots> for richer image surfacing."))
 
 	checks = append(checks, perPageCheck("BreadcrumbList Schema", "geo", 2, site, func(p PageContext) (bool, string) {
-		// Home page is exempt, plus per-locale roots like /sv or /en. Single
-		// path-segment routes act as the "homepage" of their locale and
-		// shouldn't carry a breadcrumb (Site Inspector applies the same rule
-		// via `pathname === '/'`; atomicsite extends it to depth-1 locale roots).
-		if isLocaleRoot(p.Slug) {
+		// Home page is exempt, plus per-locale roots like /sv or /en that the
+		// site actually uses as a locale root (Site Inspector applies the rule
+		// via `pathname === '/'`; atomicsite extends it to depth-1 locale
+		// roots only).
+		if isLocaleRoot(site, p.Slug) {
 			return true, ""
 		}
 		count := breadcrumbItemCount(p.Doc)
@@ -103,15 +104,40 @@ func RunGEOChecks(site *SiteContext) []CheckResult {
 	return checks
 }
 
+// localeTagRE matches a BCP-47-ish language tag as it appears in a URL path
+// segment: language (2-3 letters), optional script (4 letters), optional
+// region (2 letters or 3 digits). Input must be lowercased.
+var localeTagRE = regexp.MustCompile(`^[a-z]{2,3}(-[a-z]{4})?(-([a-z]{2}|[0-9]{3}))?$`)
+
 // isLocaleRoot reports whether a slug is the homepage or a depth-1 locale
-// root (e.g. "/", "/sv", "/sv/", "/en"). Site Inspector exempts the
-// homepage from BreadcrumbList; atomicsite extends to locale roots.
-func isLocaleRoot(slug string) bool {
+// root the site genuinely uses as one (e.g. "/sv" on a site that also ships
+// "/sv/om-oss"). Site Inspector exempts the homepage from BreadcrumbList;
+// atomicsite extends that to locale roots ONLY.
+//
+// Exempting every single-segment slug made "BreadcrumbList Schema" unfailable
+// on a flat marketing site: "/about", "/kontakt" and "/pricing" are ordinary
+// pages that should carry a breadcrumb, and a site whose every route is
+// depth-1 was awarded 2/2 for schema it never emitted. Two conditions now
+// have to hold: the segment has to look like a language tag, and the site has
+// to actually serve pages beneath it.
+func isLocaleRoot(site *SiteContext, slug string) bool {
 	s := strings.Trim(slug, "/")
 	if s == "" {
 		return true
 	}
-	return !strings.Contains(s, "/")
+	if strings.Contains(s, "/") {
+		return false
+	}
+	if !localeTagRE.MatchString(strings.ToLower(s)) {
+		return false
+	}
+	prefix := "/" + s + "/"
+	for _, p := range site.Pages {
+		if strings.HasPrefix(p.Slug, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 // breadcrumbItemCount returns the maximum itemListElement length found across

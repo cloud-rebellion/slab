@@ -110,6 +110,28 @@ func Info(name, section, detail string) CheckResult {
 	return CheckResult{Name: name, Section: section, Passed: nil, Detail: detail}
 }
 
+// siteWideCheck is the site-wide counterpart of perPageCheck: it runs fn only
+// when there is markup to reason about, and returns Info on an empty dist/.
+// Site-wide checks that skipped this convention handed a build with zero pages
+// full marks for markup that does not exist (and, on the mirror-image branch,
+// failed it for the same reason), while perPageCheck beside them correctly
+// returned Info.
+func siteWideCheck(name, section string, site *SiteContext, fn func() CheckResult) CheckResult {
+	if len(site.Pages) == 0 {
+		return Info(name, section, "no pages to evaluate")
+	}
+	return fn()
+}
+
+// siteWideCheckMulti is siteWideCheck for a check that emits a partial-credit
+// split (a Pass plus a Fail sharing one denominator).
+func siteWideCheckMulti(name, section string, site *SiteContext, fn func() []CheckResult) []CheckResult {
+	if len(site.Pages) == 0 {
+		return []CheckResult{Info(name, section, "no pages to evaluate")}
+	}
+	return fn()
+}
+
 // Run executes all categories and persists results. Returns the per-category
 // reports. distDir is the path to the built static site. Bounded by EvalTimeout.
 func Run(ctx context.Context, queries *store.Queries, siteID, buildID, distDir string) ([]CategoryReport, error) {
@@ -123,8 +145,13 @@ func Run(ctx context.Context, queries *store.Queries, siteID, buildID, distDir s
 	}
 	distDir = resolved
 
-	// Re-eval is idempotent: clear any prior rows for this buildID.
-	_ = queries.DeleteEvaluationsByBuild(ctx, buildID)
+	// Re-eval is idempotent: clear any prior rows for this buildID. A failed
+	// delete must abort: continuing would either duplicate every category row
+	// or (when the insert then fails too) leave the build graded by the
+	// PREVIOUS eval while this run reports success.
+	if err := queries.DeleteEvaluationsByBuild(ctx, buildID); err != nil {
+		return nil, fmt.Errorf("clear previous evaluations: %w", err)
+	}
 
 	site, err := LoadSiteContext(ctx, queries, siteID, distDir)
 	if err != nil {
@@ -147,12 +174,18 @@ func Run(ctx context.Context, queries *store.Queries, siteID, buildID, distDir s
 		{Category: "performance", Checks: perfChecks},
 	}
 
+	var persistErrs []string
 	for i := range reports {
 		reports[i].Score, reports[i].MaxScore = ComputeScore(reports[i].Checks)
 		reports[i].Grade = ScoreToGrade(reports[i].Score, reports[i].MaxScore)
 
 		// Persist per-category to the evaluations table
-		checksJSON, _ := json.Marshal(reports[i].Checks)
+		checksJSON, err := json.Marshal(reports[i].Checks)
+		if err != nil {
+			slog.Error("eval: encode checks failed", "category", reports[i].Category, "err", err)
+			persistErrs = append(persistErrs, reports[i].Category+": encode: "+err.Error())
+			continue
+		}
 		if err := queries.CreateEvaluation(ctx, store.CreateEvaluationParams{
 			ID:         newID(),
 			BuildID:    buildID,
@@ -165,12 +198,20 @@ func Run(ctx context.Context, queries *store.Queries, siteID, buildID, distDir s
 			Profile:    string(site.Fidelity),
 		}); err != nil {
 			slog.Error("eval: persist failed", "category", reports[i].Category, "err", err)
+			persistErrs = append(persistErrs, reports[i].Category+": "+err.Error())
 		}
 	}
 
 	slog.Info("eval: complete", "site_id", siteID, "build_id", buildID,
 		"security", reports[0].Grade, "seo", reports[1].Grade,
 		"a11y", reports[2].Grade, "privacy", reports[3].Grade, "perf", reports[4].Grade)
+
+	// A run that deleted the old rows and stored none of the new ones has
+	// left the tenant with NO grades at all, so it must not report success:
+	// the publish gate reads the returned error and fails closed.
+	if len(persistErrs) > 0 {
+		return reports, fmt.Errorf("persist evaluations: %s", strings.Join(persistErrs, "; "))
+	}
 
 	return reports, nil
 }
@@ -179,35 +220,29 @@ func Run(ctx context.Context, queries *store.Queries, siteID, buildID, distDir s
 func LoadSiteContext(ctx context.Context, queries *store.Queries, siteID, distDir string) (*SiteContext, error) {
 	site := &SiteContext{DistDir: distDir, Headers: map[string]string{}}
 
-	// Compute security headers as if deployed (matches what _headers/nginx.conf emit)
+	// Compute security headers as if deployed (matches what _headers/nginx.conf emit).
+	// Swallowing this error left site.Headers EMPTY, which every header check
+	// reads as "header missing": a transient settings read failure fabricated a
+	// security F for a correctly configured site and (with
+	// ATOMICSITE_MIN_PUBLISH_GRADE set) blocked its publish. The callee was
+	// hardened against exactly this, see builder/security.go:40-46.
 	hdrs, err := builder.BuildSecurityHeaders(ctx, queries, siteID)
-	if err == nil {
-		if hdrs.CSP != "" {
-			site.Headers["Content-Security-Policy"] = hdrs.CSP
-		}
-		if hdrs.HSTS != "" {
-			site.Headers["Strict-Transport-Security"] = hdrs.HSTS
-		}
-		if hdrs.XFrameOptions != "" {
-			site.Headers["X-Frame-Options"] = hdrs.XFrameOptions
-		}
-		if hdrs.XContentTypeOptions != "" {
-			site.Headers["X-Content-Type-Options"] = hdrs.XContentTypeOptions
-		}
-		if hdrs.ReferrerPolicy != "" {
-			site.Headers["Referrer-Policy"] = hdrs.ReferrerPolicy
-		}
-		if hdrs.PermissionsPolicy != "" {
-			site.Headers["Permissions-Policy"] = hdrs.PermissionsPolicy
-		}
-		if hdrs.COOP != "" {
-			site.Headers["Cross-Origin-Opener-Policy"] = hdrs.COOP
-		}
-		if hdrs.CORP != "" {
-			site.Headers["Cross-Origin-Resource-Policy"] = hdrs.CORP
-		}
-		if hdrs.COEP != "" {
-			site.Headers["Cross-Origin-Embedder-Policy"] = hdrs.COEP
+	if err != nil {
+		return nil, fmt.Errorf("compute security headers: %w", err)
+	}
+	for name, value := range map[string]string{
+		"Content-Security-Policy":      hdrs.CSP,
+		"Strict-Transport-Security":    hdrs.HSTS,
+		"X-Frame-Options":              hdrs.XFrameOptions,
+		"X-Content-Type-Options":       hdrs.XContentTypeOptions,
+		"Referrer-Policy":              hdrs.ReferrerPolicy,
+		"Permissions-Policy":           hdrs.PermissionsPolicy,
+		"Cross-Origin-Opener-Policy":   hdrs.COOP,
+		"Cross-Origin-Resource-Policy": hdrs.CORP,
+		"Cross-Origin-Embedder-Policy": hdrs.COEP,
+	} {
+		if value != "" {
+			site.Headers[name] = value
 		}
 	}
 

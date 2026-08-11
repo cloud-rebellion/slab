@@ -2,7 +2,10 @@ package eval
 
 import (
 	"fmt"
+	"sort"
 	"strings"
+
+	"golang.org/x/net/html"
 )
 
 // Known consent platforms by script substring.
@@ -22,6 +25,36 @@ var trackerPlatforms = []string{
 	"posthog",
 }
 
+// trackerInlineAliases maps a substring that only ever shows up in an INLINE
+// bootstrap snippet onto its canonical key in trackerPlatforms. The canonical
+// GTM, GA4, Meta Pixel, LinkedIn and TikTok installs are inline loaders that
+// inject their own <script src=...> at runtime, so the platform's scoring
+// domain never appears in a src= attribute anywhere in the built HTML.
+var trackerInlineAliases = map[string]string{
+	"connect.facebook.net": "facebook.net/tr",
+	"fbq(":                 "facebook.net/tr",
+	"snap.licdn.com":       "linkedin.com/insight",
+	"_linkedin_partner_id": "linkedin.com/insight",
+	"analytics.tiktok.com": "tiktok.com/i18n/pixel",
+	"ttq.load":             "tiktok.com/i18n/pixel",
+	"static.hotjar.com":    "hotjar",
+	"gtag(":                "googletagmanager",
+	"datalayer.push":       "googletagmanager",
+	"js.hs-scripts.com":    "hubspot",
+	"cdn.segment.com":      "segment.com",
+	"ct.pinterest.com":     "pinterest.com/ct",
+	"pintrk(":              "pinterest.com/ct",
+	"clarity(":             "clarity.ms",
+}
+
+// consentGateAttrs are the attributes a CMP uses to hold a tag back until the
+// visitor opts in. Combined with type="text/plain" (the canonical Cookiebot /
+// OneTrust / Usercentrics gate), they mark a tracker as compliant.
+var consentGateAttrs = []string{
+	"data-cookieconsent", "data-cookie-consent", "data-consent",
+	"data-usercentrics", "data-cmp-ab", "data-ot-category",
+}
+
 // AI training bots that should be blocked in robots.txt.
 var aiBots = []string{
 	"GPTBot", "ChatGPT-User", "OAI-SearchBot",
@@ -35,98 +68,120 @@ var aiBots = []string{
 func RunPrivacyChecks(site *SiteContext) []CheckResult {
 	var checks []CheckResult
 
-	// Aggregate scripts across all pages
-	scripts := []string{}
+	// Aggregate every <script> on every page, in DOM order, with the inline
+	// body folded into the matched text. Reading src= alone made the canonical
+	// inline GTM/GA4/Meta Pixel installs invisible, so a site loading GA4
+	// unconditionally for EU visitors read "No trackers detected".
+	scripts := collectScriptRefs(site)
+
 	// Track whether ANY script tag carries data-consent-platform so a
 	// platform whose filename gets hashed (e.g. atomicsite's
 	// _ccb.{hash}.js bundle) is still detected.
 	hasConsentAttr := false
-	for _, p := range site.Pages {
-		for _, s := range elementsByTag(p.Doc, "script") {
-			if src := attr(s, "src"); src != "" {
-				scripts = append(scripts, strings.ToLower(src))
-			}
-			if cp := attr(s, "data-consent-platform"); cp != "" {
-				hasConsentAttr = true
-			}
+	hasConsent := false
+	for _, s := range scripts {
+		if s.consentAttr {
+			hasConsentAttr = true
+		}
+		if s.consent {
+			hasConsent = true
 		}
 	}
+	hasConsent = hasConsent || hasConsentAttr
 
 	// 1. Consent banner detected
-	hasConsent := hasConsentAttr
-	for _, s := range scripts {
-		for _, c := range consentPlatforms {
-			if strings.Contains(s, c) {
-				hasConsent = true
-				break
-			}
-		}
+	checks = append(checks, siteWideCheck("Consent Banner", "consent", site, func() CheckResult {
 		if hasConsent {
-			break
+			return Pass("Consent Banner", "consent", 3, "Known consent platform detected")
 		}
-	}
-	if hasConsent {
-		checks = append(checks, Pass("Consent Banner", "consent", 3, "Known consent platform detected"))
-	} else {
-		checks = append(checks, Fail("Consent Banner", "consent", 3, SeverityWarning,
+		return Fail("Consent Banner", "consent", 3, SeverityWarning,
 			"No consent banner detected",
-			"Add a consent banner (CookieProof recommended) before any tracking script."))
-	}
+			"Add a consent banner (CookieProof recommended) before any tracking script.")
+	}))
 
 	// 2. Tracker count
 	detectedTrackers := map[string]bool{}
 	for _, s := range scripts {
-		for _, t := range trackerPlatforms {
-			if strings.Contains(s, t) {
-				detectedTrackers[t] = true
-			}
+		for _, t := range trackersIn(s.haystack) {
+			detectedTrackers[t] = true
 		}
 	}
-	switch {
-	case len(detectedTrackers) == 0:
-		checks = append(checks, Pass("Tracker Count", "tracking", 2, "No trackers detected"))
-	case len(detectedTrackers) <= 2:
-		// Honest partial split: a Pass with reduced weight scored 1/1
-		// (full credit) instead of 1/2; the denominator must keep the
-		// full weight.
-		checks = append(checks,
-			Pass("Tracker Count (within budget)", "tracking", 1,
-				fmt.Sprintf("%d tracker(s) detected (budget 2)", len(detectedTrackers))),
-			Fail("Tracker Count (zero-tracker goal)", "tracking", 1, SeverityInfo,
-				fmt.Sprintf("%d tracker(s) present; a tracker-free site scores full marks", len(detectedTrackers)),
-				"Consider the server-side atomicsite tracking (no client trackers) or Umami instead."))
-	default:
-		checks = append(checks, Fail("Tracker Count", "tracking", 2, SeverityWarning,
-			fmt.Sprintf("%d trackers detected", len(detectedTrackers)),
-			"Reduce trackers to <= 2 to limit data sharing."))
-	}
+	checks = append(checks, siteWideCheckMulti("Tracker Count", "tracking", site, func() []CheckResult {
+		switch {
+		case len(detectedTrackers) == 0:
+			return []CheckResult{Pass("Tracker Count", "tracking", 2, "No trackers detected")}
+		case len(detectedTrackers) <= 2:
+			// Honest partial split: a Pass with reduced weight scored 1/1
+			// (full credit) instead of 1/2; the denominator must keep the
+			// full weight.
+			return []CheckResult{
+				Pass("Tracker Count (within budget)", "tracking", 1,
+					fmt.Sprintf("%d tracker(s) detected (budget 2): %s", len(detectedTrackers), strings.Join(sortedKeys(detectedTrackers), ", "))),
+				Fail("Tracker Count (zero-tracker goal)", "tracking", 1, SeverityInfo,
+					fmt.Sprintf("%d tracker(s) present; a tracker-free site scores full marks", len(detectedTrackers)),
+					"Consider the server-side atomicsite tracking (no client trackers) or Umami instead."),
+			}
+		default:
+			return []CheckResult{Fail("Tracker Count", "tracking", 2, SeverityWarning,
+				fmt.Sprintf("%d trackers detected: %s", len(detectedTrackers), strings.Join(sortedKeys(detectedTrackers), ", ")),
+				"Reduce trackers to <= 2 to limit data sharing.")}
+		}
+	})...)
 
-	// 3. Pre-consent tracking (trackers without consent banner)
-	if len(detectedTrackers) > 0 && !hasConsent {
-		checks = append(checks, Fail("Pre-Consent Tracking", "consent", 3, SeverityError,
-			"Trackers loaded without consent banner",
-			"Gate ALL tracking scripts behind explicit consent. GDPR/ePrivacy compliance."))
-	} else {
-		checks = append(checks, Pass("Pre-Consent Tracking", "consent", 3,
-			"No tracking before consent (or no trackers)"))
-	}
+	// 3. Pre-consent tracking. This used to be a boolean restatement of the
+	// two checks above ("trackers exist AND no banner"), so a CMP in <head>
+	// beside an ungated gtm.js passed at weight 3 with the detail "No tracking
+	// before consent" -- a wrong statement about the tenant's legal position
+	// that the check had not tested. It now inspects what it claims: per page,
+	// in DOM order, is every tracker either consent-gated markup or placed
+	// after the consent platform's own script.
+	checks = append(checks, siteWideCheck("Pre-Consent Tracking", "consent", site, func() CheckResult {
+		if len(detectedTrackers) == 0 {
+			return Info("Pre-Consent Tracking", "consent",
+				"No tracker scripts on this site; there is nothing to gate.")
+		}
+		violations := preConsentViolations(scripts)
+		if len(violations) == 0 {
+			return Pass("Pre-Consent Tracking", "consent", 3,
+				"Every tracker script is consent-gated or loads after the consent platform")
+		}
+		return Fail("Pre-Consent Tracking", "consent", 3, SeverityError,
+			"tracking executes before consent: "+strings.Join(firstN(violations, 3), "; "),
+			"Gate every tracking tag behind explicit consent (type=\"text/plain\" plus your CMP's category attribute), or inject it only after the platform reports an opt-in. GDPR/ePrivacy compliance.")
+	}))
 
 	// 4. AI training bots blocked in robots.txt
 	if site.RobotsTxt == "" {
 		checks = append(checks, Fail("AI Training Bots Blocked", "robots", 2, SeverityWarning,
 			"No robots.txt to evaluate", "Generate robots.txt; Atomicsite blocks AI bots by default."))
 	} else {
-		blocked := parseRobotsBlocked(site.RobotsTxt)
+		blocked, declared := parseRobotsBlocked(site.RobotsTxt)
+		// A wildcard record is a real block. robots.txt precedence gives a
+		// bot its OWN record when one exists, so the wildcard only applies to
+		// bots with no group of their own; without this, a robots.txt that
+		// disallows every crawler scored "No AI training bots blocked".
 		blockedCount := 0
+		wildcard := blocked["*"]
 		for _, bot := range aiBots {
-			if blocked[strings.ToLower(bot)] {
+			b := strings.ToLower(bot)
+			if declared[b] {
+				if blocked[b] {
+					blockedCount++
+				}
+				continue
+			}
+			if wildcard {
 				blockedCount++
 			}
+		}
+		wildcardNote := ""
+		if wildcard {
+			wildcardNote = " (via the wildcard User-agent: * Disallow: / record)"
 		}
 		switch {
 		case blockedCount >= 3:
 			checks = append(checks, Pass("AI Training Bots Blocked", "robots", 2,
-				fmt.Sprintf("%d AI bots blocked", blockedCount)))
+				fmt.Sprintf("%d AI bots blocked%s", blockedCount, wildcardNote)))
 		case blockedCount > 0:
 			checks = append(checks, Fail("AI Training Bots Blocked", "robots", 1, SeverityWarning,
 				fmt.Sprintf("Only %d AI bots blocked (recommend >= 3)", blockedCount),
@@ -158,18 +213,20 @@ func RunPrivacyChecks(site *SiteContext) []CheckResult {
 			break
 		}
 	}
-	if hasPrivacy {
-		checks = append(checks, Pass("Privacy Policy Link", "legal", 2, "Privacy policy linked from at least one page"))
-	} else {
-		checks = append(checks, Fail("Privacy Policy Link", "legal", 2, SeverityError,
-			"No privacy policy link found", "Add a link to /privacy in your footer."))
-	}
-	if hasTerms {
-		checks = append(checks, Pass("Terms / Cookie Policy Link", "legal", 1, "Terms or cookie policy linked"))
-	} else {
-		checks = append(checks, Fail("Terms / Cookie Policy Link", "legal", 1, SeverityWarning,
-			"No terms or cookie policy link", "Add /terms or /cookies link in footer."))
-	}
+	checks = append(checks, siteWideCheck("Privacy Policy Link", "legal", site, func() CheckResult {
+		if hasPrivacy {
+			return Pass("Privacy Policy Link", "legal", 2, "Privacy policy linked from at least one page")
+		}
+		return Fail("Privacy Policy Link", "legal", 2, SeverityError,
+			"No privacy policy link found", "Add a link to /privacy in your footer.")
+	}))
+	checks = append(checks, siteWideCheck("Terms / Cookie Policy Link", "legal", site, func() CheckResult {
+		if hasTerms {
+			return Pass("Terms / Cookie Policy Link", "legal", 1, "Terms or cookie policy linked")
+		}
+		return Fail("Terms / Cookie Policy Link", "legal", 1, SeverityWarning,
+			"No terms or cookie policy link", "Add /terms or /cookies link in footer.")
+	}))
 
 	// --- New checks ported from upgraded site-inspector (2026-04-27) ---
 
@@ -190,27 +247,171 @@ func RunPrivacyChecks(site *SiteContext) []CheckResult {
 			}
 		}
 	}
-	switch {
-	case cookieWriters == 0:
-		checks = append(checks, Pass("Cookie Count", "tracking", 1,
-			"No inline cookie writers detected"))
-	case cookieWriters <= 2:
-		checks = append(checks, Pass("Cookie Count", "tracking", 1,
-			fmt.Sprintf("%d inline cookie writer(s) detected", cookieWriters)))
-	default:
-		checks = append(checks, Fail("Cookie Count", "tracking", 1, SeverityWarning,
-			fmt.Sprintf("%d inline cookie writers across pages", cookieWriters),
-			"Move cookie writes behind consent. Inline document.cookie outside a consent gate fails GDPR."))
-	}
+	checks = append(checks, siteWideCheck("Cookie Count", "tracking", site, func() CheckResult {
+		switch {
+		case cookieWriters == 0:
+			return Pass("Cookie Count", "tracking", 1,
+				"No inline cookie writers detected")
+		case cookieWriters <= 2:
+			return Pass("Cookie Count", "tracking", 1,
+				fmt.Sprintf("%d inline cookie writer(s) detected", cookieWriters))
+		default:
+			return Fail("Cookie Count", "tracking", 1, SeverityWarning,
+				fmt.Sprintf("%d inline cookie writers across pages", cookieWriters),
+				"Move cookie writes behind consent. Inline document.cookie outside a consent gate fails GDPR.")
+		}
+	}))
 
 	return checks
 }
 
+// scriptRef is one <script> element with everything the privacy checks need:
+// which page it sits on, its DOM position within that page, the lowercased
+// text platform signatures are matched against (src AND inline body), and
+// whether a CMP holds it back until the visitor opts in.
+type scriptRef struct {
+	page        string
+	order       int
+	haystack    string
+	consent     bool
+	consentAttr bool
+	gated       bool
+}
+
+// collectScriptRefs walks every page in DOM order. The inline body matters as
+// much as src=: GTM, GA4, the Meta Pixel and the LinkedIn Insight Tag are all
+// installed as inline loaders that inject their own <script src=...> at
+// runtime, so their scoring domain never appears in a src= attribute.
+func collectScriptRefs(site *SiteContext) []scriptRef {
+	var out []scriptRef
+	for _, p := range site.Pages {
+		for i, s := range elementsByTag(p.Doc, "script") {
+			ref := scriptRef{
+				page:  p.Slug,
+				order: i,
+				haystack: strings.ToLower(
+					attr(s, "src") + "\n" + textContent(s)),
+				consentAttr: attr(s, "data-consent-platform") != "",
+				gated:       isConsentGated(s),
+			}
+			ref.consent = ref.consentAttr || matchesAny(ref.haystack, consentPlatforms)
+			out = append(out, ref)
+		}
+	}
+	return out
+}
+
+// isConsentGated reports whether a CMP is holding this tag back. The canonical
+// gate is a non-executable type (type="text/plain"), which Cookiebot,
+// OneTrust and Usercentrics rewrite to text/javascript after opt-in.
+func isConsentGated(s *html.Node) bool {
+	t := strings.ToLower(strings.TrimSpace(attr(s, "type")))
+	if t == "text/plain" || t == "text/cookieconsent" {
+		return true
+	}
+	for _, a := range consentGateAttrs {
+		if hasAttr(s, a) {
+			return true
+		}
+	}
+	return false
+}
+
+// trackersIn returns the canonical tracker-platform keys the text identifies,
+// matching both the src= domain forms and the inline-snippet aliases.
+func trackersIn(haystack string) []string {
+	seen := map[string]bool{}
+	var out []string
+	add := func(key string) {
+		if !seen[key] {
+			seen[key] = true
+			out = append(out, key)
+		}
+	}
+	for _, t := range trackerPlatforms {
+		if strings.Contains(haystack, t) {
+			add(t)
+		}
+	}
+	for alias, key := range trackerInlineAliases {
+		if strings.Contains(haystack, alias) {
+			add(key)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// preConsentViolations lists, per page and in DOM order, every tracker script
+// that is neither consent-gated nor placed after the consent platform's own
+// script. An ungated tag above the CMP loader has already fired by the time
+// the banner paints.
+func preConsentViolations(scripts []scriptRef) []string {
+	byPage := map[string][]scriptRef{}
+	var pages []string
+	for _, s := range scripts {
+		if _, ok := byPage[s.page]; !ok {
+			pages = append(pages, s.page)
+		}
+		byPage[s.page] = append(byPage[s.page], s)
+	}
+	var out []string
+	for _, page := range pages {
+		consentAt := -1
+		for _, s := range byPage[page] {
+			if s.consent {
+				consentAt = s.order
+				break
+			}
+		}
+		for _, s := range byPage[page] {
+			if s.gated || s.consent {
+				continue
+			}
+			names := trackersIn(s.haystack)
+			if len(names) == 0 {
+				continue
+			}
+			switch {
+			case consentAt < 0:
+				out = append(out, fmt.Sprintf("%s on %s loads with no consent platform on the page", names[0], page))
+			case s.order < consentAt:
+				out = append(out, fmt.Sprintf("%s on %s is script #%d, ahead of the consent script at #%d", names[0], page, s.order+1, consentAt+1))
+			}
+		}
+	}
+	return out
+}
+
+func matchesAny(haystack string, needles []string) bool {
+	for _, n := range needles {
+		if strings.Contains(haystack, n) {
+			return true
+		}
+	}
+	return false
+}
+
+func sortedKeys(m map[string]bool) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
+}
+
 // parseRobotsBlocked walks robots.txt line-by-line, tracking which user-agents
 // have a Disallow: / rule applied to them. Linear time, no regex backtracking.
-// Comments (#) are ignored. Returns map[lowercase-agent]bool.
-func parseRobotsBlocked(content string) map[string]bool {
+// Comments (#) are ignored.
+//
+// Returns two maps keyed by lowercase agent: blocked (has a Disallow: / in its
+// own record, including the "*" wildcard record) and declared (has a record at
+// all). Callers need both because robots.txt precedence gives a bot its own
+// record when one exists and falls back to "*" otherwise.
+func parseRobotsBlocked(content string) (blocked map[string]bool, declared map[string]bool) {
 	out := map[string]bool{}
+	seen := map[string]bool{}
 	var currentAgents []string
 	for _, line := range strings.Split(content, "\n") {
 		// Strip comments
@@ -231,7 +432,9 @@ func parseRobotsBlocked(content string) map[string]bool {
 		val := strings.TrimSpace(line[colon+1:])
 		switch key {
 		case "user-agent":
-			currentAgents = append(currentAgents, strings.ToLower(val))
+			agent := strings.ToLower(val)
+			currentAgents = append(currentAgents, agent)
+			seen[agent] = true
 		case "disallow":
 			if val == "/" {
 				for _, a := range currentAgents {
@@ -240,5 +443,5 @@ func parseRobotsBlocked(content string) map[string]bool {
 			}
 		}
 	}
-	return out
+	return out, seen
 }

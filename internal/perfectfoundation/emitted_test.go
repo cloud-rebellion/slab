@@ -29,6 +29,7 @@ var fixtureCannotTrigger = map[string]string{
 	"Noindex Pages Excluded From Sitemap (leaks)":        "partial-credit split variant; the clean-pass name is emitted instead",
 	"Tracker Count (within budget)":                      "partial-credit split variant; the zero-tracker name is emitted instead",
 	"Tracker Count (zero-tracker goal)":                  "partial-credit split variant; the zero-tracker name is emitted instead",
+	"Pre-Consent Tracking":                               "needs a tracker script to gate; the fixture ships none, and a site with no trackers now gets Info instead of 3 free points for an assertion the check never tested",
 }
 
 func mustParse(t *testing.T, raw string) *html.Node {
