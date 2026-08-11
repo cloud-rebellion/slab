@@ -10,6 +10,7 @@ package handlers
 import (
 	"net/http"
 
+	"github.com/bright-interaction/slab/internal/agent"
 	"github.com/bright-interaction/slab/internal/builder"
 	"github.com/bright-interaction/slab/internal/settingspolicy"
 	"github.com/bright-interaction/slab/internal/store"
@@ -35,7 +36,8 @@ func (h *AgentHandler) ListSettings(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "Failed to list settings")
 		return
 	}
-	writeJSON(w, http.StatusOK, rows)
+	// This is the agent API: the response goes to an LLM. Mask before writing.
+	writeJSON(w, http.StatusOK, agent.MaskSettingRows(rows))
 }
 
 // ListSettingsByCategory returns settings for one category.
@@ -59,7 +61,9 @@ func (h *AgentHandler) ListSettingsByCategory(w http.ResponseWriter, r *http.Req
 		writeError(w, http.StatusInternalServerError, "Failed to list settings")
 		return
 	}
-	writeJSON(w, http.StatusOK, rows)
+	// Same LLM boundary as ListSettings; a category filter does not make the
+	// value safe (category=payments is exactly the secret-bearing one).
+	writeJSON(w, http.StatusOK, agent.MaskSettingRows(rows))
 }
 
 // BulkUpsertSettings applies a list of {category, key, value} writes in one
@@ -174,7 +178,7 @@ func (h *AgentHandler) BulkUpsertSettings(w http.ResponseWriter, r *http.Request
 
 	rows, _ := h.queries.ListSettingsBySite(r.Context(), a.SiteID)
 	writeJSON(w, http.StatusOK, map[string]any{
-		"settings":            rows,
+		"settings":            agent.MaskSettingRows(rows),
 		"rejected_admin_only": rejected,
 		"writable_categories": settingspolicy.AgentWritableCategories(),
 	})

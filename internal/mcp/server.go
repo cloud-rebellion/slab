@@ -404,16 +404,14 @@ func (s *Server) guardrailBlockWrite(ctx context.Context, siteID, blockType, dat
 }
 
 // maskSecretSettings blanks the value of any secret setting (Mollie key, CRM
-// webhook secret, *_token/*_secret/...) so list_settings never returns a
-// bearer-equivalent secret to the LLM. Defined here so the tool handler (whose
-// param shadows the `agent` package) can call agent.IsSecretSetting.
+// webhook secret, *_token/*_secret/...) so no settings tool returns a
+// bearer-equivalent secret to the LLM.
+//
+// Kept as a method purely because the tool handlers' `agent` param shadows the
+// `agent` package name, so they cannot call agent.MaskSettingRows directly.
+// The implementation is the shared one; do not reintroduce a loop here.
 func (s *Server) maskSecretSettings(rows []store.SiteSetting) []store.SiteSetting {
-	for i := range rows {
-		if agent.IsSecretSetting(rows[i].Category, rows[i].Key) && rows[i].Value != "" {
-			rows[i].Value = agent.RedactedSettingValue
-		}
-	}
-	return rows
+	return agent.MaskSettingRows(rows)
 }
 
 // guardrailPageSlug runs the security slug guardrail for an MCP page write.

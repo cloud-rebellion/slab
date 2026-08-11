@@ -4,38 +4,43 @@ import (
 	"strings"
 
 	"github.com/bright-interaction/slab/internal/settingspolicy"
+	"github.com/bright-interaction/slab/internal/store"
 )
 
-// secretSettingKeys are the "<category>.<key>" settings whose VALUE is a
-// bearer-equivalent secret and must never be returned to an LLM/agent (the
-// agent may read the descriptor, not the value). Kept in sync with the catalog
-// entries marked sensitive (Mollie key, CRM webhook HMAC secret).
-var secretSettingKeys = map[string]bool{
-	"payments.mollie_api_key":      true,
-	"analytics.crm_webhook_secret": true,
-}
-
-// RedactedSettingValue is the single literal substituted for any secret
-// setting value on every LLM-facing surface. Shared so the catalog masker and
-// the MCP list_settings masker can never drift to different strings (an agent
-// that learns to recognise one mask must recognise all of them).
-const RedactedSettingValue = "***redacted***"
+// RedactedSettingValue is the mask literal. Aliased from settingspolicy, which
+// owns it, so existing callers keep working and no surface writes its own
+// literal.
+const RedactedSettingValue = settingspolicy.RedactedValue
 
 // IsSecretSetting reports whether the value for category.key is a secret that
-// must be masked before exposure over the agent API / MCP. It checks the
-// explicit allowlist plus a defensive suffix heuristic so a future secret key
-// is masked by default rather than leaked.
+// must be masked before exposure over the agent API / MCP.
+//
+// Thin delegate: the policy and its suffix heuristic live in
+// settingspolicy.IsSecretValue, which is the single authority. Do not
+// reimplement the check here or at a call site.
 func IsSecretSetting(category, key string) bool {
-	if secretSettingKeys[category+"."+key] {
-		return true
+	return settingspolicy.IsSecretValue(category, key)
+}
+
+// MaskSettingRows is the ONE row-shaped masker. Every surface that returns
+// store.SiteSetting rows to an agent calls this: the MCP list_settings and
+// bulk_upsert_settings tools, and the REST GET /api/agent/settings,
+// GET /api/agent/settings/{category} and PATCH /api/agent/settings handlers.
+//
+// It lives in package agent rather than settingspolicy on purpose.
+// settingspolicy is deliberately stdlib-only (it is pure policy), and a
+// row-shaped helper would force it to import the sqlc persistence layer,
+// inverting the dependency. Package agent already imports store and is already
+// imported by both the mcp and handlers call sites, so this costs no new
+// coupling while still giving all five row surfaces one implementation.
+//
+// Mutates in place and returns the slice for call-site convenience; callers
+// already own these rows, having just read them.
+func MaskSettingRows(rows []store.SiteSetting) []store.SiteSetting {
+	for i := range rows {
+		rows[i].Value = settingspolicy.MaskValue(rows[i].Category, rows[i].Key, rows[i].Value)
 	}
-	k := strings.ToLower(key)
-	for _, suffix := range []string{"_secret", "_api_key", "_apikey", "_token", "_password", "_private_key"} {
-		if strings.HasSuffix(k, suffix) {
-			return true
-		}
-	}
-	return false
+	return rows
 }
 
 // SettingDescriptor describes one setting key the agent can reason about.
