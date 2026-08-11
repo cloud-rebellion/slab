@@ -81,6 +81,13 @@ func (h *OrderHandler) UpdateStatusForAgent(ctx context.Context, siteID, orderID
 	return map[string]any{"order": updated, "items": items}, nil
 }
 
+// ErrRefundAlreadyClaimed is returned when another caller already owns this
+// order's refund. It is a refusal, not a failure: no money moved for this call
+// and retrying cannot help, because the order is no longer in a refundable
+// state. Exported so an MCP tool or any other caller can branch on it with
+// errors.Is instead of matching on message text.
+var ErrRefundAlreadyClaimed = errors.New("refund not applied: another request already claimed this order's refund, or the order is no longer refundable")
+
 // RefundForAgent triggers the same Mollie refund the REST handler
 // does, returning the updated order.
 func (h *OrderHandler) RefundForAgent(ctx context.Context, siteID, orderID string) (map[string]any, error) {
@@ -94,16 +101,56 @@ func (h *OrderHandler) RefundForAgent(ctx context.Context, siteID, orderID strin
 	if o.PaymentID == "" {
 		return nil, errors.New("order has no payment_id; nothing to refund at Mollie")
 	}
+	// Resolve the API key BEFORE claiming. Claiming first and then failing here
+	// would leave the order reading 'refunded' with no refund in existence.
 	apiKey, err := h.mollieAPIKey(ctx, siteID)
 	if err != nil {
 		return nil, err
 	}
+
+	// Claim the refund locally BEFORE calling Mollie, exactly as the REST
+	// Refund handler does.
+	//
+	// This path was check-then-act across a network call and was MISSED when the
+	// REST twin was hardened, which is the incomplete-migration pattern landing
+	// on a money path. Two concurrent agent refunds (an agent retrying a slow
+	// tool call, or two agents on one site) both read 'paid', both passed
+	// canTransition, and both called Mollie for the full amount. Nothing wrote
+	// the status until after the network call, so the second payout was not
+	// merely possible, it was the guaranteed outcome of any overlap. Only the
+	// last refund_id was persisted, so the duplicate payout was invisible
+	// locally.
+	claimed, err := h.queries.ClaimOrderForRefund(ctx, store.ClaimOrderForRefundParams{
+		ID:     orderID,
+		SiteID: siteID,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("could not claim order for refund: %w", err)
+	}
+	if claimed == 0 {
+		return nil, ErrRefundAlreadyClaimed
+	}
+
 	client := h.mollieClient(apiKey)
 	refund, err := client.CreateRefund(ctx, o.PaymentID, mollie.CreateRefundInput{
 		Amount:      mollie.MoneyValue{Currency: o.Currency, Value: mollie.FormatAmount(o.TotalCents)},
 		Description: "Refund " + o.OrderNumber,
 	})
 	if err != nil {
+		// Release the claim: we marked it 'refunded' optimistically and no money
+		// moved. Leaving it claimed would strand the order reading refunded while
+		// the customer still holds their charge.
+		if released, rerr := h.queries.UpdateOrderStatusFrom(ctx, store.UpdateOrderStatusFromParams{
+			Status:        o.Status,
+			PaymentStatus: o.PaymentStatus,
+			Column3:       o.Status, Column4: o.Status, Column5: o.Status, Column6: o.Status,
+			ID:       orderID,
+			SiteID:   siteID,
+			Status_2: "refunded",
+		}); rerr != nil || released == 0 {
+			slog.Error("refund: Mollie failed AND un-claiming the order failed; it now reads refunded with no money moved",
+				"order_id", orderID, "site_id", siteID, "err", rerr, "rows", released)
+		}
 		return nil, fmt.Errorf("mollie refund failed: %w", err)
 	}
 	// Money has already moved at Mollie; local write failures must be
@@ -117,17 +164,16 @@ func (h *OrderHandler) RefundForAgent(ctx context.Context, siteID, orderID strin
 			"order_id", orderID, "site_id", siteID, "refund_id", refund.ID, "err", err)
 		reconcileWarnings = append(reconcileWarnings, "refund_id not persisted; reconcile manually against Mollie refund "+refund.ID)
 	}
-	// From o.Status (the pre-refund state this call validated), not from
-	// 'refunded': unlike the REST Refund handler this path never claimed the
-	// order, so nothing has moved it to 'refunded' yet. See the note on
-	// RefundForAgent about the claim that is missing here.
+	// ClaimOrderForRefund already set status='refunded'; this write stamps
+	// refunded_at and payment_status now that the money has actually moved.
+	// From 'refunded' because this call holds that claim.
 	rows, err := h.queries.UpdateOrderStatusFrom(ctx, store.UpdateOrderStatusFromParams{
 		Status:        "refunded",
 		PaymentStatus: o.PaymentStatus,
 		Column3:       "refunded", Column4: "refunded", Column5: "refunded", Column6: "refunded",
 		ID:       orderID,
 		SiteID:   siteID,
-		Status_2: o.Status,
+		Status_2: "refunded",
 	})
 	if err != nil || rows == 0 {
 		slog.Error("refund: Mollie refund executed but status flip failed",

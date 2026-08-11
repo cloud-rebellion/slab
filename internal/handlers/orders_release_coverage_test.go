@@ -42,7 +42,33 @@ var casQueries = map[string]bool{
 	"ClaimOrderForRefund":   true,
 }
 
-const releaseFunc = "releaseReservations"
+// guardedOperations are the irreversible acts that must never run unless this
+// caller won a compare-and-set on the order row first. Each entry is a rule the
+// AST walk enforces over every function in the package.
+//
+// Adding a row here is how a new class gets closed permanently. Four instances
+// of this defect class have now been found by three different means (an audit
+// reading code, a fix pass reading twins, and this test), and only the derived
+// test closes it, because it does not depend on anyone remembering.
+var guardedOperations = []struct {
+	name string // subtest name
+	call string // the callee that must be guarded
+	harm string // what going unguarded actually costs
+}{
+	{
+		name: "reservation release",
+		call: "releaseReservations",
+		harm: "A release returns stock and a discount slot to the tenant. Doing it twice\n" +
+			"  inflates their inventory and they oversell.",
+	},
+	{
+		name: "refund network call",
+		call: "CreateRefund",
+		harm: "This spends money at the payment provider. Unguarded, two concurrent\n" +
+			"  callers both pass canTransition on the same snapshot and both pay out, and\n" +
+			"  only the last refund_id is persisted so the duplicate is invisible locally.",
+	},
+}
 
 // calleeName returns the called function's identifier, ignoring the receiver.
 func calleeName(call *ast.CallExpr) string {
@@ -87,98 +113,108 @@ func packageFiles(t *testing.T) []string {
 	return out
 }
 
-// TestReleaseReservations_EveryCallSiteIsGatedOnACompareAndSet walks the real
-// AST of this package and asserts the invariant for every caller it finds.
-func TestReleaseReservations_EveryCallSiteIsGatedOnACompareAndSet(t *testing.T) {
+// TestOrderSideEffects_EveryCallSiteIsGatedOnACompareAndSet walks the real AST
+// of this package and asserts every rule in guardedOperations against every
+// caller it finds.
+func TestOrderSideEffects_EveryCallSiteIsGatedOnACompareAndSet(t *testing.T) {
 	fset := token.NewFileSet()
 
-	var (
-		releaseSites []siteRef
-		ungated      []siteRef
-		discarded    []siteRef
-	)
-
+	// Parse once, apply every rule to the same trees.
+	type parsedFile struct {
+		path string
+		file *ast.File
+	}
+	var files []parsedFile
 	for _, path := range packageFiles(t) {
 		file, err := parser.ParseFile(fset, path, nil, 0)
 		if err != nil {
 			t.Fatalf("parse %s: %v", path, err)
 		}
+		files = append(files, parsedFile{path, file})
+	}
 
-		for _, decl := range file.Decls {
-			fn, ok := decl.(*ast.FuncDecl)
-			if !ok || fn.Body == nil {
-				continue
+	for _, op := range guardedOperations {
+		t.Run(op.name, func(t *testing.T) {
+			var sites, ungated, discarded []siteRef
+
+			for _, pf := range files {
+				for _, decl := range pf.file.Decls {
+					fn, ok := decl.(*ast.FuncDecl)
+					if !ok || fn.Body == nil {
+						continue
+					}
+
+					// Compare-and-set calls whose rows-affected result is bound
+					// to a real variable. A CAS assigned to `_` is not a guard:
+					// the caller cannot have branched on it. A CAS used as a
+					// bare statement is not collected at all, same verdict.
+					var guards []token.Pos
+					ast.Inspect(fn.Body, func(n ast.Node) bool {
+						assign, ok := n.(*ast.AssignStmt)
+						if !ok {
+							return true
+						}
+						for _, rhs := range assign.Rhs {
+							call, ok := rhs.(*ast.CallExpr)
+							if !ok || !casQueries[calleeName(call)] {
+								continue
+							}
+							if len(assign.Lhs) == 0 || isBlank(assign.Lhs[0]) {
+								discarded = append(discarded, siteRef{fn.Name.Name, fset.Position(call.Pos())})
+								continue
+							}
+							guards = append(guards, call.Pos())
+						}
+						return true
+					})
+
+					ast.Inspect(fn.Body, func(n ast.Node) bool {
+						call, ok := n.(*ast.CallExpr)
+						if !ok || calleeName(call) != op.call {
+							return true
+						}
+						ref := siteRef{fn.Name.Name, fset.Position(call.Pos())}
+						sites = append(sites, ref)
+
+						gated := false
+						for _, g := range guards {
+							if g < call.Pos() {
+								gated = true
+								break
+							}
+						}
+						if !gated {
+							ungated = append(ungated, ref)
+						}
+						return true
+					})
+				}
 			}
 
-			// Compare-and-set calls whose rows-affected result is bound to a
-			// real variable. A CAS assigned to `_` is not a guard: the caller
-			// cannot have branched on it. A CAS used as a bare statement is not
-			// collected here at all, which is the same verdict.
-			var guards []token.Pos
-			ast.Inspect(fn.Body, func(n ast.Node) bool {
-				assign, ok := n.(*ast.AssignStmt)
-				if !ok {
-					return true
-				}
-				for _, rhs := range assign.Rhs {
-					call, ok := rhs.(*ast.CallExpr)
-					if !ok || !casQueries[calleeName(call)] {
-						continue
-					}
-					if len(assign.Lhs) == 0 || isBlank(assign.Lhs[0]) {
-						discarded = append(discarded, siteRef{fn.Name.Name, fset.Position(call.Pos())})
-						continue
-					}
-					guards = append(guards, call.Pos())
-				}
-				return true
-			})
+			// Anti-vacuity. A walk that silently finds nothing is the "guard
+			// that asserts rather than configures" shape the audit named three
+			// times: it would pass forever while covering nothing. If the
+			// guarded callee is renamed, this fires and someone updates the
+			// rule deliberately.
+			if len(sites) == 0 {
+				t.Fatalf("found no calls to %s; this rule is not covering anything", op.call)
+			}
+			for _, s := range sites {
+				t.Logf("%s: %s at %s", op.name, s.fn, s.pos)
+			}
 
-			// Every release call in this function.
-			ast.Inspect(fn.Body, func(n ast.Node) bool {
-				call, ok := n.(*ast.CallExpr)
-				if !ok || calleeName(call) != releaseFunc {
-					return true
-				}
-				ref := siteRef{fn.Name.Name, fset.Position(call.Pos())}
-				releaseSites = append(releaseSites, ref)
-
-				gated := false
-				for _, g := range guards {
-					if g < call.Pos() {
-						gated = true
-						break
-					}
-				}
-				if !gated {
-					ungated = append(ungated, ref)
-				}
-				return true
-			})
-		}
-	}
-
-	// Anti-vacuity. A walk that silently finds nothing is the "guard that
-	// asserts rather than configures" shape the audit named three times: it
-	// would pass forever while covering nothing. If releaseReservations is
-	// renamed, this fires and someone updates releaseFunc deliberately.
-	if len(releaseSites) == 0 {
-		t.Fatalf("found no calls to %s; the guard is not covering anything", releaseFunc)
-	}
-	for _, s := range releaseSites {
-		t.Logf("release path: %s at %s", s.fn, s.pos)
-	}
-
-	for _, s := range discarded {
-		t.Errorf("%s at %s: compare-and-set result assigned to _; "+
-			"the caller cannot have checked whether it won, so it is not a guard", s.fn, s.pos)
-	}
-	for _, s := range ungated {
-		t.Errorf("%s at %s calls %s with no preceding compare-and-set on the order row.\n"+
-			"  A release returns stock and a discount slot to the tenant. Doing it twice inflates\n"+
-			"  their inventory and they oversell. Gate it on UpdateOrderStatusFrom (or\n"+
-			"  ClaimOrderForRefund) winning, and skip the release when it affects zero rows.",
-			s.fn, s.pos, releaseFunc)
+			for _, s := range discarded {
+				t.Errorf("%s at %s: compare-and-set result assigned to _; "+
+					"the caller cannot have checked whether it won, so it is not a guard", s.fn, s.pos)
+			}
+			for _, s := range ungated {
+				t.Errorf("%s at %s calls %s with no preceding compare-and-set on the order row.\n"+
+					"  %s\n"+
+					"  Gate it on ClaimOrderForRefund or UpdateOrderStatusFrom winning, and bail out\n"+
+					"  when it affects zero rows.",
+					s.fn, s.pos, op.call, op.harm)
+			}
+		})
 	}
 }
 

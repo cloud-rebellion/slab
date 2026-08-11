@@ -3,10 +3,12 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/go-chi/chi/v5"
@@ -29,8 +31,11 @@ import (
 // was applied in the webhook only, so checkout and both refund paths could not
 // be pointed at a stub and had no end-to-end coverage at all.
 
-// mollieStub serves the three Mollie endpoints these flows touch.
+// mollieStub serves the three Mollie endpoints these flows touch. Counters are
+// mutex-guarded because the double-payout test drives it from two goroutines,
+// and a counter that races is exactly the counter you cannot trust.
 type mollieStub struct {
+	mu        sync.Mutex
 	payStatus string
 	payValue  string
 	payCur    string
@@ -40,24 +45,44 @@ type mollieStub struct {
 	createdRefunds  int
 }
 
+func (m *mollieStub) refunds() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.createdRefunds
+}
+
+func (m *mollieStub) payments() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.createdPayments
+}
+
 func (m *mollieStub) server(t *testing.T) *httptest.Server {
 	t.Helper()
 	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
+		m.mu.Lock()
+		payStatus, payCur, payValue, refundID := m.payStatus, m.payCur, m.payValue, m.refundID
 		path := r.URL.Path
 		switch {
 		case strings.HasSuffix(path, "/refunds") && r.Method == http.MethodPost:
 			m.createdRefunds++
-			_, _ = fmt.Fprintf(w, `{"id":"%s","status":"refunded","amount":{"currency":"%s","value":"%s"}}`,
-				m.refundID, m.payCur, m.payValue)
 		case path == "/payments" && r.Method == http.MethodPost:
 			m.createdPayments++
+		}
+		m.mu.Unlock()
+
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case strings.HasSuffix(path, "/refunds") && r.Method == http.MethodPost:
+			_, _ = fmt.Fprintf(w, `{"id":"%s","status":"refunded","amount":{"currency":"%s","value":"%s"}}`,
+				refundID, payCur, payValue)
+		case path == "/payments" && r.Method == http.MethodPost:
 			_, _ = fmt.Fprintf(w, `{"id":"tr_created_1","status":"%s","amount":{"currency":"%s","value":"%s"},`+
 				`"_links":{"checkout":{"href":"https://pay.example.test/tr_created_1","type":"text/html"}}}`,
-				m.payStatus, m.payCur, m.payValue)
+				payStatus, payCur, payValue)
 		default: // GET /payments/{id}
 			_, _ = fmt.Fprintf(w, `{"id":"%s","status":"%s","amount":{"currency":"%s","value":"%s"}}`,
-				strings.TrimPrefix(path, "/payments/"), m.payStatus, m.payCur, m.payValue)
+				strings.TrimPrefix(path, "/payments/"), payStatus, payCur, payValue)
 		}
 	}))
 	t.Cleanup(s.Close)
@@ -97,8 +122,8 @@ func TestOrders_CheckoutThroughPaidWebhook_HappyPath(t *testing.T) {
 	if code != http.StatusCreated {
 		t.Fatalf("checkout = %d; want 201. body=%v", code, body)
 	}
-	if stub.createdPayments != 1 {
-		t.Fatalf("Mollie CreatePayment calls = %d; want 1 (the stub was not reached)", stub.createdPayments)
+	if stub.payments() != 1 {
+		t.Fatalf("Mollie CreatePayment calls = %d; want 1 (the stub was not reached)", stub.payments())
 	}
 	if body["checkout_url"] != "https://pay.example.test/tr_created_1" {
 		t.Errorf("checkout_url = %v; want the stub's checkout link", body["checkout_url"])
@@ -202,8 +227,8 @@ func TestOrders_FullRefund_HappyPath(t *testing.T) {
 	if rr.Code != http.StatusOK {
 		t.Fatalf("refund = %d; want 200. body=%s", rr.Code, rr.Body.String())
 	}
-	if stub.createdRefunds != 1 {
-		t.Fatalf("Mollie CreateRefund calls = %d; want exactly 1", stub.createdRefunds)
+	if stub.refunds() != 1 {
+		t.Fatalf("Mollie CreateRefund calls = %d; want exactly 1", stub.refunds())
 	}
 
 	var payload map[string]any
@@ -233,9 +258,152 @@ func TestOrders_FullRefund_HappyPath(t *testing.T) {
 	if rr2.Code == http.StatusOK {
 		t.Errorf("second refund = 200; a refunded order must not be refundable again")
 	}
-	if stub.createdRefunds != 1 {
-		t.Errorf("Mollie CreateRefund calls after double refund = %d; want still 1 (double payout)", stub.createdRefunds)
+	if stub.refunds() != 1 {
+		t.Errorf("Mollie CreateRefund calls after double refund = %d; want still 1 (double payout)", stub.refunds())
 	}
+}
+
+// TestOrders_ConcurrentAgentRefundsPayOutOnce is the double-payout proof.
+//
+// RefundForAgent was check-then-act across a network call: read the order,
+// canTransition on that snapshot, then CreateRefund at Mollie. Nothing wrote the
+// status until AFTER the network call, so two overlapping agent refunds did not
+// merely risk a duplicate payout, they guaranteed one. The REST twin was
+// hardened with ClaimOrderForRefund; this path was missed, which is the
+// incomplete-migration pattern landing on real customer money.
+//
+// The assertion is on the stub's request counter, so it counts payouts at the
+// provider rather than rows in our database. Two refunds for the same order
+// reaching Mollie is the actual harm; what we persisted locally is not.
+func TestOrders_ConcurrentAgentRefundsPayOutOnce(t *testing.T) {
+	db, q := setupDeployTestDB(t)
+	ctx := context.Background()
+	siteID := "orefund000000000aaa01"
+	seedSite(t, q, siteID)
+	_, v := seedActiveProductWithVariant(t, q, siteID, "chair", 10)
+
+	if err := q.UpsertSetting(ctx, store.UpsertSettingParams{
+		SiteID: siteID, Category: "payments", Key: "mollie_api_key", Value: "test_key",
+	}); err != nil {
+		t.Fatalf("seed mollie key: %v", err)
+	}
+
+	orderID := "ord-agent-refund-race"
+	if err := q.CreateOrder(ctx, store.CreateOrderParams{
+		ID: orderID, SiteID: siteID, OrderNumber: orderID, Status: "paid",
+		CustomerEmail: "buyer@example.com", SubtotalCents: 2000, TotalCents: 2000,
+		Currency: "EUR", PaymentProvider: "mollie", PaymentID: "tr_agent_race", PaymentStatus: "paid",
+	}); err != nil {
+		t.Fatalf("create order: %v", err)
+	}
+	if err := q.CreateOrderItem(ctx, store.CreateOrderItemParams{
+		ID: newID(), OrderID: orderID, VariantID: v.ID, ProductID: "p", ProductName: "Chair",
+		Quantity: 2, UnitPriceCents: 1000, TotalCents: 2000,
+	}); err != nil {
+		t.Fatalf("create order item: %v", err)
+	}
+
+	stub := &mollieStub{payStatus: "paid", payCur: "EUR", payValue: mollie.FormatAmount(2000), refundID: "re_race_1"}
+	srv := stub.server(t)
+	h := NewOrderHandler(nil, q, db)
+	h.mollieBaseURL = srv.URL
+
+	start := make(chan struct{})
+	errs := make([]error, 2)
+	var wg sync.WaitGroup
+	for i := range errs {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			<-start
+			_, errs[i] = h.RefundForAgent(ctx, siteID, orderID)
+		}(i)
+	}
+	close(start)
+	wg.Wait()
+
+	if got := stub.refunds(); got != 1 {
+		t.Errorf("Mollie CreateRefund calls = %d; want exactly 1. "+
+			"A second payout for the same order left the account for a real customer", got)
+	}
+
+	won, refused := 0, 0
+	for _, err := range errs {
+		switch {
+		case err == nil:
+			won++
+		case errors.Is(err, ErrRefundAlreadyClaimed):
+			refused++
+		default:
+			t.Errorf("unexpected refund error: %v", err)
+		}
+	}
+	if won != 1 || refused != 1 {
+		t.Errorf("outcomes: %d succeeded, %d refused; want exactly 1 and 1. errs=%v", won, refused, errs)
+	}
+
+	o, err := q.GetOrderByID(ctx, store.GetOrderByIDParams{ID: orderID, SiteID: siteID})
+	if err != nil {
+		t.Fatalf("read order: %v", err)
+	}
+	if o.Status != "refunded" {
+		t.Errorf("status = %q; want refunded", o.Status)
+	}
+	if o.RefundID != "re_race_1" {
+		t.Errorf("refund_id = %q; want re_race_1 persisted by the winner", o.RefundID)
+	}
+	if o.RefundedAt == "" {
+		t.Errorf("refunded_at is empty; the winner did not stamp it")
+	}
+}
+
+// TestOrders_AgentRefundRefusalIsActionable pins the refusal contract the MCP
+// tool relies on. An agent holding a money tool needs to distinguish "this did
+// not happen and retrying cannot help" from a transient failure, so the sentinel
+// is part of the surface, not an implementation detail.
+func TestOrders_AgentRefundRefusalIsActionable(t *testing.T) {
+	db, q := setupDeployTestDB(t)
+	ctx := context.Background()
+	siteID := "orefund000000000aaa02"
+	seedSite(t, q, siteID)
+
+	if err := q.UpsertSetting(ctx, store.UpsertSettingParams{
+		SiteID: siteID, Category: "payments", Key: "mollie_api_key", Value: "test_key",
+	}); err != nil {
+		t.Fatalf("seed mollie key: %v", err)
+	}
+
+	orderID := "ord-agent-refund-twice"
+	if err := q.CreateOrder(ctx, store.CreateOrderParams{
+		ID: orderID, SiteID: siteID, OrderNumber: orderID, Status: "paid",
+		CustomerEmail: "buyer@example.com", SubtotalCents: 2000, TotalCents: 2000,
+		Currency: "EUR", PaymentProvider: "mollie", PaymentID: "tr_agent_twice", PaymentStatus: "paid",
+	}); err != nil {
+		t.Fatalf("create order: %v", err)
+	}
+
+	stub := &mollieStub{payStatus: "paid", payCur: "EUR", payValue: mollie.FormatAmount(2000), refundID: "re_twice_1"}
+	srv := stub.server(t)
+	h := NewOrderHandler(nil, q, db)
+	h.mollieBaseURL = srv.URL
+
+	if _, err := h.RefundForAgent(ctx, siteID, orderID); err != nil {
+		t.Fatalf("first refund: %v", err)
+	}
+	_, err := h.RefundForAgent(ctx, siteID, orderID)
+	if err == nil {
+		t.Fatal("second refund succeeded; a refunded order must not be refundable again")
+	}
+	if stub.refunds() != 1 {
+		t.Errorf("Mollie CreateRefund calls = %d; want 1", stub.refunds())
+	}
+	// The second call is refused by canTransition before the claim is reached,
+	// which is the friendlier error of the two. Either refusal is acceptable,
+	// but it must be a refusal and it must not have moved money.
+	if errors.Is(err, ErrRefundAlreadyClaimed) || strings.Contains(err.Error(), "cannot refund order in status") {
+		return
+	}
+	t.Errorf("second refund error = %q; want a clear refusal naming the state or the claim", err)
 }
 
 func variantStock(t *testing.T, q *store.Queries, variantID string) int64 {
