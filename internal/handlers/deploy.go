@@ -36,36 +36,112 @@ func deployConfigCipher(cfg *config.Config) *atrest.Cipher {
 	return atrest.New([]byte(cfg.ShieldKey))
 }
 
+// deploySecretConfigKeys is the single source of truth for which
+// deploy_targets.config_json keys hold a secret. Encrypt, decrypt and
+// redact all iterate this one list so they can never drift apart again:
+// encryption used to name private_key_pem literally, so the dockyard
+// api_key (a Dockyard control-plane credential) was written to SQLite in
+// cleartext next to its encrypted sibling, and toView handed it to every
+// site member.
+//
+// Enumerated against every registered deployer's config parser, not just
+// the key that prompted the finding:
+//
+//	local    (deploy/local.go)    path, public_url
+//	rsync    (deploy/rsync.go)    host, user, port, path, public_url,
+//	                              host_key, private_key_pem
+//	dockyard (deploy/dockyard.go) dockyard_url, api_key, server_id, domain,
+//	                              host, user, port, private_key_pem, host_path
+//
+// Of those only private_key_pem and api_key are secret-valued. host_key
+// is an SSH *host public* key (a pin, published by the server), and the
+// rest are hostnames, paths and IDs. Adding a secret-valued key to a
+// deployer means adding it here, and nowhere else.
+var deploySecretConfigKeys = []string{"api_key", "private_key_pem"}
+
+// deploySecretMask stands in for every secret value on read surfaces.
+// A client that renders a target from toView and saves the form unedited
+// echoes the mask back; the write paths translate that to "keep what is
+// stored" (mergeDeployConfigSecrets), so redacting a value never wipes a
+// configured tenant's credentials.
+const deploySecretMask = "__unchanged__"
+
 // encryptDeployConfigSecrets encrypts secret-valued config keys in
 // place before the map is marshalled into targets.config_json. The
 // rsync SSH private key used to sit in the DB as plaintext (the
 // TODO(secrets-vault) in deploy/rsync.go). Skips values that are
 // already ciphertext so a round-tripped UI save never double-encrypts.
 func encryptDeployConfigSecrets(cipher *atrest.Cipher, cfg map[string]any) {
-	raw, _ := cfg["private_key_pem"].(string)
-	if raw == "" || atrest.IsEncrypted(raw) {
-		return
-	}
-	if enc, err := cipher.Encrypt(raw); err == nil {
-		cfg["private_key_pem"] = enc
-	} else {
-		slog.Error("deploy: encrypting private_key_pem failed; storing refused", "err", err)
-		delete(cfg, "private_key_pem")
+	for _, key := range deploySecretConfigKeys {
+		raw, _ := cfg[key].(string)
+		if raw == "" || atrest.IsEncrypted(raw) {
+			continue
+		}
+		if enc, err := cipher.Encrypt(raw); err == nil {
+			cfg[key] = enc
+		} else {
+			slog.Error("deploy: encrypting config secret failed; storing refused", "key", key, "err", err)
+			delete(cfg, key)
+		}
 	}
 }
 
 // decryptDeployConfigSecrets is the read-side mirror, applied wherever
 // config_json is unpacked into a deploy.Target. Legacy plaintext rows
 // pass through verbatim (atrest contract) and upgrade on next save.
+// That is also the migration path for rows written before api_key was
+// encrypted: they carry no enc:v1: prefix, so they are handed to the
+// deployer as-is and are rewritten as ciphertext the next time the
+// target is saved.
 func decryptDeployConfigSecrets(cipher *atrest.Cipher, cfg map[string]any) {
-	raw, _ := cfg["private_key_pem"].(string)
-	if raw == "" || !atrest.IsEncrypted(raw) {
-		return
+	for _, key := range deploySecretConfigKeys {
+		raw, _ := cfg[key].(string)
+		if raw == "" || !atrest.IsEncrypted(raw) {
+			continue
+		}
+		if plain, err := cipher.Decrypt(raw); err == nil {
+			cfg[key] = plain
+		} else {
+			slog.Error("deploy: decrypting config secret failed (key rotated or removed?)", "key", key, "err", err)
+		}
 	}
-	if plain, err := cipher.Decrypt(raw); err == nil {
-		cfg["private_key_pem"] = plain
-	} else {
-		slog.Error("deploy: decrypting private_key_pem failed (key rotated or removed?)", "err", err)
+}
+
+// redactDeployConfigSecrets replaces every secret-valued key with
+// deploySecretMask so no read surface can hand back a credential,
+// whether it is stored as ciphertext or as legacy plaintext. Values that
+// are absent, empty or not a string are dropped outright, so the mask
+// only ever means "a secret is set here".
+func redactDeployConfigSecrets(cfg map[string]any) {
+	for _, key := range deploySecretConfigKeys {
+		v, present := cfg[key]
+		if !present {
+			continue
+		}
+		if raw, ok := v.(string); ok && raw != "" {
+			cfg[key] = deploySecretMask
+			continue
+		}
+		delete(cfg, key)
+	}
+}
+
+// mergeDeployConfigSecrets resolves masked secrets in an inbound config
+// against what is already stored. Because reads are redacted, a client
+// saving an untouched form sends deploySecretMask back; that has to mean
+// "unchanged", never "store the literal mask". Any other value (a new
+// secret, or the key omitted entirely) is taken at face value, so
+// clearing a secret still works exactly as before.
+func mergeDeployConfigSecrets(incoming, stored map[string]any) {
+	for _, key := range deploySecretConfigKeys {
+		if raw, _ := incoming[key].(string); raw != deploySecretMask {
+			continue
+		}
+		if prev, ok := stored[key]; ok {
+			incoming[key] = prev
+			continue
+		}
+		delete(incoming, key)
 	}
 }
 
@@ -91,11 +167,15 @@ type deployTargetView struct {
 	UpdatedAt string         `json:"updated_at"`
 }
 
+// toView renders a row for the API. Secret-valued config keys are
+// redacted here rather than behind a role check on the read handlers, so
+// no present or future caller of this function can leak a credential.
 func toView(t store.DeployTarget) deployTargetView {
 	cfg := map[string]any{}
 	if strings.TrimSpace(t.ConfigJson) != "" {
 		_ = json.Unmarshal([]byte(t.ConfigJson), &cfg)
 	}
+	redactDeployConfigSecrets(cfg)
 	return deployTargetView{
 		ID:        t.ID,
 		SiteID:    t.SiteID,
@@ -178,6 +258,9 @@ func (h *DeployHandler) CreateTarget(w http.ResponseWriter, r *http.Request) {
 	if req.Config == nil {
 		req.Config = map[string]any{}
 	}
+	// Nothing is stored yet, so a mask echoed from some other target's
+	// view resolves to "no secret" and is dropped before Validate.
+	mergeDeployConfigSecrets(req.Config, nil)
 
 	deployer, err := deploy.New(req.Kind)
 	if err != nil {
@@ -331,16 +414,21 @@ func (h *DeployHandler) UpdateTarget(w http.ResponseWriter, r *http.Request) {
 		kind = k
 	}
 
-	config := map[string]any{}
+	stored := map[string]any{}
 	if strings.TrimSpace(existing.ConfigJson) != "" {
-		_ = json.Unmarshal([]byte(existing.ConfigJson), &config)
+		_ = json.Unmarshal([]byte(existing.ConfigJson), &stored)
 	}
+	config := stored
 	if req.Config != nil {
 		if *req.Config == nil {
 			config = map[string]any{}
 		} else {
 			config = *req.Config
 		}
+		// The client only ever saw deploySecretMask for secret keys, so
+		// an echoed mask restores the stored value instead of
+		// overwriting the credential with the mask itself.
+		mergeDeployConfigSecrets(config, stored)
 	}
 
 	deployer, err := deploy.New(kind)
