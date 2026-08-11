@@ -36,25 +36,6 @@ func NewBlockHandler(cfg *config.Config, queries *store.Queries, db *sql.DB) *Bl
 	}
 }
 
-// validateBlockData runs the guardrail engine and writes the 422 response when
-// the payload violates a site rule. Returns false when the caller must stop.
-// Same contract and same response shape as the agent surface, so a client
-// switching between REST and MCP sees consistent behaviour.
-func (h *BlockHandler) validateBlockData(w http.ResponseWriter, r *http.Request, siteID, blockType, dataJSON string) bool {
-	if h.guardrails == nil {
-		return true
-	}
-	violations := h.guardrails.ValidateBlock(r.Context(), siteID, blockType, dataJSON)
-	if agent.HasErrors(violations) {
-		writeJSON(w, http.StatusUnprocessableEntity, map[string]any{
-			"error":      "Guardrail violations",
-			"violations": violations,
-		})
-		return false
-	}
-	return true
-}
-
 // SetRecorder wires the revisions recorder. Nil-safe.
 func (h *BlockHandler) SetRecorder(r *revisions.Recorder) {
 	h.recorder = r
@@ -110,7 +91,8 @@ func (h *BlockHandler) Create(w http.ResponseWriter, r *http.Request) {
 	if len(req.Data) > 0 {
 		dataJSON = string(req.Data)
 	}
-	if !h.validateBlockData(w, r, siteID, req.BlockType, dataJSON) {
+	if v, bad := validateBlockWrite(r.Context(), h.guardrails, siteID, req.BlockType, dataJSON); bad {
+		writeGuardrailViolations(w, v)
 		return
 	}
 	styleJSON := "{}"
@@ -198,7 +180,8 @@ func (h *BlockHandler) Update(w http.ResponseWriter, r *http.Request) {
 
 	// Validate the RESOLVED payload, not just the delta: a partial update can
 	// turn an innocuous block into a violating one by changing data alone.
-	if !h.validateBlockData(w, r, siteID, params.BlockType, params.DataJson) {
+	if v, bad := validateBlockWrite(r.Context(), h.guardrails, siteID, params.BlockType, params.DataJson); bad {
+		writeGuardrailViolations(w, v)
 		return
 	}
 
@@ -465,7 +448,8 @@ func (h *BlockHandler) BulkSave(w http.ResponseWriter, r *http.Request) {
 		if len(b.Data) > 0 {
 			d = string(b.Data)
 		}
-		if !h.validateBlockData(w, r, siteID, b.BlockType, d) {
+		if v, bad := validateBlockWrite(r.Context(), h.guardrails, siteID, b.BlockType, d); bad {
+			writeGuardrailViolations(w, v)
 			return
 		}
 	}

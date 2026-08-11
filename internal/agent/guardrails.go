@@ -158,7 +158,13 @@ func (g *GuardrailEngine) ValidateBlockCount(ctx context.Context, siteID string,
 	for _, r := range rules {
 		if r.RuleType == "max_blocks" {
 			var n int
-			if err := json.Unmarshal([]byte(r.Value), &n); err == nil && n > 0 {
+			// n >= 0, not n > 0. A tenant setting max_blocks to 0 is told by
+			// the agent context (ContextBuilder.buildConstraints) that the page
+			// may hold no blocks; requiring n > 0 silently dropped that rule and
+			// restored the 50-block default, so the one value that locks a page
+			// down was the one value the enforcer ignored. Negative is not a
+			// limit anyone can mean, so it still falls back to the default.
+			if err := json.Unmarshal([]byte(r.Value), &n); err == nil && n >= 0 {
 				maxBlocks = n
 			}
 		}
@@ -734,14 +740,24 @@ func SeedDefaultGuardrailsWith(ctx context.Context, q *store.Queries, siteID str
 		value    string
 		severity string
 	}{
-		// Forbidden patterns
-		{"forbid_pattern", "*", "<iframe", "warning"},
+		// Forbidden patterns.
+		//
+		// Severity "error", not "warning". Every caller of ValidateBlock gates
+		// on HasErrors, which counts only "error", so a seeded rule at
+		// "warning" is advertised to the agent as a constraint and can never
+		// refuse a write. This one shipped as "warning" while its sibling
+		// require_block shipped at the same severity and hard-codes "error" at
+		// enforcement, so two identically declared defaults behaved oppositely.
+		// A seeded default now declares the severity it is actually enforced at.
+		{"forbid_pattern", "*", "<iframe", "error"},
 
 		// Block count limit
 		{"max_blocks", "*", "30", "error"},
 
-		// Required blocks on homepage
-		{"require_block", "/", `["hero"]`, "warning"},
+		// Required blocks on homepage. ValidateRequiredBlocks emits "error"
+		// regardless of this column; declaring "error" here so the row does not
+		// misreport how it behaves.
+		{"require_block", "/", `["hero"]`, "error"},
 	}
 
 	for _, d := range defaults {

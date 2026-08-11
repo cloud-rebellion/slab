@@ -2639,7 +2639,11 @@ func (b *ContextBuilder) buildConstraints(ctx context.Context, siteID string) Co
 			c.AllowedHosts = append(c.AllowedHosts, r.Value)
 		case "max_blocks":
 			var n int
-			if err := json.Unmarshal([]byte(r.Value), &n); err == nil {
+			// Same acceptance test as the enforcer in
+			// GuardrailEngine.ValidateBlockCount. These two read the same row
+			// and disagreeing about which values are real is exactly how
+			// max_blocks: 0 came to be advertised and not enforced.
+			if err := json.Unmarshal([]byte(r.Value), &n); err == nil && n >= 0 {
 				c.MaxBlocksPerPage = n
 			}
 		case "require_block":

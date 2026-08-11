@@ -877,6 +877,13 @@ func (h *AgentHandler) UpdateGlobalBlock(w http.ResponseWriter, r *http.Request)
 		if req.BlockType == "" {
 			req.BlockType = "html"
 		}
+		// Same guardrail pass as CreateBlock at :373. A global block renders in
+		// the header and footer of every page, so a payload refused there must
+		// be refused here too.
+		if v, bad := validateBlockWrite(r.Context(), h.guardrails, a.SiteID, req.BlockType, marshalField(req.Data)); bad {
+			writeGuardrailViolations(w, v)
+			return
+		}
 		id := newID()
 		err := h.queries.CreateGlobalBlock(r.Context(), store.CreateGlobalBlockParams{
 			ID:        id,
@@ -912,6 +919,12 @@ func (h *AgentHandler) UpdateGlobalBlock(w http.ResponseWriter, r *http.Request)
 	styleStr := existing.StyleJson
 	if req.Style != nil {
 		styleStr = marshalField(req.Style)
+	}
+
+	// Validate the RESOLVED payload, not just the delta.
+	if v, bad := validateBlockWrite(r.Context(), h.guardrails, a.SiteID, blockType, dataStr); bad {
+		writeGuardrailViolations(w, v)
+		return
 	}
 
 	err := h.queries.UpdateGlobalBlock(r.Context(), store.UpdateGlobalBlockParams{
