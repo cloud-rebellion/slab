@@ -669,6 +669,27 @@ type Querier interface {
 	UpdateOrderPayment(ctx context.Context, arg UpdateOrderPaymentParams) error
 	UpdateOrderRefundID(ctx context.Context, arg UpdateOrderRefundIDParams) error
 	UpdateOrderStatus(ctx context.Context, arg UpdateOrderStatusParams) error
+	// Compare-and-set on the FROM state. This is UpdateOrderStatus with the
+	// state-machine guard moved out of Go and into the WHERE clause.
+	//
+	// Every state-machine caller used to read the order OUTSIDE its transaction,
+	// run canTransition on that snapshot, and then write unconditionally. The
+	// snapshot was never re-checked, so a concurrent writer that moved the row in
+	// between was invisible: an operator cancel racing Mollie's `paid` webhook had
+	// both sides pass their own canTransition on the same stale `pending`, and both
+	// applied their side effects. Money was captured at Mollie, the stock was
+	// restocked, an inventory_adjustments row said `reason='sale'`, and the
+	// reconciliation alarm built for exactly that case never fired because the
+	// snapshot still said `pending`.
+	//
+	// rows_affected = 0 means "someone moved it under me": the caller must not
+	// apply the side effects it decided on, and must re-read to decide again.
+	// Same shape as ClaimOrderForRefund, which got this right first.
+	//
+	// Bookkeeping writes that are not state-machine transitions (recording a
+	// payment_status against an unchanged status, un-claiming a refund) stay on
+	// plain UpdateOrderStatus.
+	UpdateOrderStatusFrom(ctx context.Context, arg UpdateOrderStatusFromParams) (int64, error)
 	UpdatePage(ctx context.Context, arg UpdatePageParams) error
 	UpdatePageOrder(ctx context.Context, arg UpdatePageOrderParams) error
 	UpdateProduct(ctx context.Context, arg UpdateProductParams) error

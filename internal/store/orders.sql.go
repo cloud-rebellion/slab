@@ -571,3 +571,65 @@ func (q *Queries) UpdateOrderStatus(ctx context.Context, arg UpdateOrderStatusPa
 	)
 	return err
 }
+
+const updateOrderStatusFrom = `-- name: UpdateOrderStatusFrom :execrows
+UPDATE orders
+SET status = ?,
+    payment_status = ?,
+    paid_at = CASE WHEN ? = 'paid' AND paid_at = '' THEN datetime('now') ELSE paid_at END,
+    fulfilled_at = CASE WHEN ? = 'fulfilled' AND fulfilled_at = '' THEN datetime('now') ELSE fulfilled_at END,
+    cancelled_at = CASE WHEN ? = 'cancelled' AND cancelled_at = '' THEN datetime('now') ELSE cancelled_at END,
+    refunded_at = CASE WHEN ? = 'refunded' AND refunded_at = '' THEN datetime('now') ELSE refunded_at END,
+    updated_at = datetime('now')
+WHERE id = ? AND site_id = ? AND status = ?
+`
+
+type UpdateOrderStatusFromParams struct {
+	Status        string      `json:"status"`
+	PaymentStatus string      `json:"payment_status"`
+	Column3       interface{} `json:"column_3"`
+	Column4       interface{} `json:"column_4"`
+	Column5       interface{} `json:"column_5"`
+	Column6       interface{} `json:"column_6"`
+	ID            string      `json:"id"`
+	SiteID        string      `json:"site_id"`
+	Status_2      string      `json:"status_2"`
+}
+
+// Compare-and-set on the FROM state. This is UpdateOrderStatus with the
+// state-machine guard moved out of Go and into the WHERE clause.
+//
+// Every state-machine caller used to read the order OUTSIDE its transaction,
+// run canTransition on that snapshot, and then write unconditionally. The
+// snapshot was never re-checked, so a concurrent writer that moved the row in
+// between was invisible: an operator cancel racing Mollie's `paid` webhook had
+// both sides pass their own canTransition on the same stale `pending`, and both
+// applied their side effects. Money was captured at Mollie, the stock was
+// restocked, an inventory_adjustments row said `reason='sale'`, and the
+// reconciliation alarm built for exactly that case never fired because the
+// snapshot still said `pending`.
+//
+// rows_affected = 0 means "someone moved it under me": the caller must not
+// apply the side effects it decided on, and must re-read to decide again.
+// Same shape as ClaimOrderForRefund, which got this right first.
+//
+// Bookkeeping writes that are not state-machine transitions (recording a
+// payment_status against an unchanged status, un-claiming a refund) stay on
+// plain UpdateOrderStatus.
+func (q *Queries) UpdateOrderStatusFrom(ctx context.Context, arg UpdateOrderStatusFromParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, updateOrderStatusFrom,
+		arg.Status,
+		arg.PaymentStatus,
+		arg.Column3,
+		arg.Column4,
+		arg.Column5,
+		arg.Column6,
+		arg.ID,
+		arg.SiteID,
+		arg.Status_2,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}

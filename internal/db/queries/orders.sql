@@ -45,6 +45,37 @@ SET status = ?,
     updated_at = datetime('now')
 WHERE id = ? AND site_id = ?;
 
+-- name: UpdateOrderStatusFrom :execrows
+-- Compare-and-set on the FROM state. This is UpdateOrderStatus with the
+-- state-machine guard moved out of Go and into the WHERE clause.
+--
+-- Every state-machine caller used to read the order OUTSIDE its transaction,
+-- run canTransition on that snapshot, and then write unconditionally. The
+-- snapshot was never re-checked, so a concurrent writer that moved the row in
+-- between was invisible: an operator cancel racing Mollie's `paid` webhook had
+-- both sides pass their own canTransition on the same stale `pending`, and both
+-- applied their side effects. Money was captured at Mollie, the stock was
+-- restocked, an inventory_adjustments row said `reason='sale'`, and the
+-- reconciliation alarm built for exactly that case never fired because the
+-- snapshot still said `pending`.
+--
+-- rows_affected = 0 means "someone moved it under me": the caller must not
+-- apply the side effects it decided on, and must re-read to decide again.
+-- Same shape as ClaimOrderForRefund, which got this right first.
+--
+-- Bookkeeping writes that are not state-machine transitions (recording a
+-- payment_status against an unchanged status, un-claiming a refund) stay on
+-- plain UpdateOrderStatus.
+UPDATE orders
+SET status = ?,
+    payment_status = ?,
+    paid_at = CASE WHEN ? = 'paid' AND paid_at = '' THEN datetime('now') ELSE paid_at END,
+    fulfilled_at = CASE WHEN ? = 'fulfilled' AND fulfilled_at = '' THEN datetime('now') ELSE fulfilled_at END,
+    cancelled_at = CASE WHEN ? = 'cancelled' AND cancelled_at = '' THEN datetime('now') ELSE cancelled_at END,
+    refunded_at = CASE WHEN ? = 'refunded' AND refunded_at = '' THEN datetime('now') ELSE refunded_at END,
+    updated_at = datetime('now')
+WHERE id = ? AND site_id = ? AND status = ?;
+
 -- name: UpdateOrderRefundID :exec
 UPDATE orders
 SET refund_id = ?,

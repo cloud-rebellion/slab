@@ -45,14 +45,23 @@ func (h *OrderHandler) UpdateStatusForAgent(ctx context.Context, siteID, orderID
 	defer tx.Rollback()
 	qtx := h.queries.WithTx(tx)
 
-	if err := qtx.UpdateOrderStatus(ctx, store.UpdateOrderStatusParams{
+	// Compare-and-set on the from-state, exactly as the REST UpdateStatus does.
+	// `o` was read before the transaction opened, so two concurrent agent
+	// cancels both saw `pending`, both set `releasing`, and both restocked. The
+	// release now only runs for whoever's UPDATE matched a row.
+	affected, err := qtx.UpdateOrderStatusFrom(ctx, store.UpdateOrderStatusFromParams{
 		Status:        next,
 		PaymentStatus: o.PaymentStatus,
 		Column3:       next, Column4: next, Column5: next, Column6: next,
-		ID:     orderID,
-		SiteID: siteID,
-	}); err != nil {
+		ID:       orderID,
+		SiteID:   siteID,
+		Status_2: o.Status,
+	})
+	if err != nil {
 		return nil, err
+	}
+	if affected == 0 {
+		return nil, errors.New("order status changed while this request was in flight; re-read the order and retry")
 	}
 	if releasing {
 		if err := h.releaseReservations(ctx, qtx, o); err != nil {

@@ -202,9 +202,13 @@ func (h *OrderHandler) UpdateStatus(w http.ResponseWriter, r *http.Request) {
 	// The last unit of a variant became permanently unsellable and the
 	// discrepancy was invisible in the audit view.
 	//
-	// Gated on the FROM state, so this cannot double-release: once the row is
-	// not `pending` the branch cannot be taken again, and `paid -> failed` is
-	// not an edge in orderTransitions.
+	// `releasing` is decided from `o`, which was read BEFORE the transaction
+	// opened. That snapshot is not an invariant on its own: two concurrent
+	// cancels both read `pending`, both set releasing, and both restocked, so a
+	// double-clicked cancel silently inflated the tenant's stock by the order
+	// quantity and they then oversold. The write below is therefore a
+	// compare-and-set on `o.Status`, and the release only runs for the caller
+	// whose UPDATE actually matched a row.
 	releasing := o.Status == "pending" && (next == "cancelled" || next == "failed")
 
 	tx, err := h.db.BeginTx(r.Context(), nil)
@@ -215,7 +219,7 @@ func (h *OrderHandler) UpdateStatus(w http.ResponseWriter, r *http.Request) {
 	defer tx.Rollback()
 	qtx := h.queries.WithTx(tx)
 
-	if err := qtx.UpdateOrderStatus(r.Context(), store.UpdateOrderStatusParams{
+	affected, err := qtx.UpdateOrderStatusFrom(r.Context(), store.UpdateOrderStatusFromParams{
 		Status:        next,
 		PaymentStatus: o.PaymentStatus,
 		Column3:       next,
@@ -224,8 +228,17 @@ func (h *OrderHandler) UpdateStatus(w http.ResponseWriter, r *http.Request) {
 		Column6:       next,
 		ID:            orderID,
 		SiteID:        siteID,
-	}); err != nil {
+		Status_2:      o.Status,
+	})
+	if err != nil {
 		writeError(w, http.StatusInternalServerError, "update status failed")
+		return
+	}
+	if affected == 0 {
+		// Someone moved the order between the read above and this write, so the
+		// transition that was validated no longer applies. Refuse rather than
+		// release a reservation a second time.
+		writeError(w, http.StatusConflict, "order status changed while this request was in flight; re-read the order and retry")
 		return
 	}
 	if releasing {
@@ -896,6 +909,49 @@ func (h *OrderHandler) Webhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Re-read the order INSIDE the transaction before deciding anything.
+	//
+	// `order` above was loaded before BeginTx, and every decision below used to
+	// run against that snapshot without the transaction ever re-checking it. An
+	// operator cancel landing in that window left canTransition interrogating a
+	// stale `pending`, so a CAPTURED `paid` payment was applied to an order that
+	// had already gone terminal: the stock was restocked, an
+	// inventory_adjustments row claimed reason='sale', the webhook answered 200
+	// and marked the event processed so Mollie never retried, and the
+	// reconciliation alarm below could not fire because the snapshot still said
+	// `pending`. Nothing anywhere recorded that money had moved.
+	order, err = qtx.GetOrderByID(ctx, store.GetOrderByIDParams{ID: order.ID, SiteID: siteID})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "could not re-read order")
+		return
+	}
+
+	// A CAPTURED payment we cannot apply. This used to fall through silently:
+	// newStatus stayed as-is, the `newStatus != order.Status` guard below skipped
+	// the whole update block so payment_status was never written either, and the
+	// handler returned a bare 200 {"status":"ok"}. Money had moved at Mollie and
+	// the only trace anywhere in the database was the payment_events row. No log
+	// line, no operator signal.
+	//
+	// Reachable whenever a `paid` event lands late on an order that has since
+	// gone terminal: cancelled (empty transition set) or failed (after
+	// releaseReservations already restocked). Loud is the whole point here, so
+	// this logs at ERROR and says so in the response.
+	reconcile := func(reason string) {
+		slog.Error("mollie webhook: PAID event for an order that cannot accept it; payment captured but not applied, needs manual reconciliation",
+			"order_id", order.ID, "site_id", siteID, "order_status", order.Status,
+			"payment_id", paymentID, "amount", pay.Amount.Value+" "+pay.Amount.Currency,
+			"reason", reason)
+		if err := tx.Commit(); err != nil {
+			writeError(w, http.StatusInternalServerError, "commit failed")
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{
+			"status":           "payment captured but order is not in a state that can accept it; flagged for reconciliation",
+			"new_order_status": order.Status,
+		})
+	}
+
 	// Map Mollie status -> our order.status.
 	newStatus := order.Status
 	switch pay.Status {
@@ -919,29 +975,7 @@ func (h *OrderHandler) Webhook(w http.ResponseWriter, r *http.Request) {
 		if canTransition(order.Status, "paid") {
 			newStatus = "paid"
 		} else {
-			// A CAPTURED payment we cannot apply. This branch used to fall
-			// through silently: newStatus stayed as-is, the `newStatus !=
-			// order.Status` guard below skipped the whole update block so
-			// payment_status was never written either, and the handler returned
-			// a bare 200 {"status":"ok"}. Money had moved at Mollie and the only
-			// trace anywhere in the database was the payment_events row. No log
-			// line, no operator signal.
-			//
-			// Reachable whenever a `paid` event lands late on an order that has
-			// since gone terminal: cancelled (empty transition set) or failed
-			// (after releaseReservations already restocked). Loud is the whole
-			// point here, so this logs at ERROR and says so in the response.
-			slog.Error("mollie webhook: PAID event for an order that cannot accept it; payment captured but not applied, needs manual reconciliation",
-				"order_id", order.ID, "site_id", siteID, "order_status", order.Status,
-				"payment_id", paymentID, "amount", pay.Amount.Value+" "+pay.Amount.Currency)
-			if err := tx.Commit(); err != nil {
-				writeError(w, http.StatusInternalServerError, "commit failed")
-				return
-			}
-			writeJSON(w, http.StatusOK, map[string]string{
-				"status":           "payment captured but order is not in a state that can accept it; flagged for reconciliation",
-				"new_order_status": order.Status,
-			})
+			reconcile("order status cannot accept a paid transition")
 			return
 		}
 	case "failed", "expired", "canceled":
@@ -950,14 +984,38 @@ func (h *OrderHandler) Webhook(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if newStatus != order.Status {
-		if err := qtx.UpdateOrderStatus(ctx, store.UpdateOrderStatusParams{
+		// Compare-and-set on the from-state, so the write can only land on the
+		// row this transaction actually decided against. Belt and braces with
+		// the in-tx re-read above: the re-read closes the window under the
+		// current single-writer pool, and this closes it regardless of pool or
+		// isolation settings.
+		affected, err := qtx.UpdateOrderStatusFrom(ctx, store.UpdateOrderStatusFromParams{
 			Status:        newStatus,
 			PaymentStatus: pay.Status,
 			Column3:       newStatus, Column4: newStatus, Column5: newStatus, Column6: newStatus,
-			ID:     order.ID,
-			SiteID: siteID,
-		}); err != nil {
+			ID:       order.ID,
+			SiteID:   siteID,
+			Status_2: order.Status,
+		})
+		if err != nil {
 			writeError(w, http.StatusInternalServerError, "could not update order status")
+			return
+		}
+		if affected == 0 {
+			// The row moved under this transaction. Never apply the side
+			// effects that were decided against the old state.
+			if pay.Status == "paid" {
+				reconcile("compare-and-set on the from-state matched no row")
+				return
+			}
+			if err := tx.Commit(); err != nil {
+				writeError(w, http.StatusInternalServerError, "commit failed")
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]string{
+				"status":           "order moved concurrently; no side effects applied",
+				"new_order_status": order.Status,
+			})
 			return
 		}
 		if newStatus == "paid" {
