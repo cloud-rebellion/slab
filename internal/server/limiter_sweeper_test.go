@@ -92,6 +92,39 @@ func TestRouterRegistersEveryLiveRateLimiter(t *testing.T) {
 // StartLimiterSweeper is what cmd/server calls. Assert it actually
 // launches: before the fix nothing in the tree called any sweep()
 // outside a test, and the whole point is that the schedule now exists.
+// P1 verification 2026-08-13, blocker 2, item 3.
+//
+// shield.SweepExpired is the ninth sweeper of the same shape: a doc
+// comment offering itself to "a janitor goroutine" that no non-test
+// caller ever wrote. The 2026-08-11 pass wired the eight rate limiters
+// and missed this one. The only expiry pass that ran was the
+// opportunistic branch inside OpenSession, which fires only when a
+// session with a known id is touched AFTER it expired: an agent
+// connection that never comes back never expires anything, so its row
+// and every encrypted PII token hanging off it live forever.
+//
+// The registration is conditional on a 32-byte shield key (no key, no
+// shield, nothing to sweep), so this test sets one and asserts the name
+// appears. TestRouterRegistersEveryLiveRateLimiter builds without a key
+// and would fail on an unexpected name, which pins the other half.
+func TestRouterRegistersShieldSessionSweep(t *testing.T) {
+	s := newSweeperTestServer(t)
+	s.cfg.ShieldKey = "0123456789abcdef0123456789abcdef"
+
+	_ = s.Router()
+
+	for _, n := range s.LimiterSweeper().Names() {
+		if n == "shield.sessions" {
+			// It must also survive a sweep without panicking on the
+			// real store; SweepNow runs every callback synchronously.
+			s.LimiterSweeper().SweepNow()
+			return
+		}
+	}
+	t.Fatalf("shield.sessions was never registered with the sweeper; expired shield sessions and their "+
+		"encrypted PII tokens are never collected (registered: %v)", s.LimiterSweeper().Names())
+}
+
 func TestStartLimiterSweeperStartsAfterRouter(t *testing.T) {
 	s := newSweeperTestServer(t)
 	_ = s.Router()

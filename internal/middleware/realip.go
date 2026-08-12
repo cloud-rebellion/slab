@@ -26,6 +26,8 @@ import (
 	"net/http"
 	"net/netip"
 	"strings"
+
+	"github.com/bright-interaction/slab/internal/config"
 )
 
 // TrustedProxyRealIP builds the middleware. trustedRaw is the raw
@@ -51,31 +53,14 @@ func TrustedProxyRealIP(trustedRaw string) func(http.Handler) http.Handler {
 	}
 }
 
+// parseTrustedProxies delegates to config.ParseTrustedProxies, which is
+// the single parser shared with the boot-time guard in config.Validate.
+// Unparseable entries are dropped here (they never trusted anything);
+// production refuses to start on them, so the runtime only ever sees a
+// list an operator already had to get right.
 func parseTrustedProxies(raw string) []netip.Prefix {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		return nil
-	}
-	out := make([]netip.Prefix, 0, 4)
-	for _, part := range strings.Split(raw, ",") {
-		part = strings.TrimSpace(part)
-		if part == "" {
-			continue
-		}
-		if p, err := netip.ParsePrefix(part); err == nil {
-			out = append(out, p)
-			continue
-		}
-		// Bare IP: auto-widen to /32 (v4) or /128 (v6).
-		if addr, err := netip.ParseAddr(part); err == nil {
-			bits := 32
-			if addr.Is6() {
-				bits = 128
-			}
-			out = append(out, netip.PrefixFrom(addr, bits))
-		}
-	}
-	return out
+	prefixes, _ := config.ParseTrustedProxies(raw)
+	return prefixes
 }
 
 func isTrusted(addr netip.Addr, prefixes []netip.Prefix) bool {

@@ -1230,6 +1230,26 @@ func (s *Server) Router() http.Handler {
 				slog.Error("atomicsite: shield store init failed; shield disabled (local dev only)", "err", err)
 			} else {
 				mcpServer.WithShield(shieldStore, []byte(s.cfg.ShieldKey), 24*time.Hour, level)
+				// shield.SweepExpired is the ninth never-called sweeper of
+				// the same shape as the eight rate limiters: it documents a
+				// janitor goroutine ("safe to call from a janitor
+				// goroutine") that no non-test caller ever provided. The
+				// only expiry pass that ran was the opportunistic one
+				// inside OpenSession, and that only fires when a session
+				// with a KNOWN id is touched after it expired. A session
+				// whose connection never comes back never expires anything,
+				// so its row and every encrypted PII token hanging off it
+				// stayed in the store forever, which is both unbounded
+				// growth and a retention violation on data the shield
+				// exists to keep short-lived. Registered on the same
+				// schedule as the limiters.
+				s.limiterSweeper.Register("shield.sessions", func() {
+					ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+					defer cancel()
+					if err := shield.SweepExpired(ctx, shieldStore); err != nil {
+						slog.Error("atomicsite: shield session sweep failed", "err", err)
+					}
+				})
 				slog.Info("atomicsite: shield enabled on MCP boundary",
 					"key_id", "atomicsite", "ttl_hours", 24,
 					"hint_level", s.cfg.ShieldHintLevel, "store", storeKind)
