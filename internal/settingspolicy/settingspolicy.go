@@ -60,8 +60,17 @@ func AgentWritableCategory(category string) bool {
 //     over csp_enabled, so one write replaces the entire published CSP.
 //     Matches the RequireOwnerOrAdmin already on allowed_scripts.go,
 //     which guards the other half of the same CSP.
+//   - payments: mollie_api_key is bearer-equivalent (it moves the
+//     tenant's real money), which is why the comment on
+//     agentWritableCategories has always listed it as sensitive and why
+//     secrets.go masks it at the agent boundary. Write access is the
+//     other half: a member who can rewrite the key redirects settlement
+//     to an account they control, and one who can clear it takes the
+//     shop offline. Reads are handled separately, by secrecy rather than
+//     by category, in settings.go: see IsSecretValue.
 var privilegedCategories = map[string]bool{
 	"security": true,
+	"payments": true,
 }
 
 // PrivilegedCategory reports whether writes to the category require the

@@ -156,22 +156,37 @@ func SiteAccessRole(ctx context.Context, queries *store.Queries, userID, siteID 
 	return row.Role
 }
 
-// RequireOwnerOrAdmin gates owner-only handlers (delete site, add member,
-// remove member). Admins always pass; non-admins need role='owner'.
-// Returns true when authorized; on false the caller has already received
-// a 403 written by this function.
-func RequireOwnerOrAdmin(w http.ResponseWriter, r *http.Request, queries *store.Queries) bool {
+// IsOwnerOrAdmin reports whether the caller owns the site in the URL (or is
+// a platform admin) WITHOUT writing anything to the response.
+//
+// It is the same question RequireOwnerOrAdmin asks, split out because read
+// paths need the answer to decide what to serialise rather than whether to
+// refuse: a settings list is a mixed collection, so it drops the rows the
+// caller may not see instead of failing the whole request. Two copies of
+// this predicate would be exactly the drift this package keeps producing,
+// so RequireOwnerOrAdmin is defined in terms of it.
+func IsOwnerOrAdmin(r *http.Request, queries *store.Queries) bool {
 	user := GetUser(r)
 	if user == nil {
-		writeAuthError(w, http.StatusUnauthorized, "Not authenticated")
 		return false
 	}
 	if user.Role == "admin" {
 		return true
 	}
 	siteID := chi.URLParam(r, "siteID")
-	role := SiteAccessRole(r.Context(), queries, user.ID, siteID)
-	if role != "owner" {
+	return SiteAccessRole(r.Context(), queries, user.ID, siteID) == "owner"
+}
+
+// RequireOwnerOrAdmin gates owner-only handlers (delete site, add member,
+// remove member). Admins always pass; non-admins need role='owner'.
+// Returns true when authorized; on false the caller has already received
+// a 403 written by this function.
+func RequireOwnerOrAdmin(w http.ResponseWriter, r *http.Request, queries *store.Queries) bool {
+	if GetUser(r) == nil {
+		writeAuthError(w, http.StatusUnauthorized, "Not authenticated")
+		return false
+	}
+	if !IsOwnerOrAdmin(r, queries) {
 		writeAuthError(w, http.StatusForbidden, "Owner access required")
 		return false
 	}

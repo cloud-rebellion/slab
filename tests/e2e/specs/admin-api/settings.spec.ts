@@ -60,10 +60,14 @@ test.describe('admin-api: settings CRUD', () => {
 			]
 		});
 		expect(res.ok()).toBe(true);
-		const list = await res.json();
+		// Response shape matches the agent + MCP bulk paths: the settings
+		// list plus the entries the caller was not allowed to write.
+		const body = await res.json();
+		const list = body.settings as Array<{ key: string }>;
 		expect(Array.isArray(list)).toBe(true);
-		expect(list.find((s: { key: string }) => s.key === a)).toBeTruthy();
-		expect(list.find((s: { key: string }) => s.key === b)).toBeTruthy();
+		expect(list.find((s) => s.key === a)).toBeTruthy();
+		expect(list.find((s) => s.key === b)).toBeTruthy();
+		expect(body.rejected_admin_only).toEqual([]);
 	});
 
 	test('DELETE removes a setting', async ({ adminApi }) => {

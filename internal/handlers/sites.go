@@ -684,6 +684,28 @@ func (h *SiteHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// "domain" is not a content field. builder.CanonicalHostname ranks
+	// site.Domain ABOVE the is_canonical site_domains row, so writing it
+	// here repoints every canonical URL the next build emits (astro
+	// config site, sitemap base, hreflang alternates, OG URLs,
+	// robots.txt, llms.txt, the CookieProof cookie domain) and does it
+	// without touching the domains table at all. That is the same
+	// capability DomainHandler.SetCanonical guards with
+	// RequireOwnerOrAdmin, reachable by any member through this route.
+	//
+	// The gate is on the FIELD, not the handler: a member legitimately
+	// updates name, colours, fonts and meta here, so refusing the whole
+	// PATCH would break their editor. It fires only when the value would
+	// actually change, which also matches the admin UI: the general
+	// settings page sends "domain" only when the operator edited it.
+	// Clearing it counts as a change, because an empty site.Domain hands
+	// the canonical to whatever row the domains table ranks first.
+	if req.Domain != nil && *req.Domain != existing.Domain {
+		if !authmw.RequireOwnerOrAdmin(w, r, h.queries) {
+			return
+		}
+	}
+
 	params := store.UpdateSiteParams{
 		Name:              existing.Name,
 		Slug:              existing.Slug,
