@@ -179,6 +179,93 @@ func TestPreConsentTrackingIsInfoWithoutTrackers(t *testing.T) {
 		"no trackers means nothing was tested, so no points may be awarded")
 }
 
+// --- 3b. Consent evidence must be a LOADED platform -----------------------
+//
+// Folding inline script text into the text matched against consentPlatforms
+// made the checks fabricate compliance: the word "cookiebot" anywhere in a
+// script body bought a Consent Banner pass AND a Pre-Consent Tracking pass,
+// six points, for a page whose GTM loader is completely ungated. Detecting a
+// TRACKER from inline text is sound (the canonical GTM install is an inline
+// loader, so the snippet IS the tracker). Detecting a CMP from inline text is
+// not, because the snippet is not the CMP; the CMP is a remote bundle. The two
+// are not symmetric and must not share one haystack.
+
+// gtmLoaderWithCMPComment is the exact shape that scored 6 fabricated points:
+// an ungated inline GTM loader whose only mention of a consent platform is a
+// comment saying somebody plans to add one.
+const gtmLoaderWithCMPComment = `<!DOCTYPE html><html><head>
+<script>
+// consent: cookiebot is on the roadmap, ticket AS-4711
+/* onetrust was evaluated and rejected */
+(function(w,d,s,l,i){w[l]=w[l]||[];w[l].push({'gtm.start':new Date().getTime(),event:'gtm.js'});
+var f=d.getElementsByTagName(s)[0],j=d.createElement(s);j.async=true;
+j.src='https://www.googletagmanager.com/gtm.js?id='+i;f.parentNode.insertBefore(j,f);
+})(window,document,'script','dataLayer','GTM-ABCDEF');
+</script>
+</head><body><h1>Hi</h1></body></html>`
+
+func TestConsentChecksIgnoreACMPNamedOnlyInScriptText(t *testing.T) {
+	site := &SiteContext{Pages: []PageContext{page(t, "/", gtmLoaderWithCMPComment)}}
+	checks := RunPrivacyChecks(site)
+
+	assertFailed(t, mustCheck(t, checks, "Consent Banner"),
+		"naming a CMP in a comment is not a loaded CMP")
+
+	c := mustCheck(t, checks, "Pre-Consent Tracking")
+	assertFailed(t, c, "GTM fires unconditionally and no consent platform is loaded")
+	if !strings.Contains(c.Detail, "no consent platform") {
+		t.Errorf("detail must state that no CMP was found, got %q", c.Detail)
+	}
+
+	// The genuine improvement from the same round must survive: the inline
+	// loader is still recognised as a tracker.
+	within := mustCheck(t, checks, "Tracker Count (within budget)")
+	if !strings.Contains(within.Detail, "googletagmanager") {
+		t.Errorf("inline GTM must still be detected as a tracker, got %q", within.Detail)
+	}
+}
+
+func TestConsentBannerIgnoresACMPInitCallInsideAComment(t *testing.T) {
+	raw := `<!DOCTYPE html><html><head><script>
+// TODO before launch: call Cookiebot.init() and window.CookieProof.init() here
+var ready = true;
+</script></head><body><h1>Hi</h1></body></html>`
+	site := &SiteContext{Pages: []PageContext{page(t, "/", raw)}}
+	assertFailed(t, mustCheck(t, RunPrivacyChecks(site), "Consent Banner"),
+		"an init call that only exists inside a comment loads nothing")
+}
+
+func TestConsentBannerAcceptsARealInitCall(t *testing.T) {
+	raw := `<!DOCTYPE html><html><head><script>
+window.Cookiebot.consent.statistics && console.log('opted in');
+</script></head><body><h1>Hi</h1></body></html>`
+	site := &SiteContext{Pages: []PageContext{page(t, "/", raw)}}
+	assertPassed(t, mustCheck(t, RunPrivacyChecks(site), "Consent Banner"),
+		"a real CMP API call is evidence the platform is loaded")
+}
+
+func TestPreConsentTrackingFailsWhenOneBlobLoadsBothCMPAndTracker(t *testing.T) {
+	// The second face of the same defect: `if s.gated || s.consent { continue }`
+	// excused any script that mentioned a CMP, so the single worst
+	// misconfiguration -- CMP and ungated tracker bootstrapped in one blob --
+	// was the one shape the check could never report.
+	raw := `<!DOCTYPE html><html><head><script>
+window.Cookiebot.consent.statistics;
+(function(w,d,s,l,i){w[l]=w[l]||[];w[l].push({'gtm.start':new Date().getTime(),event:'gtm.js'});
+var f=d.getElementsByTagName(s)[0],j=d.createElement(s);j.async=true;
+j.src='https://www.googletagmanager.com/gtm.js?id='+i;f.parentNode.insertBefore(j,f);
+})(window,document,'script','dataLayer','GTM-ABCDEF');
+</script></head><body><h1>Hi</h1></body></html>`
+	site := &SiteContext{Pages: []PageContext{page(t, "/", raw)}}
+	checks := RunPrivacyChecks(site)
+	assertPassed(t, mustCheck(t, checks, "Consent Banner"), "the CMP really is loaded here")
+	c := mustCheck(t, checks, "Pre-Consent Tracking")
+	assertFailed(t, c, "the GTM loader in that same blob is not gated by the CMP beside it")
+	if !strings.Contains(c.Detail, "same script tag") {
+		t.Errorf("detail must name the shared-tag misconfiguration, got %q", c.Detail)
+	}
+}
+
 // --- 4. CWV query error ---------------------------------------------------
 
 func TestRunCWVChecksEmitsInfoOnQueryError(t *testing.T) {
@@ -434,5 +521,21 @@ func TestSiteWideChecksAreInfoOnEmptySite(t *testing.T) {
 		"Focus Indicators",
 	} {
 		assertInfo(t, mustCheck(t, all, name), "a build with zero pages has no markup to grade")
+	}
+}
+
+func TestStripScriptCommentsKeepsStringLiterals(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"// cookiebot\nfoo()", "\nfoo()"},
+		{"/* cookiebot */foo()", " foo()"},
+		{"var s='https://consent.cookiebot.com/uc.js';", "var s='https://consent.cookiebot.com/uc.js';"},
+		{`var s="a//b";// gone`, "var s=\"a//b\";\n"},
+		{"var s='it\\'s // fine';", "var s='it\\'s // fine';"},
+		{"/* unterminated cookiebot", " "},
+	}
+	for _, c := range cases {
+		if got := stripScriptComments(c.in); got != c.want {
+			t.Errorf("stripScriptComments(%q) = %q, want %q", c.in, got, c.want)
+		}
 	}
 }

@@ -10,10 +10,12 @@ import (
 	"github.com/bright-interaction/slab/internal/eval"
 )
 
-// fixtureCannotTrigger lists CheckOwnership entries the fixture site
+// fixtureCannotTrigger lists CheckOwnership entries the fixture corpus
 // cannot reasonably emit as SCORED checks, each with the reason. Every
-// other ownership entry MUST be emitted by the fixture, and every
+// other ownership entry MUST be emitted by the corpus, and every
 // scored emission MUST be owned; both directions fail the build.
+// An entry here is a hole in the coverage, not a pass: when a page
+// shape exists that would emit the check, write that fixture instead.
 // Measured CWV checks are excluded by policy: they need real-user
 // beacon rows in the DB and are graded, not enforced.
 var fixtureCannotTrigger = map[string]string{
@@ -27,9 +29,6 @@ var fixtureCannotTrigger = map[string]string{
 	"Organization Schema Completeness (entity depth)":    "partial-credit split variant; the full-pass name is emitted instead",
 	"Noindex Pages Excluded From Sitemap (mostly clean)": "partial-credit split variant; the clean-pass name is emitted instead",
 	"Noindex Pages Excluded From Sitemap (leaks)":        "partial-credit split variant; the clean-pass name is emitted instead",
-	"Tracker Count (within budget)":                      "partial-credit split variant; the zero-tracker name is emitted instead",
-	"Tracker Count (zero-tracker goal)":                  "partial-credit split variant; the zero-tracker name is emitted instead",
-	"Pre-Consent Tracking":                               "needs a tracker script to gate; the fixture ships none, and a site with no trackers now gets Info instead of 3 free points for an assertion the check never tested",
 }
 
 func mustParse(t *testing.T, raw string) *html.Node {
@@ -108,6 +107,78 @@ func fixtureSite(t *testing.T) *eval.SiteContext {
 	}
 }
 
+// consentFixtureSite is the second fixture in the corpus. The rich fixture
+// above is tracker-free by design, which meant three privacy checks had no
+// page shape that could emit them and were waved through with
+// fixtureCannotTrigger reasons instead. An exemption is not coverage: the
+// consent path is exactly where a check that cannot fail costs a tenant a GDPR
+// fine, so it gets a real fixture.
+//
+// This is the compliant installation: Cookiebot loads first, and the canonical
+// inline GTM loader below it is held back with type="text/plain" plus a CMP
+// category, so Consent Banner passes, Pre-Consent Tracking passes on something
+// it actually tested, and Tracker Count emits its partial-credit split.
+func consentFixtureSite(t *testing.T) *eval.SiteContext {
+	t.Helper()
+	page := `<!DOCTYPE html><html lang="en"><head>
+<title>Consent fixture page with a long enough title</title>
+<meta name="description" content="A consent fixture description with a concrete number 42 and enough characters to satisfy the length window comfortably, try it today." />
+<link rel="canonical" href="https://example.com/" />
+<script id="Cookiebot" src="https://consent.cookiebot.com/uc.js" data-cbid="fixture-cbid" data-blockingmode="auto"></script>
+<script type="text/plain" data-cookieconsent="statistics">
+(function(w,d,s,l,i){w[l]=w[l]||[];w[l].push({'gtm.start':new Date().getTime(),event:'gtm.js'});
+var f=d.getElementsByTagName(s)[0],j=d.createElement(s);j.async=true;
+j.src='https://www.googletagmanager.com/gtm.js?id='+i;f.parentNode.insertBefore(j,f);
+})(window,document,'script','dataLayer','GTM-FIXTURE');
+</script>
+</head><body>
+<main id="main"><h1>Consent fixture heading</h1>
+<p>` + strings.Repeat("Real words with substance and specifics for the content length check. ", 30) + `</p>
+</main>
+<footer><a href="/privacy">Privacy policy</a> <a href="/terms">Terms of service</a></footer>
+</body></html>`
+
+	return &eval.SiteContext{
+		Pages: []eval.PageContext{
+			{URL: "/index.html", Slug: "/", HTML: page, Doc: mustParse(t, page), FileSize: int64(len(page))},
+		},
+		RobotsTxt: "User-agent: *\nAllow: /\nUser-agent: GPTBot\nDisallow: /",
+	}
+}
+
+// TestConsentFixtureIsTheCompliantInstall pins what consentFixtureSite is FOR.
+// Without it the fixture could drift into a non-compliant shape and still
+// satisfy the ownership diff below, which only cares that names are emitted.
+func TestConsentFixtureIsTheCompliantInstall(t *testing.T) {
+	checks := eval.RunPrivacyChecks(consentFixtureSite(t))
+	want := map[string]bool{
+		"Consent Banner":                    true,
+		"Pre-Consent Tracking":              true,
+		"Tracker Count (within budget)":     true,
+		"Tracker Count (zero-tracker goal)": false,
+	}
+	seen := map[string]bool{}
+	for _, c := range checks {
+		pass, ok := want[c.Name]
+		if !ok {
+			continue
+		}
+		seen[c.Name] = true
+		if c.Passed == nil {
+			t.Errorf("%s: expected a scored result, got Info: %s", c.Name, c.Detail)
+			continue
+		}
+		if *c.Passed != pass {
+			t.Errorf("%s: Passed=%v, want %v: %s", c.Name, *c.Passed, pass, c.Detail)
+		}
+	}
+	for name := range want {
+		if !seen[name] {
+			t.Errorf("consent fixture never emitted %q", name)
+		}
+	}
+}
+
 // TestOwnershipMatchesEmittedChecks is the two-way drift gate the old
 // TestEveryCheckHasOwner could not be: it runs the REAL eval check
 // functions against a rich fixture and diffs the emitted scored names
@@ -115,14 +186,18 @@ func fixtureSite(t *testing.T) *eval.SiteContext {
 // without an owner fails; an ownership entry no eval emits (phantom)
 // fails too.
 func TestOwnershipMatchesEmittedChecks(t *testing.T) {
-	site := fixtureSite(t)
-
+	// The corpus is the union of the fixtures: some checks are mutually
+	// exclusive on one page (a site cannot be both tracker-free and
+	// tracker-gated), and the honest way to cover both branches is a second
+	// fixture, not an exemption entry saying the branch is untestable.
 	var all []eval.CheckResult
-	all = append(all, eval.RunSecurityChecks(site)...)
-	all = append(all, eval.RunSEOChecks(site)...)
-	all = append(all, eval.RunPerformanceChecks(site)...)
-	all = append(all, eval.RunAccessibilityChecks(site)...)
-	all = append(all, eval.RunPrivacyChecks(site)...)
+	for _, site := range []*eval.SiteContext{fixtureSite(t), consentFixtureSite(t)} {
+		all = append(all, eval.RunSecurityChecks(site)...)
+		all = append(all, eval.RunSEOChecks(site)...)
+		all = append(all, eval.RunPerformanceChecks(site)...)
+		all = append(all, eval.RunAccessibilityChecks(site)...)
+		all = append(all, eval.RunPrivacyChecks(site)...)
+	}
 
 	emitted := map[string]bool{}
 	for _, c := range all {
