@@ -24,6 +24,19 @@ func InitFlare(service, release string) bool {
 		ServerName:       service,
 		EnableTracing:    true,
 		TracesSampleRate: tracesSampleRate(),
+		// Never let the SDK attach cookies, sensitive headers or the client IP
+		// on its own. This is the default, stated explicitly because it is a
+		// control, not a config tweak.
+		SendDefaultPII: false,
+		// scrubRequestEvent is the real gate: SendDefaultPII does not cover the
+		// query string. Both hooks, because transaction envelopes do not go
+		// through BeforeSend.
+		BeforeSend: func(e *sentry.Event, _ *sentry.EventHint) *sentry.Event {
+			return scrubRequestEvent(e)
+		},
+		BeforeSendTransaction: func(e *sentry.Event, _ *sentry.EventHint) *sentry.Event {
+			return scrubRequestEvent(e)
+		},
 	})
 	if err != nil {
 		slog.Warn("flare: error reporting disabled (sentry init failed)", "error", err)
