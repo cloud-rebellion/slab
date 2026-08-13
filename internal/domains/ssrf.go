@@ -1,7 +1,6 @@
 package domains
 
 import (
-	"fmt"
 	"net"
 	"syscall"
 
@@ -29,14 +28,13 @@ func isPrivateIP(ip net.IP) bool {
 // record resolves to an internal IP is rejected at connect time, not just at a
 // pre-flight validation step. Mirrors webhook.ssrfSafeClient and
 // handlers.fetchWithSSRFGuard so every tenant-controlled fetch shares one shape.
-func ssrfDialControl(_ /*network*/ string, address string, _ syscall.RawConn) error {
-	host, _, err := net.SplitHostPort(address)
-	if err != nil {
-		return err
-	}
-	ip := net.ParseIP(host)
-	if ip != nil && isPrivateIP(ip) {
-		return fmt.Errorf("refusing to connect to private address %s", ip)
-	}
-	return nil
+// It delegates to netguard.DialControl rather than carrying the check. The
+// copy this replaced was `ip != nil && isPrivateIP(ip)`, which FAILS OPEN on
+// any address net.ParseIP cannot parse, and a zone suffix is exactly that:
+// ParseIP("::ffff:127.0.0.1%lo0") is nil. Measured in the sibling copy in
+// internal/webhook: http://[::ffff:127.0.0.1%25lo0]:PORT/ returned 200 from an
+// ordinary IPv4 loopback service while plain 127.0.0.1 was refused. Keep this
+// a thin wrapper; do not reintroduce a local ParseIP check.
+func ssrfDialControl(network string, address string, rc syscall.RawConn) error {
+	return netguard.DialControl(network, address, rc)
 }

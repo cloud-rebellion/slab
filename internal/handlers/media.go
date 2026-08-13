@@ -778,7 +778,20 @@ const mediaFetchMaxRedirects = 3
 // replaced set no Timeout at all and leaned entirely on the request context,
 // so a slow upstream held a server goroutine for as long as the server's
 // write timeout allowed. Matches migration.DefaultTimeout.
-const mediaFetchTimeout = 30 * time.Second
+//
+// A var rather than a const so a test can shorten it and observe the CLIENT's
+// deadline fire. With a 30s const the only reachable deadline in a test is the
+// caller's context, which is what the fetch already had before this change, so
+// a test written against the const cannot tell the two apart and passes with
+// the Timeout field deleted.
+var mediaFetchTimeout = 30 * time.Second
+
+// mediaFetchTransport is built once and shared. netguard.SafeTransport()
+// returns a pooling http.Transport; constructing one per request throws the
+// pool away and leaves each connection's read and write goroutines alive for
+// IdleConnTimeout (90s) after the fetch has returned, so a burst of uploads
+// strands a socket pair per fetch instead of reusing one.
+var mediaFetchTransport = netguard.SafeTransport()
 
 // fetchWithSSRFGuard downloads a tenant-supplied URL for the agent
 // upload-from-url endpoint.
@@ -829,7 +842,7 @@ func fetchWithSSRFGuardAllowingPrivate(ctx context.Context, rawURL string, maxSi
 
 	client := &http.Client{
 		Timeout:       mediaFetchTimeout,
-		Transport:     netguard.SafeTransport(),
+		Transport:     mediaFetchTransport,
 		CheckRedirect: netguard.CheckRedirect(mediaFetchMaxRedirects),
 	}
 	if allowPrivate {

@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -22,11 +23,11 @@ import (
 // IP literal or "localhost" and checks the refusal. A denylist assertion cannot
 // distinguish a guard that checks the address it is about to dial from one that
 // checks a DIFFERENT address and then dials whatever DNS says the second time,
-// because in a static test both resolutions return the same thing. That is
-// exactly the difference the bug lived in, so the fixture has to make the two
-// resolutions disagree on purpose.
+// because in a static test both resolutions return the same thing.
 
 const rebindHost = "rebind.slab-ssrf.test"
+
+const publicIP = "93.184.216.34"
 
 func TestFetchWithSSRFGuard_BlocksForbiddenLiterals(t *testing.T) {
 	tests := []struct {
@@ -45,6 +46,11 @@ func TestFetchWithSSRFGuard_BlocksForbiddenLiterals(t *testing.T) {
 		{"ipv6 ula", "[fd00::1]"},
 		{"nat64 loopback", "[64:ff9b::7f00:1]"},
 		{"unspecified", "0.0.0.0"},
+		// Zoned forms: net.ParseIP returns nil for these, which is what made
+		// the sibling copies of this guard in internal/webhook and
+		// internal/domains fail open. netguard refuses a non-literal.
+		{"zoned v4-mapped loopback", "[::ffff:127.0.0.1%25lo0]"},
+		{"zoned ipv6 loopback", "[::1%25lo0]"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -52,9 +58,6 @@ func TestFetchWithSSRFGuard_BlocksForbiddenLiterals(t *testing.T) {
 			_, _, err := fetchWithSSRFGuard(context.Background(), url, 1<<20)
 			if err == nil {
 				t.Fatalf("fetchWithSSRFGuard(%q) returned nil error; a forbidden address was accepted", url)
-			}
-			if !strings.Contains(err.Error(), "destination not allowed") {
-				t.Errorf("fetchWithSSRFGuard(%q) error = %v, want the pre-flight refusal", url, err)
 			}
 		})
 	}
@@ -81,22 +84,23 @@ func TestFetchWithSSRFGuard_RejectsNonHTTPScheme(t *testing.T) {
 }
 
 // TestFetchWithSSRFGuard_RebindingIsRefusedAtDial is the case the old
-// implementation failed.
+// implementation failed, and it is deliberately built on ONE seam.
 //
-// It makes the two resolutions disagree, which is what a real DNS rebind does
-// with a ~0s TTL record:
+// The only thing this test controls is what DNS answers, via a local server
+// net.DefaultResolver is pointed at. It answers the FIRST query for the host
+// with a public address and every later query with 127.0.0.1, which is what a
+// ~0s TTL record does. So:
 //
-//   - the PRE-FLIGHT resolution (netguard.LookupIP, stubbed) answers a public
-//     address, so the pre-flight passes and cannot be what refuses the fetch;
-//   - the DIAL resolution (net.DefaultResolver, pointed at a local DNS server
-//     this test runs) answers 127.0.0.1, so the connection actually being
-//     opened goes somewhere the pre-flight never saw.
+//   - whatever the implementation uses for its pre-flight, seam or raw
+//     net.LookupIP, it sees the public address and lets the fetch proceed;
+//   - the transport resolves again when it dials and gets loopback.
 //
-// The old code passed the pre-flight and then connected, because its client
-// was a bare &http.Client{} on http.DefaultTransport with no Control hook.
+// An earlier version of this test also stubbed netguard.LookupIP to return the
+// public address. That made it exactly one mutant wide: an implementation that
+// ran its pre-flight through raw net.LookupIP instead of the seam would have
+// seen loopback, refused at the pre-flight, and passed this test while still
+// having no dial-time guard at all. Do not reintroduce that stub here.
 func TestFetchWithSSRFGuard_RebindingIsRefusedAtDial(t *testing.T) {
-	// An httptest server standing in for the internal resource. If the guard
-	// fails, this handler runs and we can prove the request landed.
 	var reached bool
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		reached = true
@@ -108,40 +112,20 @@ func TestFetchWithSSRFGuard_RebindingIsRefusedAtDial(t *testing.T) {
 		t.Fatalf("parse httptest addr: %v", err)
 	}
 
-	// Dial-time resolution: a local DNS server answering rebindHost -> 127.0.0.1.
-	dnsAddr := startLoopbackDNS(t)
-	origResolver := net.DefaultResolver
-	net.DefaultResolver = &net.Resolver{
-		PreferGo: true,
-		Dial: func(ctx context.Context, network, _ string) (net.Conn, error) {
-			return (&net.Dialer{}).DialContext(ctx, "udp", dnsAddr)
-		},
-	}
-	defer func() { net.DefaultResolver = origResolver }()
+	dns := startRebindDNS(t)
+	restore := useResolver(t, dns.addr)
+	defer restore()
 
-	// Pre-flight resolution: a public address, so the pre-flight passes.
-	origLookup := netguard.LookupIP
-	netguard.LookupIP = func(host string) ([]net.IP, error) {
-		if host == rebindHost {
-			return []net.IP{net.ParseIP("93.184.216.34")}, nil
-		}
-		return origLookup(host)
-	}
-	defer func() { netguard.LookupIP = origLookup }()
-
-	// Harness self-checks. Without these the test can pass for the wrong
-	// reason: if either resolution is not actually in place, the fetch still
-	// fails and the assertion below still goes green while proving nothing.
+	// Harness self-check, in "always public" mode so it consumes no rebind
+	// budget: if the fake resolver is not actually in the path, everything
+	// below would fail for reasons unrelated to the guard.
+	dns.setMode(dnsAlwaysPublic)
 	if err := netguard.CheckHostPublic(rebindHost); err != nil {
-		t.Fatalf("harness broken: pre-flight refused %q (%v), so this test would "+
-			"prove the pre-flight works, not the dial guard", rebindHost, err)
-	}
-	dialIPs, err := net.DefaultResolver.LookupIP(context.Background(), "ip4", rebindHost)
-	if err != nil || len(dialIPs) == 0 || !dialIPs[0].IsLoopback() {
-		t.Fatalf("harness broken: dial-time resolution of %q = %v (err %v), want 127.0.0.1; "+
-			"the two resolutions must disagree for this to be a rebind", rebindHost, dialIPs, err)
+		t.Fatalf("harness broken: %q did not resolve public through the fake resolver (%v)", rebindHost, err)
 	}
 
+	// Now the rebind: first answer public, everything after it loopback.
+	dns.setMode(dnsRebind)
 	target := fmt.Sprintf("http://%s:%s/logo.png", rebindHost, port)
 	body, _, err := fetchWithSSRFGuard(context.Background(), target, 1<<20)
 	if err == nil {
@@ -150,8 +134,15 @@ func TestFetchWithSSRFGuard_RebindingIsRefusedAtDial(t *testing.T) {
 	if reached {
 		t.Fatalf("DNS rebinding was NOT refused: the internal handler served the request (err after the fact: %v)", err)
 	}
-	if !strings.Contains(err.Error(), "blocked address") {
-		t.Errorf("error = %v, want the dial-time Control refusal (\"blocked address\")", err)
+	// The refusal has to come from the DIAL. "destination not allowed" is the
+	// pre-flight's wording; if that is what came back, the pre-flight consumed
+	// the loopback answer and this test proved the pre-flight, not the dial
+	// guard, which is the failure mode the single-seam design exists to expose.
+	if strings.Contains(err.Error(), "destination not allowed") {
+		t.Fatalf("refused at the PRE-FLIGHT, not at the dial: %v; the rebind did not materialise", err)
+	}
+	if !strings.Contains(err.Error(), "refusing to connect") {
+		t.Errorf("error = %v, want the dial-time Control refusal (\"refusing to connect to blocked address\")", err)
 	}
 }
 
@@ -183,21 +174,57 @@ func TestFetchWithSSRFGuard_BlocksRedirectToPrivate(t *testing.T) {
 	}
 }
 
+// TestFetchWithSSRFGuard_CapsRedirectChain proves the cap this function passes
+// to netguard.CheckRedirect is actually enforced on a real chain.
+//
+// It needs every hop to LOOK public to the redirect check while actually
+// landing on the loopback test server, so unlike the rebind test above it
+// stubs both resolution paths on purpose. That is sound here because this test
+// is about hop counting, not about the two resolutions agreeing.
 func TestFetchWithSSRFGuard_CapsRedirectChain(t *testing.T) {
+	var mu sync.Mutex
 	var hops int
 	var srv *httptest.Server
 	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
 		hops++
-		http.Redirect(w, r, srv.URL+"/next", http.StatusFound)
+		mu.Unlock()
+		_, port, _ := net.SplitHostPort(strings.TrimPrefix(srv.URL, "http://"))
+		http.Redirect(w, r, fmt.Sprintf("http://%s:%s/next", rebindHost, port), http.StatusFound)
 	}))
 	defer srv.Close()
 
+	dns := startRebindDNS(t)
+	dns.setMode(dnsAlwaysLoopback) // every dial lands on the test server
+	restore := useResolver(t, dns.addr)
+	defer restore()
+
+	// Redirect-time host checks must pass, so the chain can actually run.
+	origLookup := netguard.LookupIP
+	netguard.LookupIP = func(host string) ([]net.IP, error) {
+		if host == rebindHost {
+			return []net.IP{net.ParseIP(publicIP)}, nil
+		}
+		return origLookup(host)
+	}
+	defer func() { netguard.LookupIP = origLookup }()
+
 	_, _, err := fetchWithSSRFGuardAllowingPrivate(context.Background(), srv.URL+"/start.png", 1<<20, true)
 	if err == nil {
-		t.Fatal("an unbounded redirect loop was followed to completion")
+		t.Fatal("an unbounded redirect chain was followed to completion")
 	}
-	if hops > mediaFetchMaxRedirects+1 {
-		t.Errorf("followed %d hops, want at most %d", hops, mediaFetchMaxRedirects+1)
+	if !strings.Contains(err.Error(), "too many redirects") {
+		t.Fatalf("chain ended for a reason other than the cap: %v", err)
+	}
+	mu.Lock()
+	got := hops
+	mu.Unlock()
+	// netguard.CheckRedirect refuses once len(via) reaches the cap, and via
+	// holds the requests already made. So the chain stops on the Nth request
+	// rather than after the Nth redirect: the server sees exactly
+	// mediaFetchMaxRedirects requests and follows one fewer redirect.
+	if got != mediaFetchMaxRedirects {
+		t.Errorf("server saw %d requests, want %d", got, mediaFetchMaxRedirects)
 	}
 }
 
@@ -260,13 +287,19 @@ func TestFetchWithSSRFGuard_HappyPath(t *testing.T) {
 	}
 }
 
-// TestFetchWithSSRFGuard_HasATimeout pins the client timeout. The
-// implementation this replaced set none, so a slow upstream held a server
-// goroutine for as long as the server's write timeout allowed.
-func TestFetchWithSSRFGuard_HasATimeout(t *testing.T) {
-	if mediaFetchTimeout <= 0 {
-		t.Fatal("mediaFetchTimeout must be positive; an unset Timeout leaves the fetch bounded only by the request context")
-	}
+// TestFetchWithSSRFGuard_ClientTimeoutFires proves the CLIENT's deadline, not
+// the caller's context deadline.
+//
+// The context passed in deliberately has no deadline, so the only thing that
+// can end this fetch is http.Client.Timeout. Written the other way round, with
+// a 2s context against a 30s client timeout, the test passes with the Timeout
+// field deleted, because the context is what fires. That is what the first
+// version of this test did.
+func TestFetchWithSSRFGuard_ClientTimeoutFires(t *testing.T) {
+	orig := mediaFetchTimeout
+	mediaFetchTimeout = 300 * time.Millisecond
+	defer func() { mediaFetchTimeout = orig }()
+
 	block := make(chan struct{})
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		<-block
@@ -274,13 +307,9 @@ func TestFetchWithSSRFGuard_HasATimeout(t *testing.T) {
 	defer srv.Close()
 	defer close(block)
 
-	// Prove the deadline is the client's, not the caller's context: pass a
-	// context with no deadline and cancel the fetch by timeout instead.
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
 	done := make(chan error, 1)
 	go func() {
-		_, _, err := fetchWithSSRFGuardAllowingPrivate(ctx, srv.URL+"/slow.png", 1<<20, true)
+		_, _, err := fetchWithSSRFGuardAllowingPrivate(context.Background(), srv.URL+"/slow.png", 1<<20, true)
 		done <- err
 	}()
 	select {
@@ -289,21 +318,80 @@ func TestFetchWithSSRFGuard_HasATimeout(t *testing.T) {
 			t.Fatal("a hanging upstream returned success")
 		}
 	case <-time.After(5 * time.Second):
-		t.Fatal("fetch did not return; it is not bounded")
+		t.Fatal("fetch did not return: http.Client.Timeout is not set, so only the caller's context bounds this")
 	}
 }
 
-// startLoopbackDNS runs a minimal UDP DNS server that answers every A query
-// with 127.0.0.1, and returns its address. It exists so the dial-time
-// resolution in the rebind test can be made to disagree with the pre-flight
-// without touching the network or /etc/hosts.
-func startLoopbackDNS(t *testing.T) string {
+// --- fake resolver plumbing ---------------------------------------------
+
+type dnsMode int
+
+const (
+	dnsAlwaysPublic dnsMode = iota
+	dnsAlwaysLoopback
+	// dnsRebind answers the first query public and every later one loopback,
+	// which is what a record with a ~0s TTL does.
+	dnsRebind
+)
+
+type rebindDNS struct {
+	addr string
+	mu   sync.Mutex
+	mode dnsMode
+	seen int
+}
+
+func (d *rebindDNS) setMode(m dnsMode) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.mode = m
+	d.seen = 0
+}
+
+// answer picks the address for the next A query.
+func (d *rebindDNS) answer() net.IP {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.seen++
+	switch d.mode {
+	case dnsAlwaysLoopback:
+		return net.IPv4(127, 0, 0, 1)
+	case dnsRebind:
+		if d.seen == 1 {
+			return net.ParseIP(publicIP)
+		}
+		return net.IPv4(127, 0, 0, 1)
+	default:
+		return net.ParseIP(publicIP)
+	}
+}
+
+// useResolver points net.DefaultResolver at addr and returns a restore func.
+func useResolver(t *testing.T, addr string) func() {
+	t.Helper()
+	orig := net.DefaultResolver
+	net.DefaultResolver = &net.Resolver{
+		PreferGo: true,
+		Dial: func(ctx context.Context, _, _ string) (net.Conn, error) {
+			return (&net.Dialer{}).DialContext(ctx, "udp", addr)
+		},
+	}
+	restore := func() { net.DefaultResolver = orig }
+	t.Cleanup(restore)
+	return restore
+}
+
+// startRebindDNS runs a minimal UDP DNS server and returns it. It answers A
+// queries per its mode and answers everything else as NODATA, so Go's resolver
+// does not stall waiting for the AAAA half of a dual query.
+func startRebindDNS(t *testing.T) *rebindDNS {
 	t.Helper()
 	pc, err := net.ListenPacket("udp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("listen udp: %v", err)
 	}
 	t.Cleanup(func() { pc.Close() })
+	d := &rebindDNS{addr: pc.LocalAddr().String()}
 
 	go func() {
 		buf := make([]byte, 512)
@@ -315,18 +403,19 @@ func startLoopbackDNS(t *testing.T) string {
 			if n < 12 {
 				continue
 			}
-			resp := buildDNSAnswer(buf[:n])
-			if resp != nil {
+			req := make([]byte, n)
+			copy(req, buf[:n])
+			if resp := buildDNSAnswer(req, d); resp != nil {
 				pc.WriteTo(resp, addr)
 			}
 		}
 	}()
-	return pc.LocalAddr().String()
+	return d
 }
 
 // buildDNSAnswer turns a wire-format query into a response carrying one A
-// record for 127.0.0.1. Only enough of RFC 1035 to satisfy Go's resolver.
-func buildDNSAnswer(q []byte) []byte {
+// record. Only enough of RFC 1035 to satisfy Go's resolver.
+func buildDNSAnswer(q []byte, d *rebindDNS) []byte {
 	// Walk the question's QNAME to find where the question section ends.
 	i := 12
 	for i < len(q) {
@@ -354,7 +443,7 @@ func buildDNSAnswer(q []byte) []byte {
 	if qtype == 1 {                 // A
 		resp = append(resp, 0x00, 0x01) // ANCOUNT
 	} else {
-		resp = append(resp, 0x00, 0x00) // no answer for AAAA and friends
+		resp = append(resp, 0x00, 0x00) // NODATA for AAAA and friends
 	}
 	resp = append(resp, 0x00, 0x00) // NSCOUNT
 	resp = append(resp, 0x00, 0x00) // ARCOUNT
@@ -362,11 +451,12 @@ func buildDNSAnswer(q []byte) []byte {
 	if qtype != 1 {
 		return resp
 	}
+	ip := d.answer().To4()
 	resp = append(resp, 0xc0, 0x0c)             // name pointer to the question
 	resp = append(resp, 0x00, 0x01)             // TYPE A
 	resp = append(resp, 0x00, 0x01)             // CLASS IN
 	resp = append(resp, 0x00, 0x00, 0x00, 0x00) // TTL 0, which is what a rebind uses
 	resp = append(resp, 0x00, 0x04)             // RDLENGTH
-	resp = append(resp, 127, 0, 0, 1)
+	resp = append(resp, ip...)
 	return resp
 }

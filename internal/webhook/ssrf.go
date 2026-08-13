@@ -2,7 +2,6 @@ package webhook
 
 import (
 	"errors"
-	"fmt"
 	"net"
 	"net/http"
 	"syscall"
@@ -38,16 +37,19 @@ func isPrivateIP(ip net.IP) bool {
 func ssrfSafeClient(timeout time.Duration) *http.Client {
 	dialer := &net.Dialer{
 		Timeout: 10 * time.Second,
-		Control: func(network, address string, _ syscall.RawConn) error {
-			host, _, err := net.SplitHostPort(address)
-			if err != nil {
-				return err
+		Control: func(network, address string, rc syscall.RawConn) error {
+			if allowPrivateTargets {
+				return nil
 			}
-			ip := net.ParseIP(host)
-			if ip != nil && !allowPrivateTargets && isPrivateIP(ip) {
-				return fmt.Errorf("refusing to connect to private address %s", ip)
-			}
-			return nil
+			// netguard.DialControl, not a local copy. The copy this
+			// replaced was `ip != nil && isPrivateIP(ip)`, which FAILS
+			// OPEN on any address net.ParseIP cannot parse. A zone
+			// suffix is exactly that: ParseIP("::ffff:127.0.0.1%lo0")
+			// is nil, so the guard waved it through and
+			// http://[::ffff:127.0.0.1%25lo0]:PORT/ returned 200 from
+			// an ordinary IPv4 loopback service while the unzoned form
+			// was refused. netguard refuses a non-literal instead.
+			return netguard.DialControl(network, address, rc)
 		},
 	}
 	return &http.Client{

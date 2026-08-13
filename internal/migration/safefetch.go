@@ -164,15 +164,14 @@ func safeTransport(allowPrivate bool) *http.Transport {
 // safeDialControl rejects a connection whose resolved address is a
 // private/loopback/link-local/metadata IP. Runs after DNS resolution, immediately
 // before the socket connects, so it sees the IP actually being dialed.
-func safeDialControl(_, address string, _ syscall.RawConn) error {
-	host, _, err := net.SplitHostPort(address)
-	if err != nil {
-		return err
-	}
-	if ip := net.ParseIP(host); ip != nil && isPrivateOrLocal(ip) {
-		return fmt.Errorf("refusing to connect to private address %s", ip)
-	}
-	return nil
+// It delegates to netguard.DialControl. The copy this replaced was
+// `ip != nil && isPrivateOrLocal(ip)`, which FAILS OPEN on any address
+// net.ParseIP cannot parse, and a zone suffix is exactly that:
+// ParseIP("::ffff:127.0.0.1%lo0") is nil. Here the pre-flight happened to
+// catch the zoned literal first so it was not exploitable, but the hook was
+// the same defective shape as the one in internal/webhook that was.
+func safeDialControl(network, address string, rc syscall.RawConn) error {
+	return netguard.DialControl(network, address, rc)
 }
 
 // checkHostPublic resolves a hostname and refuses if any returned IP is in a
