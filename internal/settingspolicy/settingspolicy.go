@@ -68,7 +68,34 @@ func AgentWritableCategory(category string) bool {
 // signing secret, which would make identified-visitor CRM events verify
 // against an attacker-controlled receiver.
 func AgentWritableSetting(category, key string) bool {
-	return agentWritableCategories[category] && !IsSecretValue(category, key)
+	return agentWritableCategories[category] && !IsSecretValue(category, key) && !agentDeniedKeys[category+"."+key]
+}
+
+// agentDeniedKeys are settings inside an agent-writable category whose VALUE
+// becomes executable or navigable output rather than configuration. They are
+// not secrets, so IsSecretValue does not reach them, and they carry no
+// validator, because ValidateSetting returns nil for any key the catalog does
+// not enumerate and neither of these is a catalog entry.
+//
+// The category rule asks "may an agent tune analytics", which is a reasonable
+// yes. It cannot ask "does this particular key end up inside a <script> tag on
+// every published page", which for these two is a hard no:
+//
+//   - cookie_banner_snippet is written verbatim into <head> of every page the
+//     builder emits (builder/layouts.go:303-307). It is the documented escape
+//     hatch for a third-party CMP, so the site CSP deliberately permits it.
+//     A write-scoped agent key, or an LLM under prompt injection from ingested
+//     third-party content, could therefore put arbitrary JavaScript on the
+//     tenant's own origin, ahead of the consent banner, on every page.
+//   - admin_base_url is interpolated into the visitor-hydration fetch endpoint
+//     (builder/personalization.go:43), so pointing it at an attacker sends
+//     identified-visitor payloads there.
+//
+// A human admin may still set both over the REST surface. This is the agent
+// tier only, which is strictly lower trust.
+var agentDeniedKeys = map[string]bool{
+	"analytics.cookie_banner_snippet": true,
+	"analytics.admin_base_url":        true,
 }
 
 // privilegedCategories enumerates settings categories that a plain site

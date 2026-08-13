@@ -27,6 +27,22 @@ const RedactedValue = "***redacted***"
 var secretValueKeys = map[string]bool{
 	"payments.mollie_api_key":      true,
 	"analytics.crm_webhook_secret": true,
+	// The visitor-fingerprint pseudonymisation key. It is not a provider
+	// credential, which is why neither the allowlist nor any suffix reached it,
+	// and it is the most sensitive value in this table: analytics/parser.go
+	// computes fingerprint(ip, ua, accept_language, salt), so anyone holding it
+	// can recompute the whole visit_sessions fingerprint column offline from
+	// candidate triples, and de-pseudonymise every visitor the site has ever
+	// recorded. Writing it is worse than reading it: a chosen salt makes the
+	// entire future dataset precomputable, and a salt copied from another site
+	// links visitors across tenants.
+	//
+	// It reached this table by a different route from the other two. Those are
+	// catalog entries a human configures; this one is written into the same
+	// site_settings table by internal code (analytics/manager.go:170), so it is
+	// in no catalog, gets no validator, and was invisible to a policy whose
+	// population was the catalog.
+	"analytics.salt": true,
 }
 
 // secretKeySuffixes is the defensive half of the policy. A setting whose key
@@ -40,6 +56,12 @@ var secretKeySuffixes = []string{
 	"_token",
 	"_password",
 	"_private_key",
+	// Key material that is not a provider credential. The list above is shaped
+	// like "things a vendor issues you", which is why a pseudonymisation salt
+	// written by our own code fell through every entry in it.
+	"_salt",
+	"_key",
+	"_credential",
 }
 
 // IsSecretValue reports whether the value for category.key is a secret that
