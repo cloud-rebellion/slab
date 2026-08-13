@@ -442,15 +442,51 @@ func (h *WorkspaceHandler) CreateInvite(w http.ResponseWriter, r *http.Request) 
 	})
 }
 
+// workspaceInviteView is the wire shape for the invite LIST path. It
+// deliberately omits the token: the raw token is bearer-equivalent (it
+// redeems into a live session carrying the invite's role) and is handed
+// out exactly once, in the CreateInvite response. Listing it let any
+// workspace member read a pending "owner" token and redeem it, since
+// redemption does not bind to the invited email address.
+type workspaceInviteView struct {
+	ID          string `json:"id"`
+	WorkspaceID string `json:"workspace_id"`
+	Email       string `json:"email"`
+	Role        string `json:"role"`
+	CreatedBy   string `json:"created_by"`
+	CreatedAt   string `json:"created_at"`
+	ExpiresAt   string `json:"expires_at"`
+}
+
 // ListInvites returns pending invites for the workspace.
+//
+// Admin-gated to match CreateInvite and DeleteInvite: a pending invite is
+// a privilege-escalation primitive, not workspace metadata. The enclosing
+// WorkspaceAccessMiddleware only proves membership, so without this check
+// a plain member could read the invite list.
 func (h *WorkspaceHandler) ListInvites(w http.ResponseWriter, r *http.Request) {
+	if !authmw.RequireWorkspaceRole(w, r, "admin") {
+		return
+	}
 	id := urlParam(r, "workspaceID")
 	rows, err := h.queries.ListPendingWorkspaceInvites(r.Context(), id)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "Failed to list invites")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"invites": rows})
+	out := make([]workspaceInviteView, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, workspaceInviteView{
+			ID:          row.ID,
+			WorkspaceID: row.WorkspaceID,
+			Email:       row.Email,
+			Role:        row.Role,
+			CreatedBy:   row.CreatedBy,
+			CreatedAt:   row.CreatedAt,
+			ExpiresAt:   row.ExpiresAt,
+		})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"invites": out})
 }
 
 // DeleteInvite revokes a pending invite.

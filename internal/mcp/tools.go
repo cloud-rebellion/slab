@@ -893,7 +893,7 @@ func (s *Server) registerTools() {
 			rejected := []string{}
 			// Validate first; bail before any write so the batch is atomic.
 			for _, it := range args.Items {
-				if !isAgentWritableCategory(it.Category) {
+				if !isAgentWritableSetting(it.Category, it.Key) {
 					rejected = append(rejected, it.Category+"."+it.Key)
 					continue
 				}
@@ -902,7 +902,7 @@ func (s *Server) registerTools() {
 				}
 			}
 			for i, it := range args.Items {
-				if !isAgentWritableCategory(it.Category) {
+				if !isAgentWritableSetting(it.Category, it.Key) {
 					continue
 				}
 				if err := s.queries.UpsertSetting(ctx, store.UpsertSettingParams{

@@ -325,10 +325,26 @@ func (h *BuildHandler) lockForSite(siteID string) *sync.Mutex {
 // needed at build time; the inline config blob carries everything.
 
 // TriggerBuild starts an async build for the agent's site.
+//
+// Gated on the "write" capability, matching the MCP twin (trigger_build,
+// RequiresWrite: true). A build compiles the current draft state and, via
+// autoDeployDefault, republishes it to the site's default deploy target,
+// so it is a publish action and not a read.
+//
+// "write" is the authoritative capability. The declared capabilities
+// "build" and "deploy" are advertised on key creation but enforced
+// nowhere in the codebase; enforcing them here instead would have created
+// a third policy that disagrees with both the MCP twin and every other
+// agent handler, and would silently break existing keys minted with
+// ["read","write"]. Narrowing to a dedicated build capability is a
+// product decision, not a fix-pass one.
 func (h *BuildHandler) TriggerBuild(w http.ResponseWriter, r *http.Request) {
 	a := authmw.GetAgent(r)
 	if a == nil {
 		writeError(w, http.StatusUnauthorized, "Agent not authenticated")
+		return
+	}
+	if !requireWrite(w, a) {
 		return
 	}
 

@@ -16,11 +16,17 @@ import (
 	"github.com/bright-interaction/slab/internal/store"
 )
 
-// agentWritableSettingsCategories reports whether an agent may write the
-// settings category. Policy lives in internal/settingspolicy (single
+// agentWritableSetting reports whether an agent may write one
+// {category, key} pair. Policy lives in internal/settingspolicy (single
 // source of truth shared with MCP + the settings catalog).
-func agentWritableSettingsCategories(category string) bool {
-	return settingspolicy.AgentWritableCategory(category)
+//
+// This takes the KEY as well as the category on purpose. Gating on the
+// category alone let an agent write a secret-valued key inside a writable
+// category (analytics.crm_webhook_secret), which both agent read paths
+// already mask, so the agent could overwrite a credential it could not
+// read.
+func agentWritableSetting(category, key string) bool {
+	return settingspolicy.AgentWritableSetting(category, key)
 }
 
 // ListSettings returns all settings rows for the agent's site (any category).
@@ -67,7 +73,7 @@ func (h *AgentHandler) ListSettingsByCategory(w http.ResponseWriter, r *http.Req
 }
 
 // BulkUpsertSettings applies a list of {category, key, value} writes in one
-// call. Categories not in agentWritableSettingsCategories are silently
+// call. Pairs refused by agentWritableSetting are silently
 // skipped (the response carries the full settings list afterwards so the
 // caller can see which writes landed).
 //
@@ -99,7 +105,7 @@ func (h *AgentHandler) BulkUpsertSettings(w http.ResponseWriter, r *http.Request
 		if s.Category == "" || s.Key == "" {
 			continue
 		}
-		if !agentWritableSettingsCategories(s.Category) {
+		if !agentWritableSetting(s.Category, s.Key) {
 			continue
 		}
 		if err := validateSetting(s.Category, s.Key, s.Value); err != nil {
@@ -128,7 +134,7 @@ func (h *AgentHandler) BulkUpsertSettings(w http.ResponseWriter, r *http.Request
 			if s.Category == "" || s.Key == "" {
 				continue
 			}
-			if !agentWritableSettingsCategories(s.Category) {
+			if !agentWritableSetting(s.Category, s.Key) {
 				rejected = append(rejected, s.Category+"."+s.Key)
 				continue
 			}
@@ -156,7 +162,7 @@ func (h *AgentHandler) BulkUpsertSettings(w http.ResponseWriter, r *http.Request
 			if s.Category == "" || s.Key == "" {
 				continue
 			}
-			if !agentWritableSettingsCategories(s.Category) {
+			if !agentWritableSetting(s.Category, s.Key) {
 				rejected = append(rejected, s.Category+"."+s.Key)
 				continue
 			}

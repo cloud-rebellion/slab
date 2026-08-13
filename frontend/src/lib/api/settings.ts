@@ -184,8 +184,23 @@ export function upsert(siteID: string, input: SettingUpsertInput): Promise<SiteS
 	return apiPut<SiteSetting>(`/sites/${siteID}/settings`, input);
 }
 
-export function bulkUpsert(siteID: string, items: SettingUpsertInput[]): Promise<SiteSetting[]> {
-	return apiPut<SiteSetting[]>(`/sites/${siteID}/settings/bulk`, items);
+// BulkUpsertResult mirrors the bulk endpoint's response. rejected_admin_only
+// names the "<category>.<key>" entries the caller is not allowed to write
+// (security, payments, and any bearer-equivalent key such as
+// analytics.crm_webhook_secret): they are dropped, everything else in the
+// batch is applied. Same shape the agent + MCP bulk paths return. settings
+// is the site's full settings list after the write, with secret values
+// omitted for anyone who is not the site owner.
+export interface BulkUpsertResult {
+	settings: SiteSetting[];
+	rejected_admin_only: string[];
+}
+
+export function bulkUpsert(
+	siteID: string,
+	items: SettingUpsertInput[]
+): Promise<BulkUpsertResult> {
+	return apiPut<BulkUpsertResult>(`/sites/${siteID}/settings/bulk`, items);
 }
 
 export function remove(siteID: string, settingID: string): Promise<{ status: string }> {

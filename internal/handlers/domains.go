@@ -217,8 +217,15 @@ func (h *DomainHandler) List(w http.ResponseWriter, r *http.Request) {
 // verify_token + the well-known URL the admin can curl to confirm
 // DNS is wired correctly.
 //
+// Owner-gated to match Delete: attaching a hostname drives nginx server
+// blocks and an ACME cert issuance on the shared host, so it is host
+// configuration, not site content.
+//
 // POST /api/sites/{siteID}/domains
 func (h *DomainHandler) Create(w http.ResponseWriter, r *http.Request) {
+	if !authmw.RequireOwnerOrAdmin(w, r, h.queries) {
+		return
+	}
 	siteID := urlParam(r, "siteID")
 	site, err := h.queries.GetSiteByID(r.Context(), siteID)
 	if err != nil {
@@ -322,8 +329,15 @@ func (h *DomainHandler) Create(w http.ResponseWriter, r *http.Request) {
 // SetCanonical flips the chosen domain to canonical for its site. The
 // build pipeline reads the canonical row when site.domain is empty.
 //
+// Owner-gated: repointing the canonical hostname rewrites every emitted
+// canonical URL, sitemap entry and absolute link on the next build. Same
+// blast radius as the Delete below, which has always been owner-only.
+//
 // POST /api/sites/{siteID}/domains/{domainID}/canonical
 func (h *DomainHandler) SetCanonical(w http.ResponseWriter, r *http.Request) {
+	if !authmw.RequireOwnerOrAdmin(w, r, h.queries) {
+		return
+	}
 	siteID := urlParam(r, "siteID")
 	id := urlParam(r, "domainID")
 	row, err := h.queries.GetDomainByID(r.Context(), id)
@@ -371,8 +385,15 @@ func (h *DomainHandler) Delete(w http.ResponseWriter, r *http.Request) {
 // domain right now (instead of waiting for the periodic poller).
 // Useful when the admin just updated DNS and wants immediate feedback.
 //
+// Owner-gated with the rest of this file: it kicks the reconciler, which
+// talks to the ACME endpoint, so an ungated caller can pump certificate
+// issuance attempts against a rate-limited third party.
+//
 // POST /api/sites/{siteID}/domains/{domainID}/refresh
 func (h *DomainHandler) Refresh(w http.ResponseWriter, r *http.Request) {
+	if !authmw.RequireOwnerOrAdmin(w, r, h.queries) {
+		return
+	}
 	siteID := urlParam(r, "siteID")
 	id := urlParam(r, "domainID")
 	row, err := h.queries.GetDomainByID(r.Context(), id)

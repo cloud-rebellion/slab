@@ -41,8 +41,68 @@ var agentWritableCategories = map[string]bool{
 
 // AgentWritableCategory reports whether agents may write settings in the
 // category.
+//
+// Prefer AgentWritableSetting for an actual write. The category alone is
+// not a sufficient gate, because a writable category can still contain a
+// bearer-equivalent key.
 func AgentWritableCategory(category string) bool {
 	return agentWritableCategories[category]
+}
+
+// AgentWritableSetting reports whether an agent may write one
+// {category, key} pair. It is the category rule AND a refusal of any
+// secret-valued key inside it.
+//
+// The key half is the whole point. analytics is agent-writable so an agent
+// can wire up tracking, but analytics.crm_webhook_secret inside it is a
+// credential. Both agent read paths already MASK that key; gating reads
+// while accepting writes is the worst of both, because the agent cannot
+// see the value it is about to overwrite. An agent key is also a lower
+// trust tier than a site member, and the human surface already refuses
+// this write via IsSecretValue, so the agent surfaces refusing it is the
+// consistent position rather than a new restriction.
+//
+// Concretely, this is what stops a write-scoped agent key (or an LLM
+// driven by prompt injection from ingested third-party content) pointing
+// analytics.crm_webhook_url at an attacker endpoint AND choosing the
+// signing secret, which would make identified-visitor CRM events verify
+// against an attacker-controlled receiver.
+func AgentWritableSetting(category, key string) bool {
+	return agentWritableCategories[category] && !IsSecretValue(category, key)
+}
+
+// privilegedCategories enumerates settings categories that a plain site
+// member must not write over the human REST surface. Membership in
+// site_members proves "may edit this site's content"; it does not prove
+// "may change this site's security posture".
+//
+// This is the human-surface counterpart to agentWritableCategories. The
+// two lists answer different questions and are deliberately not derived
+// from each other: an agent key is denied many categories a human editor
+// legitimately edits (payments, nginx). Only categories whose keys change
+// the site's attack surface belong here.
+//
+//   - security: csp_policy has no validator at all and takes precedence
+//     over csp_enabled, so one write replaces the entire published CSP.
+//     Matches the RequireOwnerOrAdmin already on allowed_scripts.go,
+//     which guards the other half of the same CSP.
+//   - payments: mollie_api_key is bearer-equivalent (it moves the
+//     tenant's real money), which is why the comment on
+//     agentWritableCategories has always listed it as sensitive and why
+//     secrets.go masks it at the agent boundary. Write access is the
+//     other half: a member who can rewrite the key redirects settlement
+//     to an account they control, and one who can clear it takes the
+//     shop offline. Reads are handled separately, by secrecy rather than
+//     by category, in settings.go: see IsSecretValue.
+var privilegedCategories = map[string]bool{
+	"security": true,
+	"payments": true,
+}
+
+// PrivilegedCategory reports whether writes to the category require the
+// site owner (or a platform admin) rather than any site member.
+func PrivilegedCategory(category string) bool {
+	return privilegedCategories[category]
 }
 
 // AgentWritableCategories returns the writable category names, sorted.
