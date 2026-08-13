@@ -256,23 +256,14 @@ func maskEmail(s string) string {
 	return first + "***" + s[at:]
 }
 
-// clientIPForReset extracts the visitor IP for storage on the
-// password_resets row. Same priority chain as elsewhere; not a
-// security boundary, used for forensics ("which IP requested this
-// reset?").
+// clientIPForReset extracts the visitor IP recorded on the
+// password_resets row. This is forensic evidence ("which IP requested
+// this reset?"), which is exactly why it must not be caller-chosen.
+//
+// Audit 2026-08-11 finding 9, twin: this was a byte-for-byte copy of
+// the old handlers.clientIP header chain and carried the same defect,
+// so a reset requester could write any IP they liked into the audit
+// trail. It now shares the one resolver with clientIP.
 func clientIPForReset(r *http.Request) string {
-	if v := r.Header.Get("CF-Connecting-IP"); v != "" {
-		return v
-	}
-	if v := r.Header.Get("X-Forwarded-For"); v != "" {
-		if i := strings.IndexByte(v, ','); i > 0 {
-			return strings.TrimSpace(v[:i])
-		}
-		return v
-	}
-	addr := r.RemoteAddr
-	if i := strings.LastIndexByte(addr, ':'); i > 0 {
-		return addr[:i]
-	}
-	return addr
+	return clientIP(r)
 }

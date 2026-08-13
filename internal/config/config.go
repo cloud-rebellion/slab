@@ -471,6 +471,75 @@ func (c *Config) Validate() error {
 		problems = append(problems, fmt.Sprintf("BASE_URL=%q is not HTTPS; production deployments must serve over TLS or sessions will not persist%s", c.BaseURL, hint))
 	}
 
+	// Trusted-proxy boundary. Every per-IP control in the product keys
+	// off r.RemoteAddr: the login lockout, the MFA throttle, the five
+	// /t/* limiters, the form-spam gate, the admin-write bucket and the
+	// ip_hash on the consent proof. Behind a reverse proxy r.RemoteAddr
+	// is the PROXY, so with no trusted-proxy list every visitor shares
+	// one limiter key and the per-IP login lockout becomes a global one:
+	// a handful of failed logins from anywhere locks every user out for
+	// the lockout window, unauthenticated. That is strictly worse than
+	// the header-spoofing bug the empty default was protecting against,
+	// so the absence of a decision is refused here.
+	//
+	// A deployment genuinely exposed straight to the internet with no
+	// proxy in front sets the value to "none": RemoteAddr really is the
+	// client there and honouring no forwarding header is correct. The
+	// point is that it is a stated choice rather than a missing line.
+	//
+	// A value that parses to zero prefixes is refused for the same
+	// reason an empty one is: "172.16.0.0/12x" or a stray shell quote
+	// leaves the middleware trusting nobody and lands on exactly the
+	// same collapsed-bucket behaviour, silently. Local dev never
+	// reaches any of this (Validate returns above when not production).
+	trustedRaw := strings.TrimSpace(c.TrustedProxies)
+	switch {
+	case trustedRaw == "":
+		problems = append(problems, "ATOMICSITE_TRUSTED_PROXIES is unset; production must declare the trust boundary explicitly. "+
+			"Behind a reverse proxy set it to the peer address the proxy connects from (e.g. ATOMICSITE_TRUSTED_PROXIES=172.18.0.1/32 "+
+			"for a docker bridge gateway, or the load balancer's CIDR), otherwise every visitor shares one rate-limit key and the "+
+			"per-IP login lockout locks out every user at once. If nothing proxies this deployment, say so with "+
+			"ATOMICSITE_TRUSTED_PROXIES="+TrustedProxiesNone)
+	case strings.EqualFold(trustedRaw, TrustedProxiesNone):
+		// Explicit opt-out: no proxy in front, RemoteAddr is the client.
+	default:
+		prefixes, bad := ParseTrustedProxies(trustedRaw)
+		if len(bad) > 0 {
+			problems = append(problems, fmt.Sprintf("ATOMICSITE_TRUSTED_PROXIES has unparseable entries (%s); "+
+				"each entry must be a CIDR (10.0.6.1/32) or a bare IP, and a dropped entry silently un-trusts the proxy it named",
+				strings.Join(bad, ", ")))
+		}
+		if len(prefixes) == 0 {
+			problems = append(problems, fmt.Sprintf("ATOMICSITE_TRUSTED_PROXIES=%q parsed to zero trusted prefixes, which behaves exactly like leaving it unset: "+
+				"forwarding headers are ignored and every visitor behind the proxy collapses into one rate-limit key. "+
+				"Set real proxy addresses or ATOMICSITE_TRUSTED_PROXIES="+TrustedProxiesNone, c.TrustedProxies))
+		}
+		// A prefix that parses but names almost every address on the
+		// internet (0.0.0.0/0, ::/0, or anything narrower than the floor)
+		// is not a stated trust decision, it is the same collapsed-bucket
+		// failure the zero-prefix guard above refuses, just reached from
+		// the other direction: instead of trusting nobody the deployment
+		// now trusts everybody, so ANY caller's X-Forwarded-For is honoured
+		// and every per-IP control (login lockout, MFA throttle, the five
+		// /t/* limiters, form-spam, the admin-write bucket, the ip_hash on
+		// the consent proof) is disabled for anyone willing to set a
+		// header. This is the natural thing an operator reaches for after
+		// a fail-closed boot refusal at 2am, so the error has to say what
+		// to write instead, not just what is wrong.
+		if wide := WideTrustedProxyPrefixes(prefixes); len(wide) > 0 {
+			names := make([]string, len(wide))
+			for i, p := range wide {
+				names[i] = p.String()
+			}
+			problems = append(problems, fmt.Sprintf("ATOMICSITE_TRUSTED_PROXIES contains %s, which is wider than this deployment can trust "+
+				"(the floor is /%d for IPv4 and /%d for IPv6): a prefix that wide matches almost every address on the internet, so any caller "+
+				"can set X-Forwarded-For and disable the login lockout, the MFA throttle and every /t/* limiter. Set it to the address the "+
+				"reverse proxy actually connects from instead, e.g. ATOMICSITE_TRUSTED_PROXIES=172.18.0.1/32 for a docker bridge gateway or "+
+				"the load balancer's real CIDR (check it again after the proxy container is recreated, since that address can change)",
+				strings.Join(names, ", "), MinTrustedProxyBitsV4, MinTrustedProxyBitsV6))
+		}
+	}
+
 	// Either ATOMICSITE_PRIMARY_DOMAIN (single-root-domain shape, the
 	// typical SaaS deploy) or BUILT_SITE_SUFFIX (legacy multi-tenant
 	// subdomain shape) must be set in production. Both unset means the

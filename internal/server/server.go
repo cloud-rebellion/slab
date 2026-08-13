@@ -29,6 +29,7 @@ import (
 	"github.com/bright-interaction/slab/internal/mcp"
 	authmw "github.com/bright-interaction/slab/internal/middleware"
 	"github.com/bright-interaction/slab/internal/migration"
+	"github.com/bright-interaction/slab/internal/ratelimit"
 	"github.com/bright-interaction/slab/internal/retention"
 	"github.com/bright-interaction/slab/internal/revisions"
 	"github.com/bright-interaction/slab/internal/shield"
@@ -53,6 +54,12 @@ type Server struct {
 	crmClient     *crmsync.Client
 	agentMW       *authmw.AgentAuthMiddleware
 	adminWriteLim *authmw.AdminWriteLimiter
+	// limiterSweeper evicts idle entries from every process-local rate
+	// limiter. Populated during Router() as each limiter is built and
+	// started by StartLimiterSweeper from cmd/server. Audit 2026-08-11
+	// finding 9: without it every limiter map grows for the life of
+	// the process.
+	limiterSweeper *ratelimit.Sweeper
 	// AnalyticsDB is the read-only DuckDB ATTACH on the SQLite file.
 	// Optional: nil when DuckDB couldn't open at boot. Handlers that
 	// depend on it return 503 in that case rather than crashing.
@@ -153,7 +160,31 @@ func New(cfg *config.Config, db *sql.DB, queries *store.Queries, st storage.Stor
 		authMW:        authmw.NewAuthMiddleware(cfg, queries),
 		agentMW:       authmw.NewAgentAuthMiddleware(queries),
 		adminWriteLim: newAdminWriteLimiter(cfg),
+
+		limiterSweeper: ratelimit.New(ratelimit.DefaultInterval),
 	}
+}
+
+// StartLimiterSweeper launches the periodic eviction pass over every
+// rate limiter registered during Router(). Must be called AFTER
+// Router(), which is where the limiters are constructed and
+// registered; calling it first would start a sweeper with nothing to
+// sweep. Same ordering constraint as StartCRMOutbox, and both are
+// called from handlerWithCRMOutbox in cmd/server for that reason.
+func (s *Server) StartLimiterSweeper(ctx context.Context) {
+	if s == nil {
+		return
+	}
+	s.limiterSweeper.Start(ctx)
+}
+
+// LimiterSweeper exposes the sweeper so tests can assert that Router()
+// actually registered the live limiters and that a sweep evicts.
+func (s *Server) LimiterSweeper() *ratelimit.Sweeper {
+	if s == nil {
+		return nil
+	}
+	return s.limiterSweeper
 }
 
 // Router builds and returns the chi router.
@@ -169,6 +200,27 @@ func (s *Server) Router() http.Handler {
 	var mcpSurfaceFn func() any
 
 	r.Use(middleware.RequestID)
+	// Runtime self-check on ATOMICSITE_TRUSTED_PROXIES. The boot-time guard
+	// in config.Validate can only refuse an absent or unparseable value; it
+	// cannot tell a real proxy CIDR apart from one that parses fine but
+	// matches no peer that actually fronts this process (topology drift:
+	// web-proxy or atomicsite_default gets recreated, docker hands out
+	// a different gateway). That leaves TrustedProxyRealIP silently trusting
+	// nobody, which collapses every per-IP control onto one shared bucket.
+	// proxyTrust watches live traffic for exactly that and is read by the
+	// /api/health handler below. Ported from hephaestus's observeProxyTrust.
+	//
+	// MUST run BEFORE TrustedProxyRealIP. TrustedProxyRealIP rewrites
+	// r.RemoteAddr to the client IP when the peer IS trusted, and the
+	// detector needs the RAW transport peer to decide trust in the first
+	// place; reading RemoteAddr after the rewrite means a CORRECTLY
+	// configured trusted peer looks like the client address, which is
+	// almost never inside the trusted set itself, and every legitimate
+	// request would misfire the mismatch warning. Confirmed by test: this
+	// ordering bug produced a false positive on TestHealth_CorrectTrustedProxyStaysClean
+	// before the middleware order was fixed.
+	proxyTrust := authmw.NewProxyTrustDetector(s.cfg.TrustedProxies)
+	r.Use(proxyTrust.Middleware)
 	// Trusted-proxy XFF middleware (replaces chi.middleware.RealIP).
 	// Honours X-Forwarded-For / X-Real-IP only when the immediate TCP
 	// peer is in the configured ATOMICSITE_TRUSTED_PROXIES list. Empty
@@ -258,13 +310,30 @@ func (s *Server) Router() http.Handler {
 				crmOutboxPending = n
 			}
 		}
+		// A trusted-proxy set that matches nothing is otherwise invisible: it
+		// is not an error, nothing fails, and the only symptom is that every
+		// per-IP control quietly becomes estate-wide. Surface it here so an
+		// operator or an uptime check with a body matcher sees it without
+		// reading logs. The peer address stays OUT of this body: /api/health
+		// is unauthenticated, so this endpoint says WHAT is wrong (see the
+		// server log for who).
+		proxyTrustField := ""
+		if seen, ok := proxyTrust.Mismatch(); ok {
+			proxyTrustField = `,"proxy_trust":{"status":"mismatch","detail":"a forwarding header arrived from a peer outside ATOMICSITE_TRUSTED_PROXIES; per-IP rate limiting and the login lockout are globalised (see the server log for the peer address)","since":"` +
+				seen.SeenAt.Format(time.RFC3339) + `"}`
+			// Degrade, never upgrade: an sqlite fail must not be masked by this.
+			if status == "ok" {
+				status = "warning"
+			}
+		}
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Cache-Control", "no-store")
 		w.WriteHeader(httpStatus)
 		body := `{"status":"` + status +
 			`","sqlite":"` + boolToOKFail(dbOK) +
 			`","analyticsdb":"` + analyticsOK +
-			`","crm_outbox_pending":` + strconv.FormatInt(crmOutboxPending, 10) + `}`
+			`","crm_outbox_pending":` + strconv.FormatInt(crmOutboxPending, 10) +
+			proxyTrustField + `}`
 		_, _ = w.Write([]byte(body))
 	})
 
@@ -274,6 +343,12 @@ func (s *Server) Router() http.Handler {
 	// middleware runs only on this group so admin requests don't pick up
 	// visitor cookies.
 	trackH := handlers.NewTrackHandler(s.cfg, s.queries, s.db)
+	trackH.RegisterSweeps(s.limiterSweeper)
+	// The admin write throttle is built in New (it needs only cfg), so
+	// register it here where every other limiter registration lives.
+	if s.adminWriteLim != nil {
+		s.limiterSweeper.Register("admin.writes", s.adminWriteLim.Sweep)
+	}
 	// Keep a reference so StartCRMOutbox can drain using the SAME client
 	// instance that /admin/reload-secrets rotates. A second client built from
 	// cfg would keep signing with the boot-time secret after a rotation and
@@ -331,6 +406,7 @@ func (s *Server) Router() http.Handler {
 
 	// Auth (public)
 	ah := handlers.NewAuthHandler(s.cfg, s.queries)
+	ah.RegisterSweeps(s.limiterSweeper)
 	r.Post("/api/auth/login", ah.Login)
 	r.Post("/api/auth/logout", ah.Logout)
 	// Forgot-password flow. All three endpoints unauthenticated by
@@ -367,6 +443,7 @@ func (s *Server) Router() http.Handler {
 	// injected so every identify path -- explicit /t/identify and
 	// auto-form -- runs the same DB update + crmsync dispatch.
 	formsH := handlers.NewFormHandler(s.cfg, s.queries, ah.MailSender, trackH.IdentifyRecorder())
+	formsH.RegisterSweeps(s.limiterSweeper)
 	r.With(authmw.FingerprintMiddleware(s.cfg)).Post("/t/forms/{formID}/submit", formsH.Submit)
 
 	// TOTP MFA enrollment + verify + status + disable. All four
@@ -1119,6 +1196,27 @@ func (s *Server) Router() http.Handler {
 		} else {
 			level := shield.ParseHintLevel(s.cfg.ShieldHintLevel)
 			shieldGW = shield.NewGateway(shieldStore, []byte(s.cfg.ShieldKey), 24*time.Hour, level)
+			// shield.SweepExpired is the ninth sweeper of the same shape
+			// as the eight rate limiters: it documents a janitor goroutine
+			// that no non-test caller ever provided. The only expiry pass
+			// that ran was the opportunistic one inside OpenSession, which
+			// fires only when a session with a KNOWN id is touched after it
+			// expired. A session whose connection never comes back expired
+			// nothing, so its row and every encrypted PII token hanging off
+			// it stayed forever: unbounded growth and a retention violation
+			// on data the shield exists to keep short-lived.
+			//
+			// Carried across the per-process Gateway refactor by hand. The
+			// two changes landed on separate branches and the merge dropped
+			// this registration silently while still compiling, which is
+			// exactly the shape of revert this estate has been bitten by.
+			s.limiterSweeper.Register("shield.sessions", func() {
+				ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+				defer cancel()
+				if err := shield.SweepExpired(ctx, shieldStore); err != nil {
+					slog.Error("atomicsite: shield session sweep failed", "err", err)
+				}
+			})
 			slog.Info("atomicsite: shield enabled on every agent transport",
 				"key_id", "atomicsite", "ttl_hours", 24,
 				"hint_level", s.cfg.ShieldHintLevel, "store", storeKind)

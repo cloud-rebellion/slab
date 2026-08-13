@@ -447,26 +447,30 @@ func normaliseDomain(s string) string {
 	return strings.TrimSuffix(v, ".")
 }
 
-// clientIP extracts the visitor's IP from the request. Prefers
-// CF-Connecting-IP (Cloudflare) over X-Forwarded-For / RemoteAddr because
-// the fronting proxy is the only header we know not to be spoofed.
+// clientIP returns the visitor's IP for rate-limit keys and the consent
+// ip_hash. It reads ONLY r.RemoteAddr.
+//
+// Audit 2026-08-11 finding 9: this function used to prefer
+// CF-Connecting-IP and then X-Forwarded-For, reaching RemoteAddr only
+// when both were absent. Both headers are attacker-supplied on every
+// request that does not pass through a proxy we control, and Cloudflare
+// is DNS-only in front of host, so nothing strips a client-set
+// CF-Connecting-IP. That made every key derived from this function
+// caller-chosen: the login lockout, the MFA limiter, the waitlist cap,
+// the form-spam limiter, all five /t/* limiters, and the GDPR consent
+// proof's ip_hash. Measured before the fix: 50000 requests with a
+// rotating CF-Connecting-IP produced 0 denials and 50000 retained
+// buckets.
+//
+// authmw.TrustedProxyRealIP runs at the top of the router and is the
+// single hop allowed to honour those headers: it rewrites RemoteAddr
+// from the forwarded chain when (and only when) the immediate TCP peer
+// is in ATOMICSITE_TRUSTED_PROXIES, and leaves it as the real peer
+// otherwise. Delegating to authmw.ClientIP keeps that decision in one
+// place instead of re-deriving it here. Do not reintroduce a header
+// read in this function.
 func clientIP(r *http.Request) string {
-	if v := strings.TrimSpace(r.Header.Get("CF-Connecting-IP")); v != "" {
-		return v
-	}
-	if v := strings.TrimSpace(r.Header.Get("X-Forwarded-For")); v != "" {
-		// First entry is the closest client.
-		if idx := strings.Index(v, ","); idx != -1 {
-			return strings.TrimSpace(v[:idx])
-		}
-		return v
-	}
-	// RemoteAddr is "host:port"; strip the port.
-	addr := r.RemoteAddr
-	if i := strings.LastIndex(addr, ":"); i != -1 {
-		return addr[:i]
-	}
-	return addr
+	return authmw.ClientIP(r)
 }
 
 // crmEmitIdentified fires an identified event toward BrightCRM. It bypasses

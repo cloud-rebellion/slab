@@ -19,6 +19,10 @@ func prodEnvFile() map[string]string {
 		"ATOMICSITE_SHIELD_KEY":     "0123456789abcdef0123456789abcdef",
 		"ATOMICSITE_PRIMARY_DOMAIN": "example.com",
 		"ADMIN_PASSWORD":            "a-long-enough-admin-passphrase",
+		// The docker bridge gateway the host reverse proxy connects
+		// from. A production deploy has to state its trust boundary;
+		// see TestTrustedProxies_ProductionMustDeclareTheBoundary.
+		"ATOMICSITE_TRUSTED_PROXIES": "172.18.0.1/32",
 	}
 }
 
@@ -30,7 +34,7 @@ func applyEnv(t *testing.T, env map[string]string) {
 		"ATOMICSITE_ENV", "BASE_URL", "JWT_SECRET", "ANALYTICS_SALT",
 		"ATOMICSITE_SHIELD_KEY", "ATOMICSITE_PRIMARY_DOMAIN", "BUILT_SITE_SUFFIX",
 		"ADMIN_PASSWORD", "ATOMICSITE_DEPLOYMENT_MODE", "ATOMICSITE_REQUIRE_MFA",
-		"ATOMICSITE_SHIELD_REDIS_URL",
+		"ATOMICSITE_SHIELD_REDIS_URL", "ATOMICSITE_TRUSTED_PROXIES",
 	} {
 		t.Setenv(k, env[k])
 	}
@@ -95,6 +99,20 @@ func TestEnvPosture_LoadAndValidate(t *testing.T) {
 				delete(env, "ANALYTICS_SALT")
 			},
 			wantErr: "ANALYTICS_SALT",
+		},
+		{
+			name: "trusted proxies line missing refuses",
+			mutate: func(env map[string]string) {
+				delete(env, "ATOMICSITE_TRUSTED_PROXIES")
+			},
+			wantErr: "ATOMICSITE_TRUSTED_PROXIES",
+		},
+		{
+			name: "trusted proxies set to none is an accepted opt-out",
+			mutate: func(env map[string]string) {
+				env["ATOMICSITE_TRUSTED_PROXIES"] = TrustedProxiesNone
+			},
+			wantErr: "",
 		},
 		{
 			name: "domain line missing refuses",

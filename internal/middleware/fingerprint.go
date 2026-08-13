@@ -136,10 +136,19 @@ func ClientIP(r *http.Request) string {
 	return clientIP(r)
 }
 
-// clientIP best-effort extracts the client IP. We honour X-Forwarded-For
-// because chi's RealIP middleware (mounted earlier in the stack) sets
-// r.RemoteAddr from it. If neither is present, RemoteAddr survives as the
-// connection peer.
+// clientIP extracts the client IP from r.RemoteAddr and nothing else.
+//
+// The comment here used to say it "honours X-Forwarded-For because
+// chi's RealIP middleware sets r.RemoteAddr from it". chi's RealIP was
+// replaced by TrustedProxyRealIP (realip.go), which honours the
+// forwarded chain only when the immediate TCP peer is in
+// ATOMICSITE_TRUSTED_PROXIES. The behaviour of this function was always
+// correct; only the explanation was stale, and it read as a licence to
+// trust the headers. Audit 2026-08-11 finding 9: two copies in package
+// handlers took that licence and read the headers directly. They now
+// delegate here, so this is the single resolver for every rate-limit
+// key, audit IP and consent ip_hash in the process. It must keep
+// reading only RemoteAddr.
 func clientIP(r *http.Request) string {
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {

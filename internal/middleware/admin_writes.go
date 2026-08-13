@@ -99,8 +99,14 @@ func (l *AdminWriteLimiter) allow(key string) (bool, int) {
 	return true, 0
 }
 
-// Sweep evicts buckets idle longer than maxIdle. Optional housekeeping;
-// the manager calls it periodically to bound memory.
+// Sweep evicts buckets idle longer than maxIdle.
+//
+// Audit 2026-08-11 finding 9, third twin: "the manager calls it
+// periodically to bound memory" described a manager that did not
+// exist, same as consentRateLimiter.sweep and loginRateLimiter.sweep.
+// The buckets map grew one entry per (user, peer-IP) pair for the
+// process lifetime. It is now registered with ratelimit.Sweeper in
+// Server.Router and started from cmd/server.
 func (l *AdminWriteLimiter) Sweep() {
 	cutoff := time.Now().Add(-l.maxIdle).UnixMilli()
 	l.mu.Lock()

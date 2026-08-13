@@ -210,6 +210,9 @@ func goodConfig() *Config {
 		ShieldKey:      "0123456789abcdef0123456789abcdef",
 		PrimaryDomain:  "example.com",
 		DeploymentMode: DeploymentModeSingle,
+		// The trust boundary a production deploy has to declare. See
+		// trustedproxies_test.go for why an absence is refused.
+		TrustedProxies: "172.18.0.1/32",
 	}
 }
 
