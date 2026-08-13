@@ -13,6 +13,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/bright-interaction/slab/internal/netguard"
 )
 
 // hostnamePattern matches a hostname or IP literal. Permits dots, digits,
@@ -39,7 +41,11 @@ const rsyncTimeout = 5 * time.Minute
 // prefix); the handlers decrypt it before constructing the Target this
 // deployer receives, so this package always sees a real PEM. Legacy
 // plaintext rows keep working and upgrade on their next save.
-type RsyncDeployer struct{}
+type RsyncDeployer struct {
+	// allowPrivate disables the SSRF guard on the tenant-supplied host.
+	// TESTS ONLY, unexported, set nowhere in production. See ssrf.go.
+	allowPrivate bool
+}
 
 // NewRsyncDeployer returns a configured RsyncDeployer. Reserved as a
 // constructor in case we later thread in dependencies (clock, logger, etc).
@@ -137,6 +143,15 @@ func (d *RsyncDeployer) Validate(target Target) error {
 	}
 	if !hostnamePattern.MatchString(cfg.Host) {
 		return fmt.Errorf("rsync deploy: host %q is not a valid hostname", cfg.Host)
+	}
+	// SSRF: host is tenant-supplied and Deploy opens an SSH connection to it,
+	// so an unguarded target is a port probe of internal infrastructure whose
+	// ssh stderr comes back in the build log. Offline forms are refused here
+	// at save time; the resolving check runs in Deploy.
+	if !d.allowPrivate {
+		if err := checkHostOffline(cfg.Host); err != nil {
+			return fmt.Errorf("rsync deploy: host %q is not an allowed destination: %w", cfg.Host, err)
+		}
 	}
 	if cfg.User == "" {
 		return errors.New("rsync deploy: user is required")
@@ -258,6 +273,21 @@ func (d *RsyncDeployer) Deploy(ctx context.Context, distDir string, target Targe
 	}
 	if len(entries) == 0 {
 		return Result{}, fmt.Errorf("rsync deploy: dist dir %q is empty; refusing to --delete-sync an empty tree over the live site", distDir)
+	}
+
+	// Resolving SSRF check, immediately before we hand the host to ssh.
+	// Validate already refused the literal forms; this is the one that catches
+	// a hostname whose A/AAAA records point inside.
+	//
+	// Known residual: rsync resolves the name again itself, so this is a
+	// pre-flight without a dial-time hook. The estate's HTTP guards close that
+	// window with net.Dialer.Control, which is not reachable through an
+	// exec'd binary. Narrowing it further means resolving here and passing the
+	// literal IP to ssh, which breaks host-key checking; see the report.
+	if !d.allowPrivate {
+		if err := netguard.CheckHostPublic(cfg.Host); err != nil {
+			return Result{}, fmt.Errorf("rsync deploy: host %q is not an allowed destination: %w", cfg.Host, err)
+		}
 	}
 
 	keyfile, cleanup, err := writeKeyfile(cfg.PrivateKeyPEM)

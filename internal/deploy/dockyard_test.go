@@ -53,11 +53,14 @@ const validKey = "-----BEGIN OPENSSH PRIVATE KEY-----\nfake\n-----END OPENSSH PR
 func validDockyardConfig(t *testing.T, hostPath string) map[string]any {
 	t.Helper()
 	return map[string]any{
-		"dockyard_url":    "https://dockyard.example.com",
-		"api_key":         "test-key",
-		"server_id":       "11111111-2222-3333-4444-555555555555",
-		"domain":          "site.example.com",
-		"host":            "localhost",
+		"dockyard_url": "https://dockyard.example.com",
+		"api_key":      "test-key",
+		"server_id":    "11111111-2222-3333-4444-555555555555",
+		"domain":       "site.example.com",
+		// A public hostname, not "localhost": the SSRF guard added for audit
+		// finding 13 refuses loopback as an rsync destination, and a fixture
+		// that needs the guard off is not a fixture for the happy path.
+		"host":            "deploy.example.com",
 		"user":            "deploy",
 		"port":            22,
 		"private_key_pem": validKey,
@@ -171,6 +174,11 @@ func TestDockyardDeployer_Deploy_RsyncFailureSurfaces(t *testing.T) {
 
 	d := NewDockyardDeployer()
 	d.SetClient(&fakeDockyardClient{})
+	// This test is about a failing rsync surfacing, and the only reliably
+	// dead TCP endpoint is a loopback port nobody bound. allowPrivate keeps
+	// it testing that rather than the SSRF guard, which
+	// TestRsyncDeploy_RefusesInternalHostBeforeExec covers.
+	d.allowPrivate = true
 
 	cfg := validDockyardConfig(t, "/tmp/atomicsite-test-dest")
 	cfg["host"] = "127.0.0.1"
@@ -274,7 +282,9 @@ func TestDockyardDeployer_DeployPostRsync_RouteConflictTreatedOK(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	d := &DockyardDeployer{httpClient: srv.Client(), rsync: NewRsyncDeployer()}
+	// allowPrivate: the httptest server binds loopback, which the finding-13
+	// SSRF guard refuses. The guard itself is covered in ssrf_test.go.
+	d := &DockyardDeployer{httpClient: srv.Client(), rsync: NewRsyncDeployer(), allowPrivate: true}
 	cfg := validDockyardConfig(t, "/var/atomicsite/site")
 	cfg["dockyard_url"] = srv.URL
 	target := Target{ID: "t1", SiteID: "s1", Name: "main", Kind: "dockyard", Config: cfg}
@@ -302,7 +312,9 @@ func TestDockyardDeployer_DeployPostRsync_RouteServerErrorFails(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	d := &DockyardDeployer{httpClient: srv.Client(), rsync: NewRsyncDeployer()}
+	// allowPrivate: the httptest server binds loopback, which the finding-13
+	// SSRF guard refuses. The guard itself is covered in ssrf_test.go.
+	d := &DockyardDeployer{httpClient: srv.Client(), rsync: NewRsyncDeployer(), allowPrivate: true}
 	cfg := validDockyardConfig(t, "/var/atomicsite/site")
 	cfg["dockyard_url"] = srv.URL
 	target := Target{ID: "t1", SiteID: "s1", Name: "main", Kind: "dockyard", Config: cfg}
