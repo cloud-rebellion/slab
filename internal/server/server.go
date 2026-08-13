@@ -1080,9 +1080,61 @@ func (s *Server) Router() http.Handler {
 	s.previewTokens = handlers.NewPreviewTokenManager(s.queries)
 	r.Get("/_preview/{token}", s.previewTokens.Serve)
 
+	// Shield: the LLM-boundary tokenization chokepoint. Built HERE, before
+	// the agent route group, because chi applies r.Use only to routes
+	// registered after it, and because every agent-facing transport has to
+	// resolve its session from this one object.
+	//
+	// It used to be constructed inside the group and handed to the MCP
+	// server alone, which made the PII boundary a property of one transport:
+	// the 2026-08-11 audit found GET /api/agent/context and GET
+	// /api/agent/visitor-metadata serving the same tenant data over the same
+	// X-Agent-Key with no redaction at all, the latter including a visitor's
+	// raw email and the whole CRM metadata map. Both the middleware below
+	// and mcpServer.WithShieldGateway now take this same *shield.Gateway.
+	//
+	// 24-hour TTL: real Claude Code / agent sessions span a full working
+	// day. The previous 30-minute TTL surfaced a hard "shield: session
+	// expired" error after the smallest coffee break, which killed
+	// iteration flow. Tokens are per-session and the X-Agent-Key auth is
+	// the real boundary; the TTL is a housekeeping cap, not a security gate.
+	//
+	// Store backend: Redis when ATOMICSITE_SHIELD_REDIS_URL is set (unlocks
+	// multi-node SaaS: every cluster member sees the same session+token
+	// state). SQLStore fallback for single-node OSS installs, which still
+	// scale to dozens of concurrent agent sessions per box without
+	// distributed coordination.
+	shieldGW := shield.NewGateway(nil, nil, 0, shield.HintFull)
+	if len(s.cfg.ShieldKey) == 32 {
+		shieldStore, storeKind, err := buildShieldStore(s.cfg, s.db)
+		if err != nil {
+			// Reachable in local dev only. In production a malformed
+			// ATOMICSITE_SHIELD_REDIS_URL is refused by config.Validate at
+			// boot, because degrading to shield-disabled here would forward
+			// real buyer names and emails to the model for the life of the
+			// container with one log line as the only signal, and that
+			// contradicts the "a missing crypto key must refuse to start,
+			// not fail open" rule the key guard already states.
+			slog.Error("atomicsite: shield store init failed; shield disabled (local dev only)", "err", err)
+		} else {
+			level := shield.ParseHintLevel(s.cfg.ShieldHintLevel)
+			shieldGW = shield.NewGateway(shieldStore, []byte(s.cfg.ShieldKey), 24*time.Hour, level)
+			slog.Info("atomicsite: shield enabled on every agent transport",
+				"key_id", "atomicsite", "ttl_hours", 24,
+				"hint_level", s.cfg.ShieldHintLevel, "store", storeKind)
+		}
+	} else if s.cfg.ShieldKey != "" {
+		slog.Warn("atomicsite: ATOMICSITE_SHIELD_KEY set but not 32 bytes; shield disabled",
+			"len", len(s.cfg.ShieldKey))
+	}
+
 	// Agent API routes (API key auth)
 	r.Group(func(r chi.Router) {
 		r.Use(s.agentMW.Middleware)
+		// MUST come after agentMW: the shield session is scoped to the
+		// server-resolved (site, key) identity, and the middleware refuses
+		// to run without one.
+		r.Use(authmw.AgentShield(shieldGW))
 
 		agentH := handlers.NewAgentHandler(s.cfg, s.queries, s.db)
 
@@ -1163,42 +1215,12 @@ func (s *Server) Router() http.Handler {
 			WithDiscountCodes(s.discountCodesH).
 			WithOrders(s.ordersH).
 			WithLocales(s.localesH).
-			WithApps(s.appsH)
+			WithApps(s.appsH).
+			// Same Gateway the REST middleware above uses: one store, one
+			// key, one rotation, one set of sessions, so a marker minted
+			// over MCP resolves over REST and vice versa.
+			WithShieldGateway(shieldGW)
 
-		if len(s.cfg.ShieldKey) == 32 {
-			level := shield.ParseHintLevel(s.cfg.ShieldHintLevel)
-			// 24-hour TTL: real Claude Code / agent sessions span a full
-			// working day. The previous 30-minute TTL surfaced a hard
-			// "shield: session expired" MCP error after the smallest
-			// coffee break, which killed iteration flow. Tokens are
-			// per-session and the X-Agent-Key auth is the real boundary;
-			// the TTL is just a housekeeping cap, not a security gate.
-			//
-			// Store backend: Redis when ATOMICSITE_SHIELD_REDIS_URL is set
-			// (unlocks multi-node SaaS - every cluster member sees the same
-			// session+token state). SQLStore fallback for single-node OSS
-			// installs which still scale to dozens of concurrent MCP sessions
-			// per box without distributed coordination.
-			shieldStore, storeKind, err := buildShieldStore(s.cfg, s.db)
-			if err != nil {
-				// Reachable in local dev only. In production a malformed
-				// ATOMICSITE_SHIELD_REDIS_URL is refused by config.Validate at
-				// boot, because degrading to shield-disabled here would forward
-				// real buyer names and emails to the model for the life of the
-				// container with one log line as the only signal, and that
-				// contradicts the "a missing crypto key must refuse to start,
-				// not fail open" rule the key guard already states.
-				slog.Error("atomicsite: shield store init failed; shield disabled (local dev only)", "err", err)
-			} else {
-				mcpServer.WithShield(shieldStore, []byte(s.cfg.ShieldKey), 24*time.Hour, level)
-				slog.Info("atomicsite: shield enabled on MCP boundary",
-					"key_id", "atomicsite", "ttl_hours", 24,
-					"hint_level", s.cfg.ShieldHintLevel, "store", storeKind)
-			}
-		} else if s.cfg.ShieldKey != "" {
-			slog.Warn("atomicsite: ATOMICSITE_SHIELD_KEY set but not 32 bytes; shield disabled",
-				"len", len(s.cfg.ShieldKey))
-		}
 		// Wire the MCP shield-key updater into the admin reload handler
 		// AFTER mcpServer exists. ReloadSecrets reads h.mcp at request
 		// time (not at route registration), so this late binding is safe

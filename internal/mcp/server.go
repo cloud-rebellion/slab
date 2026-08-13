@@ -2,17 +2,13 @@ package mcp
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"sort"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/bright-interaction/slab/internal/agent"
@@ -88,21 +84,21 @@ type Server struct {
 	// still applies, the human just gets to retry media later.
 	media migration.MediaUploader
 
-	// shieldStore + shieldKey wire LLM-boundary tokenization (Shield).
-	// When shieldEnabled is true, tool responses are redacted on the way
-	// out and tool-call arguments are unshielded on the way in. Off by
-	// default; flipped on by WithShield() at server construction.
+	// shieldGW is the SHARED LLM-boundary tokenization chokepoint
+	// (internal/shield.Gateway). When it is enabled, tool + resource
+	// responses are redacted on the way out and tool-call arguments are
+	// unshielded on the way in.
 	//
-	// shieldHintLevel dials how much value-derived metadata appears on
-	// markers (HintFull preserves v1 behavior; HintMinimal/HintNone
-	// hide identifying hints when the moat needs the agent to know
-	// "same person across turns" but not "who that person is").
-	shieldStore     shield.Store
-	shieldMu        sync.RWMutex // guards shieldKey so /admin/reload-secrets can hot-swap
-	shieldKey       []byte
-	shieldEnabled   bool
-	shieldTTL       time.Duration
-	shieldHintLevel shield.HintLevel
+	// The store and key used to be private fields of this struct, which
+	// made the PII boundary a property of the MCP transport instead of the
+	// product; the REST agent API served the same tenant data over the
+	// same X-Agent-Key with no redaction at all. The Gateway is now built
+	// once in internal/server and handed to every agent-facing transport.
+	// Do NOT reintroduce per-transport store/key fields here.
+	//
+	// Nil / disabled by default so existing tests and dev installs without
+	// an ATOMICSITE_SHIELD_KEY keep working.
+	shieldGW *shield.Gateway
 
 	// previewTokens + loopbackPort wire the preview_screenshot tool: the
 	// tool mints a one-shot token via previewTokens.Mint, drives chromedp
@@ -280,24 +276,22 @@ func (s *Server) WithMediaUploader(m migration.MediaUploader) *Server {
 // session token ids the agent still gets stable identity ("the same
 // lead across this conversation"), but no identifying hints leak.
 func (s *Server) WithShield(store shield.Store, key []byte, ttl time.Duration, hintLevel shield.HintLevel) *Server {
-	if store == nil || len(key) != 32 {
+	return s.WithShieldGateway(shield.NewGateway(store, key, ttl, hintLevel))
+}
+
+// WithShieldGateway wires the SHARED Shield chokepoint. This is the form
+// internal/server uses, because the same *shield.Gateway also backs the
+// REST agent surface's middleware: one store, one key, one rotation, one
+// set of sessions, so a marker minted over MCP resolves over REST and
+// vice versa.
+//
+// WithShield is kept as the convenience wrapper for tests that construct
+// an MCP server on its own.
+func (s *Server) WithShieldGateway(gw *shield.Gateway) *Server {
+	if !gw.Enabled() {
 		return s
 	}
-	s.shieldStore = store
-	s.shieldMu.Lock()
-	s.shieldKey = key
-	s.shieldMu.Unlock()
-	s.shieldEnabled = true
-	s.shieldHintLevel = hintLevel
-	if ttl > 0 {
-		s.shieldTTL = ttl
-	} else {
-		// 24h default lets real Claude Code / agent conversations span
-		// a full working day. Caller can override to a shorter TTL for
-		// stricter deployments. The TTL is housekeeping, not auth;
-		// X-Agent-Key validation upstream is the security boundary.
-		s.shieldTTL = 24 * time.Hour
-	}
+	s.shieldGW = gw
 	return s
 }
 
@@ -312,34 +306,20 @@ func (s *Server) WithShield(store shield.Store, key []byte, ttl time.Duration, h
 // wrong length, or the value is byte-identical to the current key. The
 // rotation engine treats a returned error as a phase-1 failure and
 // records it in the entry's last_rotation_error.
+// Same-value updates are a no-op rather than an error so the rotation
+// engine's dual-phase delivery (open-grace then close-grace, both sending
+// the new value) lands cleanly. The allowlist drops SHIELD_KEY_PREVIOUS,
+// so phase-2 looks identical to phase-1 by the time we see it.
+//
+// Rotating through the Gateway rotates the REST agent surface too: both
+// transports read the same key.
 func (s *Server) UpdateShieldKey(newKey []byte) error {
-	if !s.shieldEnabled {
-		return fmt.Errorf("shield: not enabled, cannot rotate key")
-	}
-	if len(newKey) != 32 {
-		return fmt.Errorf("shield: key must be 32 bytes, got %d", len(newKey))
-	}
-	s.shieldMu.Lock()
-	defer s.shieldMu.Unlock()
-	if len(s.shieldKey) == 32 && string(s.shieldKey) == string(newKey) {
-		// Same-value updates are a no-op rather than an error so the
-		// rotation engine's dual-phase delivery (open-grace then
-		// close-grace, both sending the new value) lands cleanly. The
-		// allowlist drops SHIELD_KEY_PREVIOUS, so phase-2 looks
-		// identical to phase-1 by the time we see it.
-		return nil
-	}
-	// Make a defensive copy so the caller cannot zero the buffer underneath
-	// concurrent NewSession reads that capture this slice header.
-	dup := make([]byte, 32)
-	copy(dup, newKey)
-	s.shieldKey = dup
-	return nil
+	return s.shieldGW.UpdateKey(newKey)
 }
 
 // ShieldEnabled reports whether tokenization is active. Used by the
 // admin AgentSurface to surface the privacy invariant to operators.
-func (s *Server) ShieldEnabled() bool { return s.shieldEnabled }
+func (s *Server) ShieldEnabled() bool { return s.shieldGW.Enabled() }
 
 // beginShieldSession returns the per-request shield Session, scoped to
 // the SERVER-resolved agent identity (site + key). Returns nil + nil
@@ -356,7 +336,7 @@ func (s *Server) ShieldEnabled() bool { return s.shieldEnabled }
 // the authenticated X-Agent-Key row (agent_auth middleware), not from
 // the request body or headers, so they cannot be spoofed.
 func (s *Server) beginShieldSession(r *http.Request, identity *authmw.AgentIdentity) (*shield.Session, error) {
-	if !s.shieldEnabled {
+	if !s.shieldGW.Enabled() {
 		return nil, nil
 	}
 	if identity == nil {
@@ -367,17 +347,7 @@ func (s *Server) beginShieldSession(r *http.Request, identity *authmw.AgentIdent
 	// Optional client-supplied sub-scope so one agent can keep multiple
 	// independent tokenization contexts; it can only ever scope within
 	// the caller's own (site, key) namespace, never across it.
-	sub := r.Header.Get("Mcp-Session-Id")
-	if sub == "" {
-		sub = "default"
-	}
-	sum := sha256.Sum256([]byte(identity.SiteID + "\x00" + identity.KeyID + "\x00" + sub))
-	id := "s_" + hex.EncodeToString(sum[:16])
-
-	s.shieldMu.RLock()
-	key := s.shieldKey
-	s.shieldMu.RUnlock()
-	return shield.NewSession(r.Context(), s.shieldStore, id, key, s.shieldTTL, s.shieldHintLevel)
+	return s.shieldGW.Begin(r.Context(), identity.SiteID, identity.KeyID, r.Header.Get("Mcp-Session-Id"))
 }
 
 // NewServer constructs an MCP server with every registered tool /
@@ -858,14 +828,22 @@ func (s *Server) handlePromptsGet(r *http.Request, identity *authmw.AgentIdentit
 		// system/user context. Run the redact pass over each one so
 		// any embedded PII (entity ids, emails inlined into a
 		// playbook) becomes a marker before reaching the LLM.
+		//
+		// Fail CLOSED when the redact pass errors, exactly like tools/call
+		// and resources/read above. This loop used to swallow rerr and keep
+		// the UNREDACTED text, which is the one outcome the whole boundary
+		// exists to prevent: a tokenization failure would hand the raw
+		// prompt, PII included, straight to the model. Its two siblings
+		// withhold, so this one withholds too.
 		for i := range msgs {
 			if msgs[i].Content.Text == "" {
 				continue
 			}
 			redacted, rerr := session.RedactString(ctx, msgs[i].Content.Text)
-			if rerr == nil {
-				msgs[i].Content.Text = redacted
+			if rerr != nil {
+				return nil, &ResponseError{Code: ErrInternal, Message: "shield redaction failed; prompt withheld"}
 			}
+			msgs[i].Content.Text = redacted
 		}
 	}
 

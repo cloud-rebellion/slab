@@ -148,7 +148,7 @@ func (s *Server) AgentSurface() AgentSurface {
 		Resources: resources,
 		Prompts:   prompts,
 		Knowledge: docs,
-		PrivacyInvariants: shieldInvariants(s.shieldEnabled, []string{
+		PrivacyInvariants: shieldInvariants(s.ShieldEnabled(), []string{
 			"No tool reads visitor metadata, sessions, fingerprints, or identified-tier records.",
 			"consent/stats returns aggregates only.",
 			"raw_astro and security-category writes are admin-only.",
