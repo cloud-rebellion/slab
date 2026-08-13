@@ -120,11 +120,10 @@ func (m *PreviewTokenManager) Serve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.Header().Set("Cache-Control", "no-store, must-revalidate")
-	w.Header().Set("X-Frame-Options", "SAMEORIGIN")
-	w.Header().Set("X-Robots-Tag", "noindex, nofollow")
-	_, _ = w.Write([]byte(html))
+	// Headers, including the CSP that contains this document, are set in
+	// serveDraftPreview so all three RenderPageDraft routes share one policy.
+	// This route previously set no CSP at all.
+	serveDraftPreview(w, html)
 }
 
 // MintAndCount is a hook used in tests to assert ticket lifecycle.

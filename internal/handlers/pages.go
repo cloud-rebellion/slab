@@ -466,11 +466,11 @@ func (h *PageHandler) PageDraftPreview(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.Header().Set("Cache-Control", "no-store, must-revalidate")
-	w.Header().Set("X-Frame-Options", "SAMEORIGIN")
-	w.Header().Set("X-Robots-Tag", "noindex, nofollow")
-	_, _ = w.Write([]byte(html))
+	// Headers, including the CSP that contains this document, are set in
+	// serveDraftPreview so all three RenderPageDraft routes share one policy.
+	// This route previously set no CSP at all, which is what made the stored
+	// component template a same-origin privilege escalation.
+	serveDraftPreview(w, html)
 }
 
 // PreviewSource returns the assembled .astro source for a single page so the

@@ -52,6 +52,135 @@ func TestRawBlockSinksAreSanitized(t *testing.T) {
 	}
 }
 
+// ---------------------------------------------------------------------------
+// The component-template sink.
+//
+// TestRawBlockSinksAreSanitized above hand-lists custom and raw_astro. The
+// registered-component sink is not on that list, and that omission is the
+// whole defect: renderRegisteredComponentInline emits a stored template body
+// verbatim into the draft-preview document, and a write-scoped agent key can
+// store that template.
+//
+// It is NOT fixed by sanitizing. A registered component IS Astro source, so
+// its <style> and <script> are the feature, locked in by
+// draft_preview_inline_test.go. Running it through rawHTMLPolicy would strip
+// the script and break the animation the preview exists to show. The honest
+// statement of the contract is therefore the opposite of the other sinks:
+// this one is trusted-by-design at the markup layer, and its containment is
+// the response-level sandbox CSP in handlers.DraftPreviewCSP.
+//
+// So the guard below asserts the property that actually holds, and pins the
+// reason, rather than asserting a sanitization that would be a lie.
+// ---------------------------------------------------------------------------
+
+// TestComponentTemplateSinkIsDeliberatelyRawAndDocumentedAsSuch pins that the
+// component-template sink emits script verbatim BY DESIGN. If someone later
+// makes it sanitize, this test fails and forces them to notice they are
+// breaking the animation feature rather than discovering it in production.
+// If someone instead removes the CSP that contains it, the handlers-side
+// guard fails. Between the two, the sink cannot silently become unsafe.
+func TestComponentTemplateSinkIsDeliberatelyRawAndDocumentedAsSuch(t *testing.T) {
+	const tpl = `---
+const { label } = Astro.props;
+---
+<section><p>{label}</p><script>console.log('component animation')</script></section>
+`
+	got, ok := renderRegisteredComponentInline(tpl, `{"props":{"label":"hi"}}`)
+	if !ok {
+		t.Fatalf("renderRegisteredComponentInline returned ok=false")
+	}
+	if !strings.Contains(got, "<script>") {
+		t.Fatalf("the component sink no longer emits <script> verbatim.\n"+
+			"That is a behaviour change, not a bugfix: draft_preview_inline_test.go "+
+			"requires the component animation to run in the preview. If this was "+
+			"intentional, delete this test and the animation feature together.\ngot: %q", got)
+	}
+
+	// The containment this sink depends on must exist and must not have been
+	// weakened to a same-origin sandbox, which would be decorative.
+	//
+	// builder cannot import handlers (handlers imports builder), so this reads
+	// the source. It must read the CONST DECLARATION and not the whole file:
+	// the first cut of this check scanned the file text, and the doc comment
+	// above the constant explains the sandbox directive at length, so deleting
+	// the directive from the actual policy still left the phrase in the
+	// comment and the guard passed. Caught by ablating the directive and
+	// watching this test stay green.
+	csp := draftPreviewCSPValue(t)
+	if !strings.Contains(csp, "sandbox allow-scripts") {
+		t.Errorf("handlers.DraftPreviewCSP no longer sandboxes the draft preview; "+
+			"the component-template sink emits agent-stored script verbatim and has "+
+			"no other containment.\nconst value: %q", csp)
+	}
+	if strings.Contains(csp, "allow-same-origin") {
+		t.Errorf("handlers.DraftPreviewCSP grants allow-same-origin, which returns the "+
+			"admin origin to a document containing agent-stored script.\nconst value: %q", csp)
+	}
+}
+
+// draftPreviewCSPStringRE pulls the quoted segments out of the
+// `const DraftPreviewCSP = "..." + "..."` declaration, ignoring the doc
+// comment above it.
+var draftPreviewCSPStringRE = regexp.MustCompile(`"([^"]*)"`)
+
+// draftPreviewCSPValue reconstructs the VALUE of handlers.DraftPreviewCSP from
+// source, so this guard cannot be satisfied by prose.
+func draftPreviewCSPValue(t *testing.T) string {
+	t.Helper()
+	src, err := os.ReadFile("../handlers/draft_preview_serve.go")
+	if err != nil {
+		t.Fatalf("the component sink is contained by handlers.DraftPreviewCSP, "+
+			"and that file is now unreadable: %v", err)
+	}
+	body := string(src)
+	start := strings.Index(body, "const DraftPreviewCSP =")
+	if start < 0 {
+		t.Fatal("const DraftPreviewCSP not found in handlers/draft_preview_serve.go; " +
+			"this guard is keyed on it and has drifted")
+	}
+	// The declaration runs to the first line that does not continue the
+	// concatenation with a trailing '+'.
+	decl := body[start:]
+	var b strings.Builder
+	for i, line := range strings.Split(decl, "\n") {
+		b.WriteString(line)
+		b.WriteString("\n")
+		trimmed := strings.TrimSpace(line)
+		if i > 0 || !strings.HasSuffix(trimmed, "+") {
+			if !strings.HasSuffix(trimmed, "+") {
+				break
+			}
+		}
+	}
+	var value strings.Builder
+	for _, m := range draftPreviewCSPStringRE.FindAllStringSubmatch(b.String(), -1) {
+		value.WriteString(m[1])
+	}
+	got := value.String()
+	if got == "" {
+		t.Fatal("parsed an empty value for DraftPreviewCSP; the parser has drifted")
+	}
+	return got
+}
+
+// TestComponentTemplateSinkPropsStayEscaped is the half of this sink that IS
+// a sanitization contract. The template body is trusted; the PROPS are block
+// data and are not. This is the boundary the sink actually has to hold.
+func TestComponentTemplateSinkPropsStayEscaped(t *testing.T) {
+	const tpl = `---
+const { label } = Astro.props;
+---
+<section><p>{label}</p></section>
+`
+	got, ok := renderRegisteredComponentInline(tpl, `{"props":{"label":"<script>alert(1)</script>"}}`)
+	if !ok {
+		t.Fatalf("renderRegisteredComponentInline returned ok=false")
+	}
+	if strings.Contains(got, "<script>alert(1)</script>") {
+		t.Errorf("a prop value reached the preview document as live markup: %q", got)
+	}
+}
+
 // raw_astro is a CODE sink, not just a markup sink: its output is written into
 // a generated .astro file where `{expr}` is evaluated by Astro in Node at build
 // time, with the build process environment in scope. Sanitizing HTML does not

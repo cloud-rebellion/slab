@@ -142,22 +142,9 @@ func (h *AgentHandler) DraftPreview(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "Failed to render preview")
 		return
 	}
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.Header().Set("Cache-Control", "no-store, must-revalidate")
-	w.Header().Set("X-Frame-Options", "SAMEORIGIN")
-	w.Header().Set("X-Robots-Tag", "noindex, nofollow")
-	w.Header().Set("X-Content-Type-Options", "nosniff")
-	// The draft preview embeds agent-authored HTML inside the authed admin
-	// origin. A strict CSP with script-src 'none' neutralizes stored XSS: even
-	// if a block smuggles <script>/onerror= past the input guardrail and the
-	// render-time sanitizer, it cannot execute in the admin's session context.
-	// This mirrors the production CSP's no-inline-script stance; the preview is
-	// for visual/structure inspection, not script execution.
-	w.Header().Set("Content-Security-Policy",
-		"default-src 'none'; img-src 'self' data: https:; style-src 'self' 'unsafe-inline'; "+
-			"font-src 'self' https: data:; script-src 'none'; base-uri 'none'; "+
-			"form-action 'none'; frame-ancestors 'self'")
-	_, _ = w.Write([]byte(html))
+	// Headers, including the CSP that contains this document, are set in
+	// serveDraftPreview so all three RenderPageDraft routes share one policy.
+	serveDraftPreview(w, html)
 }
 
 // ListPages returns every page on the agent's site, published and draft.
