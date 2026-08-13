@@ -17,11 +17,77 @@ import (
 // pattern below) sets group to the index of the submatch that should
 // actually be tokenized, so the boundary character is matched to anchor
 // the pattern but is never touched by the replacement.
+// accept is an optional second stage: the regex proposes, accept disposes.
+// A nil accept means every regex match is taken.
+//
+// RE2 has no lookaround and no counting across alternations, so a pattern
+// whose real definition includes an arithmetic or calendar constraint
+// ("a phone number carries at least eight digits", "a personnummer starts
+// with a date") cannot express that constraint in the regex itself. Before
+// this hook those constraints lived only in the comment above each pattern,
+// and both had drifted away from what the regex actually matched, which is
+// how a SQLite timestamp came to be tokenized as a phone number in every
+// agent API response. Encoding them as code keeps the doc and the behaviour
+// from disagreeing again.
+//
+// A validator may only ever NARROW a match, and only on grounds that no
+// genuine value of that kind can fail. Widening belongs in the regex, where
+// it is visible.
 type redactPattern struct {
-	kind  Kind
-	re    *regexp.Regexp
-	group int
-	hint  []string // hint keys to extract on match
+	kind   Kind
+	re     *regexp.Regexp
+	group  int
+	hint   []string // hint keys to extract on match
+	accept func(match string) bool
+}
+
+// countDigits returns how many ASCII digits appear in s.
+func countDigits(s string) int {
+	n := 0
+	for i := 0; i < len(s); i++ {
+		if s[i] >= '0' && s[i] <= '9' {
+			n++
+		}
+	}
+	return n
+}
+
+// looksLikeDatePrefix reports whether the first six digits of s form a
+// plausible YYMMDD (or the last six of a YYYYMMDD), which every Swedish
+// personnummer does by construction: it is a birth date followed by a
+// four-digit birth number.
+//
+// This is a calendar check, not a validity check. It deliberately does NOT
+// verify the Luhn control digit or the real length of the month, because a
+// mistyped-but-real personnummer is still personal data and must still be
+// tokenized. It only rejects a digit run whose date field could not be a
+// date at all, which no real personnummer can fail.
+func looksLikeDatePrefix(s string) bool {
+	digits := make([]byte, 0, 12)
+	for i := 0; i < len(s); i++ {
+		if s[i] >= '0' && s[i] <= '9' {
+			digits = append(digits, s[i])
+		}
+	}
+	// A 12-digit form carries the century; the date starts after it.
+	if len(digits) >= 12 {
+		digits = digits[len(digits)-10:]
+	}
+	if len(digits) < 6 {
+		return false
+	}
+	month := int(digits[2]-'0')*10 + int(digits[3]-'0')
+	day := int(digits[4]-'0')*10 + int(digits[5]-'0')
+	// Day 61..91 is the coordination-number (samordningsnummer) form: the
+	// real day plus 60. It is issued to people without a personnummer and
+	// is exactly as sensitive, so it is accepted here.
+	if month < 1 || month > 12 {
+		return false
+	}
+	if day < 1 || (day > 31 && (day < 61 || day > 91)) {
+		return false
+	}
+	return true
 }
 
 var redactPatterns = []redactPattern{
@@ -31,6 +97,23 @@ var redactPatterns = []redactPattern{
 		// dash. 10 or 12 digits with optional dash separator.
 		re:   regexp.MustCompile(`\b(?:19|20)?\d{6}[-\s]?\d{4}\b`),
 		hint: []string{"century"},
+		// A personnummer BEGINS with a birth date, so a bare digit run
+		// whose date field is not a date is not one. Without this, every
+		// unbroken ten-digit run matched, which is every unix timestamp
+		// for the next two centuries and most generated ids: the tenant
+		// slug demo-1700000000 was tokenized as a personnummer in the
+		// build log, so the operator could not read where their own site
+		// had published.
+		//
+		// This cannot cost a real detection. The check reads only the
+		// month and day fields, which every personnummer and every
+		// samordningsnummer populates by construction, and it does not
+		// look at the control digit, so a mistyped or fabricated number
+		// of the right shape is still tokenized. An id that does happen
+		// to carry a valid date field still matches, deliberately: shape
+		// alone cannot separate it from a real number, and tokenizing is
+		// the safe side of that ambiguity.
+		accept: looksLikeDatePrefix,
 	},
 	{
 		kind: KindIBAN,
@@ -84,6 +167,22 @@ var redactPatterns = []redactPattern{
 		// \b boundary, so this alternative cannot fire inside a blob either.
 		re:   regexp.MustCompile(`\b0\d{1,3}[\s\-().]+\d{2,4}[\s\-().]*\d{2,4}[\s\-().]*\d{0,4}\b`),
 		hint: []string{"country", "len"},
+		// The regex above accepts as few as FIVE digits, while the line
+		// that documents it says "a leading 0 then 8..10 more digits".
+		// That gap is not cosmetic: a SQLite timestamp is "2026-08-13
+		// 18:41:42", the separator class contains '-' and ' ' but not
+		// ':', and the run "08-13 18" is a clean six-digit match. Every
+		// created_at and updated_at crossing the agent boundary came back
+		// as "2026-[shield:phone:...]:41:42", observed in production on
+		// the first agent call after the per-leaf scan shipped.
+		//
+		// Restoring the documented count closes the whole date class
+		// rather than special-casing dates: a YYYY-MM-DD HH:MM:SS stamp
+		// can never reach past the ':', so it tops out at six digits, and
+		// nothing shorter than eight is a dialable Swedish number in
+		// national form anyway. Real numbers are unaffected: 08-594 118
+		// 50 and 070-123 45 67 both carry ten.
+		accept: func(m string) bool { return countDigits(m) >= 8 },
 	},
 }
 
@@ -158,6 +257,14 @@ func replacePatternGroup(p redactPattern, in string, replace func(match string) 
 		}
 		b.WriteString(in[last:start])
 		target := in[start:end]
+		// The second stage. A rejected match is copied through verbatim,
+		// exactly like a match the caller declines, so a validator can
+		// never drop text.
+		if p.accept != nil && !p.accept(target) {
+			b.WriteString(target)
+			last = end
+			continue
+		}
 		repl, ok := replace(target)
 		if ok {
 			b.WriteString(repl)
