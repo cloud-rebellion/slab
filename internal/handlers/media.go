@@ -14,6 +14,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 
@@ -768,9 +769,53 @@ func (h *MediaHandler) processAndSave(ctx context.Context, siteID, filename, alt
 	return &m, http.StatusCreated, ""
 }
 
-// fetchWithSSRFGuard downloads a URL with strict SSRF protection.
-// Blocks private IP ranges, limits body size, follows up to 3 redirects re-checking each.
+// mediaFetchMaxRedirects caps the redirect chain on a tenant-supplied media
+// URL. Three hops is slack for a CDN sitting in front of an image, not a
+// feature.
+const mediaFetchMaxRedirects = 3
+
+// mediaFetchTimeout bounds one media fetch end to end. The client this
+// replaced set no Timeout at all and leaned entirely on the request context,
+// so a slow upstream held a server goroutine for as long as the server's
+// write timeout allowed. Matches migration.DefaultTimeout.
+const mediaFetchTimeout = 30 * time.Second
+
+// fetchWithSSRFGuard downloads a tenant-supplied URL for the agent
+// upload-from-url endpoint.
+//
+// The guard has two halves and BOTH are required:
+//
+//   - netguard.CheckHostPublic is the pre-flight. It rejects an IP literal in
+//     a forbidden range, rejects localhost without depending on it being in
+//     DNS, and rejects a hostname whose records point inside.
+//   - netguard.SafeTransport's Control hook is the half that survives DNS
+//     rebinding. It runs after resolution and immediately before connect,
+//     against the address actually being dialled, on the initial request and
+//     on every redirect hop.
+//
+// This function used to have only the first half. It resolved the host with
+// net.LookupIP, checked the answers, and then handed the URL to a bare
+// &http.Client{}, which uses http.DefaultTransport and therefore resolves DNS
+// AGAIN when it dials. Nothing required the address that was checked and the
+// address that was connected to to be the same one, so a record with a ~0s
+// TTL answered public for the pre-flight and 169.254.169.254 for the dial.
+// Any write-scoped agent key could reach cloud metadata, the Tailscale range
+// and localhost through it. The per-redirect re-check was the same shape with
+// the same hole. The doc comment claimed "strict SSRF protection" throughout.
 func fetchWithSSRFGuard(ctx context.Context, rawURL string, maxSize int64) ([]byte, string, error) {
+	return fetchWithSSRFGuardAllowingPrivate(ctx, rawURL, maxSize, false)
+}
+
+// fetchWithSSRFGuardAllowingPrivate is fetchWithSSRFGuard with the test-only
+// seam the estate's other guarded fetchers already carry
+// (migration.FetchOptions.AllowPrivate, deploy.newGuardedHTTPClient): an
+// httptest.Server binds loopback, which the dial hook correctly refuses.
+//
+// allowPrivate relaxes the pre-flight and the dial hook only. The redirect
+// policy stays on unconditionally, because a redirect target is chosen by the
+// upstream rather than by the caller, so there is no legitimate reason to
+// relax it even in a test. Never true outside _test.go.
+func fetchWithSSRFGuardAllowingPrivate(ctx context.Context, rawURL string, maxSize int64, allowPrivate bool) ([]byte, string, error) {
 	u, err := url.Parse(rawURL)
 	if err != nil {
 		return nil, "", fmt.Errorf("invalid URL")
@@ -778,36 +823,24 @@ func fetchWithSSRFGuard(ctx context.Context, rawURL string, maxSize int64) ([]by
 	if u.Scheme != "http" && u.Scheme != "https" {
 		return nil, "", fmt.Errorf("only http/https URLs allowed")
 	}
-
-	// DNS resolve + block private ranges
-	host := u.Hostname()
-	ips, err := net.LookupIP(host)
-	if err != nil {
-		return nil, "", fmt.Errorf("DNS lookup failed: %s", host)
-	}
-	for _, ip := range ips {
-		if isPrivateIP(ip) {
-			return nil, "", fmt.Errorf("private address blocked: %s", ip)
-		}
+	if u.Host == "" {
+		return nil, "", fmt.Errorf("URL missing host")
 	}
 
 	client := &http.Client{
-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			if len(via) >= 3 {
-				return fmt.Errorf("too many redirects")
-			}
-			// Re-check each redirect target for SSRF
-			ips, err := net.LookupIP(req.URL.Hostname())
-			if err != nil {
-				return err
-			}
-			for _, ip := range ips {
-				if isPrivateIP(ip) {
-					return fmt.Errorf("redirect to private address blocked")
-				}
-			}
-			return nil
-		},
+		Timeout:       mediaFetchTimeout,
+		Transport:     netguard.SafeTransport(),
+		CheckRedirect: netguard.CheckRedirect(mediaFetchMaxRedirects),
+	}
+	if allowPrivate {
+		client.Transport = &http.Transport{
+			DialContext:           (&net.Dialer{Timeout: 10 * time.Second}).DialContext,
+			ForceAttemptHTTP2:     true,
+			TLSHandshakeTimeout:   10 * time.Second,
+			ExpectContinueTimeout: 1 * time.Second,
+		}
+	} else if err := netguard.CheckHostPublic(u.Hostname()); err != nil {
+		return nil, "", fmt.Errorf("destination not allowed: %w", err)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
