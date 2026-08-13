@@ -3,6 +3,7 @@ package eval
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"math"
 
 	"github.com/bright-interaction/slab/internal/agent"
@@ -73,6 +74,9 @@ func RunCWVChecks(ctx context.Context, queries *store.Queries, siteID string, fi
 	}
 	var checks []CheckResult
 	for _, metric := range cwvMetricOrder {
+		t := cwvMetricThresholds[metric]
+		weight := cwvWeightFor(metric, fidelity)
+		name := fmt.Sprintf("Measured %s (p75, 7d)", metric)
 		rows, err := queries.ListCWVValuesForWindow(ctx, store.ListCWVValuesForWindowParams{
 			SiteID:   siteID,
 			Metric:   metric,
@@ -81,11 +85,15 @@ func RunCWVChecks(ctx context.Context, queries *store.Queries, siteID string, fi
 			Datetime: cwvWindow,
 		})
 		if err != nil {
+			// A bare `continue` here deleted the metric from the report
+			// entirely: the performance denominator shrank and the grade came
+			// from static markup only, which is the exact hole this file
+			// exists to close. Say so instead, and log it.
+			slog.Error("eval: cwv query failed", "site_id", siteID, "metric", metric, "err", err)
+			checks = append(checks, Info(name, "cwv",
+				"measurement query failed; this metric was not graded for this build"))
 			continue
 		}
-		t := cwvMetricThresholds[metric]
-		weight := cwvWeightFor(metric, fidelity)
-		name := fmt.Sprintf("Measured %s (p75, 7d)", metric)
 		if len(rows) < cwvMinSamples {
 			checks = append(checks, Info(name, "cwv",
 				fmt.Sprintf("%d samples (need %d for grading)", len(rows), cwvMinSamples)))

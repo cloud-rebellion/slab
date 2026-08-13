@@ -6,6 +6,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	"golang.org/x/net/html"
 )
 
 // hstsMaxAgeRE captures `max-age=N` from a Strict-Transport-Security header.
@@ -90,19 +92,19 @@ func RunSecurityChecks(site *SiteContext) []CheckResult {
 	}
 
 	// 12. No mixed content
-	mixedFound := false
-	for _, p := range site.Pages {
-		if hasMixedContent(p.HTML) {
-			mixedFound = true
-			break
+	checks = append(checks, siteWideCheck("No Mixed Content", "mixed", site, func() CheckResult {
+		for _, p := range site.Pages {
+			if found := mixedContentRefs(p.Doc); len(found) > 0 {
+				r := Fail("No Mixed Content", "mixed", 2, SeverityError,
+					fmt.Sprintf("%d subresource(s) loaded over http:// on %s: %s",
+						len(found), p.Slug, strings.Join(firstN(found, 3), ", ")),
+					"Load every image, script, stylesheet, font, iframe and media file over https:// or a relative URL. Ordinary <a href=\"http://\"> links are NOT mixed content and are not counted here.")
+				r.Page = p.Slug
+				return r
+			}
 		}
-	}
-	if mixedFound {
-		checks = append(checks, Fail("No Mixed Content", "mixed", 2, SeverityError,
-			"http:// URLs found in HTML", "Replace all http:// links/sources with https:// or relative URLs."))
-	} else {
-		checks = append(checks, Pass("No Mixed Content", "mixed", 2, "All resources HTTPS or relative"))
-	}
+		return Pass("No Mixed Content", "mixed", 2, "All subresources load over HTTPS or a relative URL")
+	}))
 
 	// 13. security.txt
 	if site.SecurityTxt != "" {
@@ -194,23 +196,74 @@ func checkHeadersArtifactParity(site *SiteContext) CheckResult {
 		return Info("Headers In Deploy Artifacts", "headers",
 			"No _headers or nginx.conf artifact emitted for this build; header intent could not be cross-checked against an artifact.")
 	}
-	var missing []string
+	var missing, mismatched []string
 	for name, value := range site.Headers {
 		if value == "" {
 			continue
 		}
-		if !strings.Contains(artifacts, name) {
+		switch artifactHeaderState(artifacts, name, value) {
+		case headerAbsent:
 			missing = append(missing, name)
+		case headerWrongValue:
+			mismatched = append(mismatched, name)
 		}
 	}
-	if len(missing) > 0 {
+	if len(missing) > 0 || len(mismatched) > 0 {
 		sort.Strings(missing)
+		sort.Strings(mismatched)
+		var parts []string
+		if len(missing) > 0 {
+			parts = append(parts, "missing from the emitted _headers/nginx.conf: "+strings.Join(missing, ", "))
+		}
+		if len(mismatched) > 0 {
+			parts = append(parts, "present but carrying a different value than the build computed: "+strings.Join(mismatched, ", "))
+		}
 		return Fail("Headers In Deploy Artifacts", "headers", 2, SeverityError,
-			fmt.Sprintf("computed security headers missing from the emitted _headers/nginx.conf: %s", strings.Join(missing, ", ")),
-			"The build config promises these headers but the deploy artifact does not carry them; rebuild, and if it persists this is a builder bug worth reporting.")
+			"computed security headers "+strings.Join(parts, "; "),
+			"The build config promises these headers but the deploy artifact does not carry them as computed; rebuild, and if it persists this is a builder bug worth reporting.")
 	}
 	return Pass("Headers In Deploy Artifacts", "headers", 2,
-		"every computed security header appears in the emitted deploy artifacts")
+		"every computed security header appears in the emitted deploy artifacts with the computed value")
+}
+
+type artifactHeaderVerdict int
+
+const (
+	headerMatches artifactHeaderVerdict = iota
+	headerAbsent
+	headerWrongValue
+)
+
+// artifactHeaderState cross-checks ONE header against the emitted artifacts.
+// Comparing names only meant a stale or hand-edited artifact emitting
+// X-Frame-Options "ALLOWALL" passed the very check written to catch a deploy
+// artifact that disagrees with the build config.
+func artifactHeaderState(artifacts, name, value string) artifactHeaderVerdict {
+	wantName := strings.ToLower(name)
+	wantValue := normalizeHeaderValue(value)
+	found := false
+	for _, line := range strings.Split(artifacts, "\n") {
+		lower := strings.ToLower(line)
+		if !strings.Contains(lower, wantName) {
+			continue
+		}
+		found = true
+		// nginx escapes embedded double quotes; _headers does not quote at all.
+		got := normalizeHeaderValue(strings.ReplaceAll(line, `\"`, `"`))
+		if strings.Contains(got, wantValue) {
+			return headerMatches
+		}
+	}
+	if !found {
+		return headerAbsent
+	}
+	return headerWrongValue
+}
+
+// normalizeHeaderValue collapses whitespace and lowercases so an artifact that
+// differs only in spacing or casing still counts as a match.
+func normalizeHeaderValue(v string) string {
+	return strings.Join(strings.Fields(strings.ToLower(v)), " ")
 }
 
 // analyzeCSP returns "strong", "moderate", or "weak" plus list of issues.
@@ -315,23 +368,70 @@ func isThirdPartyURL(u string) bool {
 	return strings.HasPrefix(u, "http://") || strings.HasPrefix(u, "https://") || strings.HasPrefix(u, "//")
 }
 
-func hasMixedContent(htmlStr string) bool {
-	// Heuristic: any "http://" URL inside src= or href= that isn't localhost
-	lower := strings.ToLower(htmlStr)
-	for _, prefix := range []string{`src="http://`, `src='http://`, `href="http://`, `href='http://`} {
-		idx := strings.Index(lower, prefix)
-		for idx >= 0 {
-			// ignore http://localhost, http://127.0.0.1
-			rest := lower[idx+len(prefix):]
-			if !strings.HasPrefix(rest, "localhost") && !strings.HasPrefix(rest, "127.") {
-				return true
+// subresourceAttrs maps an element to the attributes through which it LOADS a
+// subresource. A plain <a href="http://..."> is navigation, not a subresource:
+// no browser calls it mixed content, and the old substring scan failed the
+// check on it and told the tenant to break the link.
+var subresourceAttrs = map[string][]string{
+	"img":    {"src", "srcset"},
+	"script": {"src"},
+	"iframe": {"src"},
+	"embed":  {"src"},
+	"audio":  {"src"},
+	"video":  {"src", "poster"},
+	"source": {"src", "srcset"},
+	"track":  {"src"},
+	"object": {"data"},
+	"input":  {"src"},
+}
+
+// linkRelLoads are the <link> rel values that actually fetch a resource into
+// the page. preconnect/dns-prefetch establish a connection but load nothing.
+var linkRelLoads = map[string]bool{
+	"stylesheet": true, "icon": true, "shortcut icon": true, "apple-touch-icon": true,
+	"preload": true, "prefetch": true, "manifest": true, "mask-icon": true,
+}
+
+// mixedContentRefs returns every http:// subresource URL the page loads.
+func mixedContentRefs(doc *html.Node) []string {
+	var out []string
+	consider := func(raw string) {
+		for _, candidate := range strings.Split(raw, ",") {
+			fields := strings.Fields(candidate) // srcset entries carry a descriptor
+			if len(fields) == 0 {
+				continue
 			}
-			next := strings.Index(lower[idx+1:], prefix)
-			if next < 0 {
-				break
+			u := strings.TrimSpace(fields[0])
+			if !strings.HasPrefix(strings.ToLower(u), "http://") {
+				continue
 			}
-			idx = idx + 1 + next
+			host := strings.ToLower(strings.TrimPrefix(u, "http://"))
+			if strings.HasPrefix(host, "localhost") || strings.HasPrefix(host, "127.") {
+				continue
+			}
+			out = append(out, u)
 		}
 	}
-	return false
+	for _, n := range findAll(doc, func(n *html.Node) bool { return n.Type == html.ElementNode }) {
+		if n.Data == "link" {
+			rels := strings.Fields(strings.ToLower(attr(n, "rel")))
+			loads := false
+			for _, rel := range rels {
+				if linkRelLoads[rel] {
+					loads = true
+					break
+				}
+			}
+			if loads {
+				consider(attr(n, "href"))
+			}
+			continue
+		}
+		for _, a := range subresourceAttrs[n.Data] {
+			if v := attr(n, a); v != "" {
+				consider(v)
+			}
+		}
+	}
+	return out
 }
