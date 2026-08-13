@@ -200,3 +200,61 @@ func TestLooksLikeDatePrefixRejectsOnlyNonDates(t *testing.T) {
 		}
 	}
 }
+
+// TestRedactStringDoesNotUnderRedact is the guard this file was missing.
+//
+// TestRealPIIStillRedacted above lists the shapes I thought of when I added the
+// accept hook, and every one of them passed while the boundary was leaking
+// 4442 of 5000 real Swedish mobiles to the model. The gap was in the direction
+// the hook narrows: a bare digit run with NO separator. The national phone
+// pattern refuses those by design, so the personnummer pattern was the only
+// thing catching them, and teaching it to reject non-dates removed that floor
+// without any test noticing. 072/073/076/079 read as month 21/31/61/91.
+//
+// Every case here is a raw string that must not survive anywhere in the output,
+// which is a stricter assertion than "a marker appeared somewhere": the
+// international pattern used to tokenize most of a number and leave the last
+// group in the clear, and a marker-presence check calls that a pass.
+func TestRedactStringDoesNotUnderRedact(t *testing.T) {
+	s := newTestSession(t)
+
+	cases := []struct {
+		name string
+		in   string
+		raw  string // must not survive anywhere in the output
+	}{
+		// Bare-form Swedish mobiles, one per operator prefix. These are the
+		// regression: all but 070 leaked completely.
+		{"mobile_070_bare", "ring 0701234567 nu", "0701234567"},
+		{"mobile_070_zeros", "ring 0700004567 nu", "0700004567"},
+		{"mobile_072_bare", "ring 0721234567 nu", "0721234567"},
+		{"mobile_073_bare", "ring 0731234567 nu", "0731234567"},
+		{"mobile_076_bare", "ring 0761234567 nu", "0761234567"},
+		{"mobile_079_bare", "ring 0791234567 nu", "0791234567"},
+		{"landline_bare_10", "ring 0812345678 nu", "0812345678"},
+		{"landline_bare_8", "ring 08123456 nu", "08123456"},
+		// A bare landline whose digits happen to read as a valid date. This is
+		// why the floor carries no accept hook of its own.
+		{"landline_date_shaped", "ring 08010112 nu", "08010112"},
+		// Swedish law requires '+' instead of '-' once the holder turns 100,
+		// so this is the exact population an elder-care tenant handles.
+		{"pnr_plus_form", "PNR 850315+1234", "850315+1234"},
+		{"pnr_plus_form_12", "PNR 19850315+1234", "19850315+1234"},
+		{"samordning_plus_form", "SAM 850375+1234", "850375+1234"},
+		// Forms that already worked. Kept so a future widening of the date
+		// check cannot quietly break them.
+		{"pnr_hyphen", "PNR 850315-1234", "850315-1234"},
+		{"pnr_bare", "PNR 8503151234", "8503151234"},
+		{"samordning_hyphen", "SAM 850375-1234", "850375-1234"},
+		{"samordning_bare", "SAM 8503751234", "8503751234"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := mustRedact(t, s, tc.in)
+			if strings.Contains(got, tc.raw) {
+				t.Errorf("raw PII survived redaction:\n  in:  %q\n  out: %q\n  raw: %q", tc.in, got, tc.raw)
+			}
+		})
+	}
+}

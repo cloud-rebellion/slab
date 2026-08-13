@@ -95,7 +95,13 @@ var redactPatterns = []redactPattern{
 		kind: KindPersonnummer,
 		// Swedish personnummer: YYYYMMDD-XXXX or YYMMDD-XXXX, optional
 		// dash. 10 or 12 digits with optional dash separator.
-		re:   regexp.MustCompile(`\b(?:19|20)?\d{6}[-\s]?\d{4}\b`),
+		//
+		// '+' is in the separator class because Swedish law REQUIRES it in
+		// place of the hyphen once the holder turns 100 (850315+1234). It was
+		// absent, so every personnummer belonging to a person aged 100 or over
+		// passed through unredacted, which is precisely the population an
+		// elder-care or estate-administration tenant handles.
+		re:   regexp.MustCompile(`\b(?:19|20)?\d{6}[-+\s]?\d{4}\b`),
 		hint: []string{"century"},
 		// A personnummer BEGINS with a birth date, so a bare digit run
 		// whose date field is not a date is not one. Without this, every
@@ -113,7 +119,52 @@ var redactPatterns = []redactPattern{
 		// to carry a valid date field still matches, deliberately: shape
 		// alone cannot separate it from a real number, and tokenizing is
 		// the safe side of that ambiguity.
+		//
+		// This validator is only safe because of the bare-domestic pattern
+		// directly below. Read that one before changing either.
 		accept: looksLikeDatePrefix,
+	},
+	{
+		kind: KindPhone,
+		// BARE Swedish domestic number: a leading 0 and 7..9 more digits,
+		// with NO separator anywhere.
+		//
+		// This is the floor under the personnummer validator, and it exists
+		// because adding that validator removed one that was load-bearing
+		// without anyone noticing.
+		//
+		// The national pattern below REQUIRES a separator, deliberately, and
+		// its comment records the reasoning: a bare ten-digit run is ambiguous
+		// between a mobile (0701234567) and a personnummer (9001011234), "the
+		// personnummer pattern above runs first and wins ... both get tokenized
+		// either way, so the only cost is a mislabelled kind on the marker."
+		// That was true, and it made the personnummer pattern the only thing
+		// catching a bare phone number. Teaching it to reject non-dates voided
+		// the contract from the other side: 072/073/076/079 mobiles read as
+		// month 21/31/61/91, get rejected, meet no separator here, and reach
+		// the model verbatim. Measured before this pattern existed: 1000/1000
+		// bare 073 numbers leaked.
+		//
+		// The leading 0 is what makes this safe against the false positives the
+		// validator was written for. A unix timestamp begins with 1 for the next
+		// two centuries, so it cannot match; a hex id has no word boundary before
+		// its digits; and a YYYY-MM-DD HH:MM:SS stamp has no run this long. Those
+		// three are exactly the cases in machine_text_test.go, and they stay green.
+		//
+		// 7..9 more digits covers the real range, from a short geographic number
+		// (08123456) up to a ten-digit mobile, without reaching the 13-digit
+		// 0046-prefixed international form, which has its own gap.
+		// Deliberately NO accept hook. The obvious one, "reject anything that
+		// looks like a personnummer", is worse than useless twice over: the
+		// personnummer pattern runs first and has already tokenized every
+		// date-prefixed 10- and 12-digit run, so on those it is dead code; and
+		// on the 7..9 digit runs personnummer never matches, it would start
+		// REJECTING real landlines that happen to read as a date. 08010112 is
+		// month 01 day 01, and would leak for that reason alone. That is the
+		// same mistake as the one this pattern exists to repair, one length
+		// down, so the floor stays unconditional.
+		re:   regexp.MustCompile(`\b0\d{7,9}\b`),
+		hint: []string{"country", "len"},
 	},
 	{
 		kind: KindIBAN,
