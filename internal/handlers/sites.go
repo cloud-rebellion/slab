@@ -520,6 +520,31 @@ func (h *SiteHandler) Seed(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// 1a. Auto-grant the creating user ownership, mirroring Create's grant
+	// at the top of this file. Without it the wizard produces a site with
+	// zero site_members rows, and SiteAccessRole reads that table alone,
+	// so the tenant's own operator is refused on every owner-gated surface
+	// (payments settings, the site domain) with no way to repair it: the
+	// only other AddSiteMember call is in Create and there is no
+	// site-member route. Unlike Create this is fatal rather than
+	// best-effort, because it runs inside the seed transaction and a site
+	// nobody owns is precisely the state this guards against.
+	user := authmw.GetUser(r)
+	if user == nil {
+		slog.Error("seed: no authenticated user on the request", "site_id", siteID)
+		writeError(w, http.StatusUnauthorized, "Authorization required")
+		return
+	}
+	if err := qtx.AddSiteMember(ctx, store.AddSiteMemberParams{
+		SiteID: siteID,
+		UserID: user.ID,
+		Role:   "owner",
+	}); err != nil {
+		slog.Error("seed: grant owner membership", "error", err, "site_id", siteID, "user_id", user.ID)
+		writeError(w, http.StatusInternalServerError, "Failed to grant site ownership")
+		return
+	}
+
 	// 1b. system 'brand' media folder so the Media library has its
 	// always-on Brand Assets section from the very first page load.
 	if err := qtx.EnsureMediaFolder(ctx, store.EnsureMediaFolderParams{

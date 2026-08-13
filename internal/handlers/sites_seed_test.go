@@ -74,6 +74,17 @@ func setupSeedTestDB(t *testing.T) (*sql.DB, *store.Queries) {
 	}); err != nil {
 		t.Fatalf("seed workspace: %v", err)
 	}
+	// Seed grants the creating user an owner row in site_members, and that
+	// FK needs a real users row. seedAuthCtx injects "test-admin", so the
+	// fixture has to contain it. Before the grant existed the fixture got
+	// away without a user, which is exactly why the missing grant went
+	// unnoticed: nothing in the test path ever needed the creator to exist.
+	if err := q.CreateUser(context.Background(), store.CreateUserParams{
+		ID: "test-admin", Email: "test@admin.local", PasswordHash: "x",
+		Name: "Test Admin", Role: "admin",
+	}); err != nil {
+		t.Fatalf("seed creating user: %v", err)
+	}
 	return sqlDB, q
 }
 
@@ -376,6 +387,71 @@ func TestSiteHandler_ListStarterKits(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("expected fake-listed in catalog, got %+v", kits)
+	}
+}
+
+// TestSiteHandler_Seed_GrantsCreatorOwnership drives the REAL wizard path
+// and asserts the creator ends up with the site_members row every
+// owner-gated surface depends on.
+//
+// This is the test that was missing. The authz guard tests hand-insert the
+// membership row with seedSiteMember(), so they only ever ran against a
+// state the wizard could not produce: POST /api/sites/seed created a site
+// with ZERO site_members rows, SiteAccessRole reads that table alone and
+// returned "", and the tenant's own operator was then refused on payments
+// settings and on the site domain with no way to repair it (the only other
+// AddSiteMember call is in Create, and there is no site-member route).
+// A guard test whose fixture no real code path can produce is not a guard
+// test, so this one goes through the handler.
+func TestSiteHandler_Seed_GrantsCreatorOwnership(t *testing.T) {
+	sqlDB, q := setupSeedTestDB(t)
+	h := &SiteHandler{db: sqlDB, queries: q}
+
+	body := `{
+		"type": "b2b",
+		"info": {
+			"name": "Acme", "slug": "acme", "domain": "acme.test", "lang": "sv",
+			"business_name": "Acme AB", "contact_email": "hello@acme.test", "country": "SE"
+		},
+		"structure": {"structure_type": "soft-silo", "max_depth": 3},
+		"silos": [{"name": "Services", "slug_prefix": "/services"}],
+		"branding": {
+			"primary_color": "#112233", "secondary_color": "#445566",
+			"bg_color": "#FFFFFF", "text_color": "#1A1A1A",
+			"font_heading": "Inter", "font_body": "Inter"
+		}
+	}`
+	req := httptest.NewRequest("POST", "/api/sites/seed", bytes.NewReader([]byte(body)))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	h.Seed(rr, seedAuthCtx(req))
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("seed: expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+	var resp map[string]string
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	siteID := resp["site_id"]
+	if siteID == "" {
+		t.Fatalf("expected site_id, got %s", rr.Body.String())
+	}
+
+	// The row itself.
+	if got := mustCount(t, sqlDB,
+		"select count(*) from site_members where site_id=? and user_id=? and role='owner'",
+		siteID, "test-admin"); got != 1 {
+		t.Errorf("owner site_members row: want 1, got %d", got)
+	}
+	// No stray extra members.
+	if got := mustCount(t, sqlDB, "select count(*) from site_members where site_id=?", siteID); got != 1 {
+		t.Errorf("site_members rows for site: want exactly 1, got %d", got)
+	}
+	// The predicate every owner-gated handler actually calls. This is the
+	// one that returned "" and produced the 403s.
+	if role := authmw.SiteAccessRole(context.Background(), q, "test-admin", siteID); role != "owner" {
+		t.Errorf("SiteAccessRole after wizard seed: want \"owner\", got %q", role)
 	}
 }
 
