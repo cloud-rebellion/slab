@@ -235,22 +235,47 @@ var ready = true;
 		"an init call that only exists inside a comment loads nothing")
 }
 
-func TestConsentBannerAcceptsARealInitCall(t *testing.T) {
+// TestConsentBannerIsIndeterminateOnAReferenceWithNoLoadEvidence pins the
+// third state this check can return. `Cookiebot.renew()` is a genuine call
+// shape -- an identifier chain in code position, immediately followed by
+// `(` -- and the tokenizer in jslex.go proves it is not sitting inside a
+// comment or a string. It is still not proof: nothing on this page's <script>
+// tags actually loads cookiebot.com or carries data-consent-platform, so the
+// call could just as easily be dead code referencing an undefined global as
+// a CMP bootstrapped by JS this crawler cannot see. A GDPR auditor shown
+// only this evidence would not sign off; they would ask the tenant to show
+// the load. Full credit here would be exactly the kind of fabrication this
+// file's history is about, just moved one bar higher, so this scores zero
+// with distinct wording rather than either a silent pass or a generic "no
+// consent banner" fail.
+func TestConsentBannerIsIndeterminateOnAReferenceWithNoLoadEvidence(t *testing.T) {
 	raw := `<!DOCTYPE html><html><head><script>
-window.Cookiebot.consent.statistics && console.log('opted in');
+Cookiebot.renew();
 </script></head><body><h1>Hi</h1></body></html>`
 	site := &SiteContext{Pages: []PageContext{page(t, "/", raw)}}
-	assertPassed(t, mustCheck(t, RunPrivacyChecks(site), "Consent Banner"),
-		"a real CMP API call is evidence the platform is loaded")
+	c := mustCheck(t, RunPrivacyChecks(site), "Consent Banner")
+	assertFailed(t, c, "a call with no matching load anywhere on the page is unresolved, not proof")
+	if !strings.Contains(c.Detail, "cookiebot") {
+		t.Errorf("detail must name which platform was only referenced, got %q", c.Detail)
+	}
+	if !strings.Contains(c.Recommendation, "Verify manually") {
+		t.Errorf("recommendation must tell the tenant to verify by hand, got %q", c.Recommendation)
+	}
 }
 
 func TestPreConsentTrackingFailsWhenOneBlobLoadsBothCMPAndTracker(t *testing.T) {
-	// The second face of the same defect: `if s.gated || s.consent { continue }`
-	// excused any script that mentioned a CMP, so the single worst
-	// misconfiguration -- CMP and ungated tracker bootstrapped in one blob --
-	// was the one shape the check could never report.
+	// The second face of the same defect: excusing any script that merely
+	// mentioned a CMP made the single worst misconfiguration -- CMP
+	// reference and ungated tracker bootstrapped in one blob -- the one
+	// shape the check could never report. Cookiebot.renew() is a real call
+	// shape (see the Indeterminate test above for why that still is not
+	// full consent credit); the point here is narrower: whatever tier of
+	// consent evidence a script carries, it does not excuse a tracker
+	// sitting right beside it in the same tag, because nothing about
+	// naming a CMP makes the JS engine hold back the rest of that same
+	// <script> body until opt-in.
 	raw := `<!DOCTYPE html><html><head><script>
-window.Cookiebot.consent.statistics;
+Cookiebot.renew();
 (function(w,d,s,l,i){w[l]=w[l]||[];w[l].push({'gtm.start':new Date().getTime(),event:'gtm.js'});
 var f=d.getElementsByTagName(s)[0],j=d.createElement(s);j.async=true;
 j.src='https://www.googletagmanager.com/gtm.js?id='+i;f.parentNode.insertBefore(j,f);
@@ -258,11 +283,36 @@ j.src='https://www.googletagmanager.com/gtm.js?id='+i;f.parentNode.insertBefore(
 </script></head><body><h1>Hi</h1></body></html>`
 	site := &SiteContext{Pages: []PageContext{page(t, "/", raw)}}
 	checks := RunPrivacyChecks(site)
-	assertPassed(t, mustCheck(t, checks, "Consent Banner"), "the CMP really is loaded here")
+	// No script anywhere loads cookiebot.com or googletagmanager.com by
+	// domain, and the only consent evidence is the weak call reference, so
+	// Consent Banner must NOT pass either.
+	assertFailed(t, mustCheck(t, checks, "Consent Banner"), "only weak reference evidence exists; nothing is actually loaded")
 	c := mustCheck(t, checks, "Pre-Consent Tracking")
-	assertFailed(t, c, "the GTM loader in that same blob is not gated by the CMP beside it")
+	assertFailed(t, c, "the GTM loader in that same blob is not gated by the CMP reference beside it")
 	if !strings.Contains(c.Detail, "same script tag") {
 		t.Errorf("detail must name the shared-tag misconfiguration, got %q", c.Detail)
+	}
+}
+
+// TestPreConsentTrackingFailsWhenConsentLoadsEarlierButDoesNotGate pins the
+// exact bypass a verifier reproduced against the previous remediation: put
+// ANY script carrying consent evidence earlier in document order than an
+// ungated tracker, and the old "s.order > consentAt" branch fell through
+// every switch case with no violation reported. Document order between the
+// consent node and the tracker node is not, by itself, proof of gating --
+// only isConsentGated (type="text/plain" plus a CMP category attribute) is.
+func TestPreConsentTrackingFailsWhenConsentLoadsEarlierButDoesNotGate(t *testing.T) {
+	raw := `<!DOCTYPE html><html><head>
+<script src="https://consent.cookiebot.com/uc.js" data-cbid="x"></script>
+<script src="https://www.googletagmanager.com/gtag/js?id=G-XYZ"></script>
+</head><body><h1>Hi</h1></body></html>`
+	site := &SiteContext{Pages: []PageContext{page(t, "/", raw)}}
+	checks := RunPrivacyChecks(site)
+	assertPassed(t, mustCheck(t, checks, "Consent Banner"), "cookiebot really is loaded here, by src=")
+	c := mustCheck(t, checks, "Pre-Consent Tracking")
+	assertFailed(t, c, "the CMP loading first does not stop the very next tag from firing unconditionally")
+	if !strings.Contains(c.Detail, "does not gate this tag") {
+		t.Errorf("detail must state that loading earlier is not the same as gating, got %q", c.Detail)
 	}
 }
 
@@ -524,18 +574,8 @@ func TestSiteWideChecksAreInfoOnEmptySite(t *testing.T) {
 	}
 }
 
-func TestStripScriptCommentsKeepsStringLiterals(t *testing.T) {
-	cases := []struct{ in, want string }{
-		{"// cookiebot\nfoo()", "\nfoo()"},
-		{"/* cookiebot */foo()", " foo()"},
-		{"var s='https://consent.cookiebot.com/uc.js';", "var s='https://consent.cookiebot.com/uc.js';"},
-		{`var s="a//b";// gone`, "var s=\"a//b\";\n"},
-		{"var s='it\\'s // fine';", "var s='it\\'s // fine';"},
-		{"/* unterminated cookiebot", " "},
-	}
-	for _, c := range cases {
-		if got := stripScriptComments(c.in); got != c.want {
-			t.Errorf("stripScriptComments(%q) = %q, want %q", c.in, got, c.want)
-		}
-	}
-}
+// Tokenizer-level regression coverage lives in jslex_test.go and the
+// adversarial corpus in privacy_corpus_test.go now that stripScriptComments
+// has been replaced by tokenizeJS: a hand-rolled comment stripper cannot be
+// fixed by stripping more shapes of comment, only a real lexer can, and
+// jslex_test.go pins that lexer's token boundaries directly.

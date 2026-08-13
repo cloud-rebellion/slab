@@ -8,42 +8,81 @@ import (
 	"golang.org/x/net/html"
 )
 
-// consentPlatforms are matched against a <script>'s src= URL only. A URL is
-// evidence the browser fetched the platform. Script TEXT is deliberately NOT
-// matched against this list: see consentInitCalls.
+// consentPlatforms are the domain fragments that name a CMP's own vendor
+// bundle. They are matched two ways, both of which are genuine LOAD
+// evidence -- the browser (or the page's own code) is telling a script
+// element to fetch that host -- rather than a mere textual mention:
+//
+//  1. Against a <script>'s src= attribute (the browser fetched it).
+//  2. Against a string literal assigned to a "src"-shaped property inside
+//     an inline script, in CODE position with comments excluded (see
+//     srcAssignedDomains in jslex.go). Several CMPs -- Termly's official
+//     embed snippet among them -- and the canonical GTM/Meta Pixel/LinkedIn
+//     bootstrap loaders all self-insert this way: create a <script>
+//     element, set its .src, insert it, with no static src= attribute
+//     anywhere in the built HTML. Treating only the HTML attribute as
+//     evidence is what turned patch 3 into a false negative on exactly the
+//     inline-bootstrap shape the original audit finding was about.
+//
+// Script TEXT beyond a src-assignment is deliberately NOT enough for full
+// credit: see consentSignatures for why a bare API call or reference stays
+// in the INDETERMINATE tier instead.
 var consentPlatforms = []string{
 	"cookiebot", "onetrust", "cookieconsent", "usercentrics",
 	"trustarc", "didomi", "iubenda", "termly",
 	"cookieproof", // Bright Interaction's own
 }
 
-// consentInitCalls are the API surfaces a CMP exposes to page code once it is
-// loaded. They are the only inline-body evidence that credits a consent
-// platform.
+// cmpSignal is one dotted-identifier-chain pattern that suggests a CMP's API
+// is in use. "*" matches any single identifier segment (a namespace's
+// varying method name).
+type cmpSignal struct {
+	key   string
+	chain []string
+}
+
+// consentSignatures are code-position markers -- never proof of a load, only
+// suggestive of one -- for the INDETERMINATE tier: an identifier chain that
+// appears in real code (not a comment, not a string, not a regex; see
+// codeChainUsed) immediately followed by a call `(` or by a plain assignment
+// `=` to it.
 //
-// Tracker detection and CMP detection are NOT symmetric, and collapsing them
-// into one haystack is what turned these checks into a compliance fabricator.
-// An inline GTM or Meta Pixel snippet IS the tracker: it constructs the
-// <script> element and fires the beacon, so matching its body is matching the
-// thing itself. A CMP is a remote bundle; an inline reference to one is at
-// best a call into a bundle loaded elsewhere and at worst a comment. Matching
-// "cookiebot" anywhere in a script body handed an ungated GTM install a pass
-// on both Consent Banner and Pre-Consent Tracking, six points of GDPR credit
-// for a page with no consent layer at all. Requiring a call shape means the
-// page has to reference an object the platform only defines once it runs.
-var consentInitCalls = []string{
-	"cookiebot.consent", "cookiebot.init(", "cookiebot.runscripts(",
-	"cookiebotcallback_", "cybotcookiebotdialog",
-	"onetrust.init(", "onetrust.insertscript(", "onetrust.togglein",
-	"optanonwrapper(", "optanon.togglein",
-	"uc_ui.", "usercentrics.init(", "usercentrics.isconsentrequired",
-	"didomiconfig", "didomionready", "didomieventlisteners", "didomi.getuserconsent",
-	"_iub.cs.init(", "_iub.csconfiguration",
-	"initcookieconsent(", "cookieconsent.run(", "cookieconsent.initialise(",
-	"truste.eu.bindmap", "trustarc.init(",
-	"termly.init(", "window.termly",
-	"cookieproof.init(", "window.cookieproof",
-	"__tcfapi(", // IAB TCF: only a loaded CMP registers this entry point
+// A match here is deliberately NOT enough for Consent Banner to pass. Every
+// one of these signatures is a namespace or global the CMP's bundle DEFINES
+// once it loads; referencing it is consistent with the platform being live
+// elsewhere (a CDN edge, an SPA router the crawler cannot see), and equally
+// consistent with dead code calling an undefined global that would throw at
+// runtime. Static analysis cannot tell those two apart -- that is the
+// premise of this whole redesign, not a gap in it -- so a match is reported
+// as unresolved and scored as zero, the same as no evidence at all, with
+// wording that tells the tenant to verify manually rather than a silent
+// pass. See consentPlatforms for what DOES count as full credit.
+var consentSignatures = []cmpSignal{
+	{"cookiebot", []string{"cookiebot", "*"}},         // Cookiebot.init(), .renew(), .show(), .consent = ...
+	{"onetrust", []string{"onetrust", "*"}},            // OneTrust.InsertScript(), .ToggleInfoDisplay()
+	{"onetrust", []string{"optanonwrapper"}},           // OneTrust's required page-defined callback
+	{"cookieconsent", []string{"cookieconsent", "*"}},  // CookieConsent.run(), .initialise()
+	{"cookieconsent", []string{"initcookieconsent"}},
+	{"usercentrics", []string{"uc_ui", "*"}},
+	{"usercentrics", []string{"usercentrics", "*"}},
+	{"trustarc", []string{"trustarc", "*"}},
+	{"didomi", []string{"didomi", "*"}},
+	{"didomi", []string{"window", "didomionready"}},
+	{"didomi", []string{"window", "didomiconfig"}},
+	{"iubenda", []string{"_iub", "*"}},
+	{"termly", []string{"termly", "*"}},
+	{"termly", []string{"window", "termly"}},
+	{"cookieproof", []string{"cookieproof", "*"}},
+	{"cookieproof", []string{"window", "cookieproof"}},
+	{"tcf", []string{"__tcfapi"}}, // IAB TCF entry point; only a loaded CMP registers it
+}
+
+// consentCallbackPrefixes catches page-defined callback FUNCTIONS whose name
+// a CMP's own docs mandate, with a developer-chosen suffix a dotted chain
+// cannot express: Cookiebot requires `function CookiebotCallback_OnAccept()
+// {...}`-shaped names.
+var consentCallbackPrefixes = []struct{ key, prefix string }{
+	{"cookiebot", "cookiebotcallback_"},
 }
 
 // Known tracker platforms.
@@ -106,25 +145,43 @@ func RunPrivacyChecks(site *SiteContext) []CheckResult {
 	// matching does not: see collectScriptRefs.
 	scripts := collectScriptRefs(site)
 
-	// Track whether ANY script tag carries data-consent-platform so a
-	// platform whose filename gets hashed (e.g. atomicsite's
-	// _ccb.{hash}.js bundle) is still detected.
-	hasConsentAttr := false
+	// hasConsent is full LOAD evidence: a src= attribute or inline .src=
+	// assignment naming a CMP's own domain, or atomicsite's own
+	// data-consent-platform attribute (a platform whose filename gets
+	// hashed, e.g. the _ccb.{hash}.js bundle, and so cannot be matched by
+	// domain at all). Only this tier awards Consent Banner credit.
+	//
+	// weakKeys is code-position REFERENCE evidence -- a call into or
+	// assignment to a CMP's API surface, with no matching load anywhere on
+	// the page. It is real (the tokenizer in jslex.go excludes comments,
+	// strings and regex bodies, so it cannot be spoofed the way three prior
+	// remediations' text matching could), but it does not prove the bundle
+	// that defines the API is actually loaded: the reference could be dead
+	// code, or code a CDN/SPA layer this crawler cannot see makes live.
+	// Static analysis cannot resolve that, so it is scored as INDETERMINATE
+	// -- zero credit, distinct wording telling the tenant to verify by
+	// hand -- rather than folded into either a hard pass or a hard fail.
 	hasConsent := false
+	weakKeys := map[string]bool{}
 	for _, s := range scripts {
-		if s.consentAttr {
-			hasConsentAttr = true
-		}
-		if s.consent {
+		if s.consentAttr || s.consent {
 			hasConsent = true
 		}
+		if s.consentWeak && s.weakKey != "" {
+			weakKeys[s.weakKey] = true
+		}
 	}
-	hasConsent = hasConsent || hasConsentAttr
 
 	// 1. Consent banner detected
 	checks = append(checks, siteWideCheck("Consent Banner", "consent", site, func() CheckResult {
 		if hasConsent {
 			return Pass("Consent Banner", "consent", 3, "Known consent platform detected")
+		}
+		if len(weakKeys) > 0 {
+			return Fail("Consent Banner", "consent", 3, SeverityInfo,
+				fmt.Sprintf("Inline code references %s, but no script on this site actually loads it (no src=, no data-consent-platform, no inline src assignment to its domain) -- this cannot be confirmed statically",
+					strings.Join(sortedKeys(weakKeys), ", ")),
+				"Verify manually that the referenced consent platform is really bootstrapped, or make the load visible to static analysis (a real <script src>, or an inline .src= assignment to the platform's domain).")
 		}
 		return Fail("Consent Banner", "consent", 3, SeverityWarning,
 			"No consent banner detected",
@@ -300,94 +357,95 @@ func RunPrivacyChecks(site *SiteContext) []CheckResult {
 // scriptRef is one <script> element with everything the privacy checks need:
 // which page it sits on, its DOM position within that page, the lowercased
 // text TRACKER signatures are matched against (src AND inline body), and
-// whether a CMP is loaded by it or holds it back until the visitor opts in.
+// whether a CMP is loaded by it, merely referenced by it, or holds it back
+// until the visitor opts in.
 type scriptRef struct {
 	page        string
 	order       int
-	haystack    string
-	consent     bool
+	haystack    string // src + code + string-literal text, comments excluded -- see collectScriptRefs
+	consent     bool   // strong: src=/inline .src= domain match, or data-consent-platform
 	consentAttr bool
+	consentWeak bool   // weak: a CMP API referenced in code position, no load evidence anywhere
+	weakKey     string // which CMP consentWeak names, for messaging
 	gated       bool
 }
 
-// collectScriptRefs walks every page in DOM order.
+// collectScriptRefs walks every page in DOM order, tokenizing each inline
+// script body with the JS lexer in jslex.go so every downstream check
+// reasons about actual token kinds -- code, string, regex, comment -- instead
+// of raw substrings. That distinction is the whole fix: three prior
+// remediations of this file all tried to patch the SHAPE of a text match
+// (fold in bodies, strip comments, revert to src-only) and each patch's gap
+// was just the next text shape a comment/string/regex could take.
 //
 // For TRACKERS the inline body matters as much as src=: GTM, GA4, the Meta
 // Pixel and the LinkedIn Insight Tag are all installed as inline loaders that
 // inject their own <script src=...> at runtime, so their scoring domain never
-// appears in a src= attribute.
+// appears in a src= attribute. A tracker false positive costs a tenant an
+// investigation, so the bar stays low: any code or string-literal token
+// naming the platform, comments excluded (see trackersIn / codeHaystack /
+// stringHaystack).
 //
-// For CONSENT the body is not equivalent evidence, so it is held to a much
-// narrower bar: either the src= URL names a platform (the browser fetched it),
-// or a script carries data-consent-platform (atomicsite's own hashed
-// CookieProof bundle), or the body CALLS a platform API outside of comments.
-// Anything less credits GDPR compliance the page has not earned.
+// For CONSENT a false positive hands a non-compliant site a compliance pass
+// it will act on, so the bar is load evidence only: the src= URL names a
+// platform, a data-consent-platform attribute is present, or an inline
+// `.src = "..."` assignment in code position names a platform's domain (see
+// consentPlatforms). A CMP's API referenced in code -- a call or an
+// assignment to it, per consentSignatures -- is real but weaker evidence and
+// is tracked separately as consentWeak for the Consent Banner check's
+// INDETERMINATE tier; it never sets consent=true.
 func collectScriptRefs(site *SiteContext) []scriptRef {
 	var out []scriptRef
 	for _, p := range site.Pages {
 		for i, s := range elementsByTag(p.Doc, "script") {
 			src := strings.ToLower(attr(s, "src"))
-			body := strings.ToLower(textContent(s))
+			body := textContent(s)
+			toks := tokenizeJS(body)
+			ct := codeTokens(toks)
+			codeText := codeHaystack(ct)
+			strText := stringHaystack(ct)
+
 			ref := scriptRef{
 				page:        p.Slug,
 				order:       i,
-				haystack:    src + "\n" + body,
+				haystack:    src + "\n" + codeText + "\n" + strText,
 				consentAttr: attr(s, "data-consent-platform") != "",
 				gated:       isConsentGated(s),
 			}
-			ref.consent = ref.consentAttr ||
-				matchesAny(src, consentPlatforms) ||
-				matchesAny(stripScriptComments(body), consentInitCalls)
+
+			ref.consent = ref.consentAttr || matchesAny(src, consentPlatforms)
+			if !ref.consent {
+				for _, domain := range srcAssignedDomains(ct) {
+					if matchesAny(domain, consentPlatforms) {
+						ref.consent = true
+						break
+					}
+				}
+			}
+
+			if !ref.consent {
+				for _, sig := range consentSignatures {
+					if codeChainUsed(ct, sig.chain) {
+						ref.consentWeak = true
+						ref.weakKey = sig.key
+						break
+					}
+				}
+				if !ref.consentWeak {
+					for _, cb := range consentCallbackPrefixes {
+						if identPrefixDeclared(ct, cb.prefix) {
+							ref.consentWeak = true
+							ref.weakKey = cb.key
+							break
+						}
+					}
+				}
+			}
+
 			out = append(out, ref)
 		}
 	}
 	return out
-}
-
-// stripScriptComments removes JavaScript comments from an inline script body,
-// so a consent platform that is only discussed in prose ("// TODO: add
-// Cookiebot.init() before launch") cannot be read as one that runs. It tracks
-// string literals, because the '//' in an https:// URL inside a quoted string
-// is not a comment and eating the rest of that line would hide real code.
-func stripScriptComments(body string) string {
-	var out strings.Builder
-	out.Grow(len(body))
-	var quote byte
-	for i := 0; i < len(body); i++ {
-		c := body[i]
-		if quote != 0 {
-			out.WriteByte(c)
-			if c == '\\' && i+1 < len(body) {
-				i++
-				out.WriteByte(body[i])
-				continue
-			}
-			if c == quote {
-				quote = 0
-			}
-			continue
-		}
-		switch {
-		case c == '\'' || c == '"' || c == '`':
-			quote = c
-			out.WriteByte(c)
-		case c == '/' && i+1 < len(body) && body[i+1] == '/':
-			for i < len(body) && body[i] != '\n' {
-				i++
-			}
-			out.WriteByte('\n')
-		case c == '/' && i+1 < len(body) && body[i+1] == '*':
-			i += 2
-			for i+1 < len(body) && !(body[i] == '*' && body[i+1] == '/') {
-				i++
-			}
-			i++ // the loop's own i++ steps past the closing '/'
-			out.WriteByte(' ')
-		default:
-			out.WriteByte(c)
-		}
-	}
-	return out.String()
 }
 
 // isConsentGated reports whether a CMP is holding this tag back. The canonical
@@ -432,9 +490,26 @@ func trackersIn(haystack string) []string {
 }
 
 // preConsentViolations lists, per page and in DOM order, every tracker script
-// that is neither consent-gated nor placed after the consent platform's own
-// script. An ungated tag above the CMP loader has already fired by the time
-// the banner paints.
+// that is not consent-gated. Document order is still evaluated on the node
+// tree (byPage groups the real scriptRefs in the order collectScriptRefs
+// walked them) and still drives the diagnostic wording, but it is NOT, by
+// itself, an excuse any more.
+//
+// It used to be: a tracker script ordered after some other script carrying
+// consent evidence was treated as safe (the "s.order > consentAt" case fell
+// through every switch branch with no violation reported at all). That is
+// false safety. GDPR/ePrivacy cares whether the SCRIPT ITSELF is prevented
+// from executing until consent, which in static HTML is a technical
+// property of the tag (type="text/plain" plus a CMP category attribute --
+// isConsentGated) or of the tracker being injected FROM INSIDE a consent
+// callback (out of scope here, see the package doc comment). It is not a
+// property of what else happens to sit earlier in the document: a CMP
+// loader placed above an ordinary, ungated <script src=gtm.js> does not stop
+// that tag from firing the instant the parser reaches it. A verifier
+// reproduced the original six-point fabrication through exactly this gap:
+// put any script carrying a CMP signature -- including a merely WEAK,
+// unverified one -- ahead of an otherwise-ungated tracker, and the old code
+// never reported it. Only isConsentGated excuses a tracker now.
 func preConsentViolations(scripts []scriptRef) []string {
 	byPage := map[string][]scriptRef{}
 	var pages []string
@@ -446,6 +521,9 @@ func preConsentViolations(scripts []scriptRef) []string {
 	}
 	var out []string
 	for _, page := range pages {
+		// consentAt is diagnostic context only (which message to print), not
+		// a decision input: see the switch below, whose default case now
+		// covers what used to be silently excused.
 		consentAt := -1
 		for _, s := range byPage[page] {
 			if s.consent {
@@ -457,22 +535,25 @@ func preConsentViolations(scripts []scriptRef) []string {
 			if s.gated {
 				continue
 			}
-			// Carrying a CMP signature is NOT an excuse. A script that
-			// bootstraps the consent platform AND a tracker in one blob runs
-			// the tracker unconditionally, which is precisely the
-			// misconfiguration this check exists to catch; skipping it made
-			// that the one shape the check could never report.
 			names := trackersIn(s.haystack)
 			if len(names) == 0 {
 				continue
 			}
 			switch {
+			case s.consent || s.consentWeak:
+				// Carrying a CMP signature -- even a merely referenced,
+				// unverified one -- is NOT an excuse. A script that
+				// bootstraps (or references) the consent platform AND a
+				// tracker in one blob runs the tracker unconditionally,
+				// which is precisely the misconfiguration this check exists
+				// to catch.
+				out = append(out, fmt.Sprintf("%s on %s runs in the same script tag as a consent platform reference, so it is not actually gated by it", names[0], page))
 			case consentAt < 0:
 				out = append(out, fmt.Sprintf("%s on %s loads with no consent platform on the page", names[0], page))
-			case s.order == consentAt:
-				out = append(out, fmt.Sprintf("%s on %s runs in the same script tag as the consent platform loader, so the platform never gates it", names[0], page))
 			case s.order < consentAt:
 				out = append(out, fmt.Sprintf("%s on %s is script #%d, ahead of the consent script at #%d", names[0], page, s.order+1, consentAt+1))
+			default:
+				out = append(out, fmt.Sprintf("%s on %s is script #%d; a consent platform loads earlier at #%d but does not gate this tag (no type=\"text/plain\" or consent-category attribute)", names[0], page, s.order+1, consentAt+1))
 			}
 		}
 	}
