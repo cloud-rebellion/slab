@@ -25,6 +25,15 @@ func isAgentWritableCategory(category string) bool {
 	return settingspolicy.AgentWritableCategory(category)
 }
 
+// isAgentWritableSetting is the gate an actual WRITE must use. The
+// category alone is not sufficient: a writable category can contain a
+// bearer-equivalent key (analytics.crm_webhook_secret), which this
+// surface already masks on read, so gating writes on the category let an
+// agent overwrite a credential it could not see.
+func isAgentWritableSetting(category, key string) bool {
+	return settingspolicy.AgentWritableSetting(category, key)
+}
+
 func validateSettingValue(category, key, value string) error {
 	return settingspolicy.ValidateSetting(category, key, value)
 }

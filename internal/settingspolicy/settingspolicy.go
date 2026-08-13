@@ -41,8 +41,34 @@ var agentWritableCategories = map[string]bool{
 
 // AgentWritableCategory reports whether agents may write settings in the
 // category.
+//
+// Prefer AgentWritableSetting for an actual write. The category alone is
+// not a sufficient gate, because a writable category can still contain a
+// bearer-equivalent key.
 func AgentWritableCategory(category string) bool {
 	return agentWritableCategories[category]
+}
+
+// AgentWritableSetting reports whether an agent may write one
+// {category, key} pair. It is the category rule AND a refusal of any
+// secret-valued key inside it.
+//
+// The key half is the whole point. analytics is agent-writable so an agent
+// can wire up tracking, but analytics.crm_webhook_secret inside it is a
+// credential. Both agent read paths already MASK that key; gating reads
+// while accepting writes is the worst of both, because the agent cannot
+// see the value it is about to overwrite. An agent key is also a lower
+// trust tier than a site member, and the human surface already refuses
+// this write via IsSecretValue, so the agent surfaces refusing it is the
+// consistent position rather than a new restriction.
+//
+// Concretely, this is what stops a write-scoped agent key (or an LLM
+// driven by prompt injection from ingested third-party content) pointing
+// analytics.crm_webhook_url at an attacker endpoint AND choosing the
+// signing secret, which would make identified-visitor CRM events verify
+// against an attacker-controlled receiver.
+func AgentWritableSetting(category, key string) bool {
+	return agentWritableCategories[category] && !IsSecretValue(category, key)
 }
 
 // privilegedCategories enumerates settings categories that a plain site
