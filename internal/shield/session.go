@@ -397,12 +397,18 @@ func (s *Session) ShieldJSON(ctx context.Context, raw []byte) ([]byte, error) {
 func (s *Session) shieldAny(ctx context.Context, v any) (any, error) {
 	switch t := v.(type) {
 	case string:
-		// An encoded payload (base64 PNG, data: URI) is not human text and
-		// the regex bank mangles it: the phone pattern matches '+' followed
-		// by digits, which base64 produces constantly. See blob.go.
-		if looksLikeEncodedBlob(t) {
-			return t, nil
-		}
+		// Every string leaf is scanned, regardless of length or shape.
+		// An earlier version special-cased strings that "looked like" an
+		// encoded blob (base64 PNG, data: URI) and skipped them entirely,
+		// because the phone pattern used to match '+' followed by digits,
+		// which base64 produces constantly. That check branched on the
+		// CONTENT of the value rather than on where it came from: a
+		// string engineered to satisfy the blob heuristic while still
+		// containing readable PII (e.g. a personnummer) went through
+		// completely untokenized, and the exemption got MORE permissive
+		// as the string got longer. The phone pattern is now anchored so
+		// it cannot fire inside a genuine encoded blob (see redact.go),
+		// so there is no longer a reason to skip scanning any leaf.
 		return s.RedactString(ctx, t)
 	case []any:
 		out := make([]any, len(t))
