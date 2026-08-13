@@ -1,6 +1,7 @@
 package builder
 
 import (
+	"regexp"
 	"strings"
 	"testing"
 
@@ -56,8 +57,8 @@ func TestRenderCookieProofSnippet_HappyPath(t *testing.T) {
 	if !strings.Contains(prefixStr, `"domain":"example.com"`) {
 		t.Errorf("missing domain in bundle prefix: %s", prefixStr)
 	}
-	if !strings.Contains(prefixStr, `"proofEndpoint":"/t/consent"`) {
-		t.Errorf("missing proofEndpoint in bundle prefix: %s", prefixStr)
+	if !strings.Contains(prefixStr, `"proofEndpoint":"https://example.com/t/consent"`) {
+		t.Errorf("missing absolute proofEndpoint in bundle prefix: %s", prefixStr)
 	}
 	if !strings.Contains(prefixStr, `"--cc-bg":"#FAFAFA"`) {
 		t.Errorf("missing cssVars in bundle prefix: %s", prefixStr)
@@ -77,8 +78,8 @@ func TestRenderCookieProofSnippet_DefaultsTrackPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("config prefix: %v", err)
 	}
-	if !strings.Contains(string(prefix), `"proofEndpoint":"/t/consent"`) {
-		t.Errorf("expected default /t/consent: %s", string(prefix))
+	if !strings.Contains(string(prefix), `"proofEndpoint":"https://example.com/t/consent"`) {
+		t.Errorf("expected default /t/consent on the site host: %s", string(prefix))
 	}
 }
 
@@ -93,11 +94,71 @@ func TestRenderCookieProofSnippet_TrimsTrailingSlash(t *testing.T) {
 	if err != nil {
 		t.Fatalf("config prefix: %v", err)
 	}
-	if strings.Contains(string(prefix), `"proofEndpoint":"/t//consent"`) {
+	if strings.Contains(string(prefix), `"proofEndpoint":"https://example.com/t//consent"`) {
 		t.Errorf("did not trim trailing slash: %s", string(prefix))
 	}
-	if !strings.Contains(string(prefix), `"proofEndpoint":"/t/consent"`) {
-		t.Errorf("expected /t/consent: %s", string(prefix))
+	if !strings.Contains(string(prefix), `"proofEndpoint":"https://example.com/t/consent"`) {
+		t.Errorf("expected /t/consent on the site host: %s", string(prefix))
+	}
+}
+
+// TestCookieProofEndpointIsAbsoluteHTTPS is the regression guard for a defect
+// that no amount of Go-side testing would have caught: the widget accepts the
+// config, logs a console warning, and silently never delivers a proof.
+//
+// CookieProof's ConsentManager keeps proofEndpoint only when it matches
+// /^https:\/\//i (CookieProof/src/core/consent-manager.ts). The builder emitted
+// the bare path "/t/consent", so consent-proof recording was off for every site
+// it has ever built, and production had logged zero hits on POST /t/consent.
+// The three assertions above previously pinned that broken value.
+func TestCookieProofEndpointIsAbsoluteHTTPS(t *testing.T) {
+	// Mirrors the runtime's own guard rather than restating it in prose.
+	httpsOnly := regexp.MustCompile(`^https://`)
+	endpointRe := regexp.MustCompile(`"proofEndpoint":"([^"]*)"`)
+
+	tests := []struct {
+		name       string
+		domain     string
+		trackPath  string
+		wantAbs    bool
+		wantEndsIn string
+	}{
+		{"bare host", "example.com", "", true, "https://example.com/t/consent"},
+		{"host with scheme", "https://example.com", "", true, "https://example.com/t/consent"},
+		{"host with trailing slash", "https://example.com/", "", true, "https://example.com/t/consent"},
+		{"custom track path", "example.com", "/track", true, "https://example.com/track/consent"},
+		{"trailing slash track path", "example.com", "/t/", true, "https://example.com/t/consent"},
+		// No domain yet (pre-cert build): relative fallback, same as before.
+		{"no domain", "", "", false, "/t/consent"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			prefix, err := RenderCookieProofConfigPrefix(CookieProofConfig{
+				SiteID:    "aaaaaaaaaaaaaaaaaaaaaaaa",
+				Domain:    tt.domain,
+				TrackPath: tt.trackPath,
+			})
+			if err != nil {
+				t.Fatalf("config prefix: %v", err)
+			}
+			m := endpointRe.FindStringSubmatch(string(prefix))
+			if m == nil {
+				t.Fatalf("no proofEndpoint emitted: %s", string(prefix))
+			}
+			got := m[1]
+			if got != tt.wantEndsIn {
+				t.Errorf("proofEndpoint = %q, want %q", got, tt.wantEndsIn)
+			}
+			if abs := httpsOnly.MatchString(got); abs != tt.wantAbs {
+				t.Errorf("proofEndpoint %q: https-absolute = %v, want %v "+
+					"(CookieProof drops non-https endpoints and never sends a proof)",
+					got, abs, tt.wantAbs)
+			}
+			if strings.Contains(got, "//consent") {
+				t.Errorf("proofEndpoint %q has a doubled slash", got)
+			}
+		})
 	}
 }
 

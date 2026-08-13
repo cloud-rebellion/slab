@@ -1136,7 +1136,7 @@ func (b *ContextBuilder) Build(ctx context.Context, siteID string) (*SiteContext
 		DesignReferences: refInfos,
 		PendingSetup:     pending,
 		Personalization:  personalization,
-		Endpoints:        defaultEndpoints(),
+		Endpoints:        DefaultEndpoints(),
 		BlockSchemas:     defaultBlockSchemas(),
 		EditingModes:     defaultEditingModes(),
 		SecurityPosture:  b.computeSecurityPosture(ctx, siteID),
@@ -1383,10 +1383,10 @@ func (b *ContextBuilder) computeSecurityPosture(ctx context.Context, siteID stri
 	}
 }
 
-// defaultEndpoints returns the endpoint catalogue surfaced to AI agents.
+// DefaultEndpoints returns the endpoint catalogue surfaced to AI agents.
 // Static for now; if a future endpoint becomes site-conditional it can
 // move into the Build closure.
-func defaultEndpoints() EndpointsInfo {
+func DefaultEndpoints() EndpointsInfo {
 	return EndpointsInfo{
 		Pages: []EndpointInfo{
 			{Method: "GET", Path: "/api/agent/pages", Use: "List published + draft pages."},

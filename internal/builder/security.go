@@ -356,12 +356,9 @@ func RenderLLMsTxt(ctx context.Context, queries *store.Queries, siteID string, w
 	}
 
 	// Auto-generate from site data
-	domain := site.Domain
+	domain := canonicalDomain(site.Domain)
 	if domain == "" {
-		domain = "localhost"
-	}
-	if !strings.HasPrefix(domain, "http") {
-		domain = "https://" + domain
+		domain = "https://localhost"
 	}
 
 	var b strings.Builder
@@ -393,7 +390,7 @@ func RenderLLMsTxt(ctx context.Context, queries *store.Queries, siteID string, w
 			if desc == "" {
 				desc = title
 			}
-			b.WriteString(fmt.Sprintf("- [%s](%s%s): %s\n", title, domain, p.Slug, desc))
+			b.WriteString(fmt.Sprintf("- [%s](%s): %s\n", title, domain+pageURLPath(p.Slug), desc))
 		}
 		b.WriteString("\n")
 	}
@@ -404,6 +401,22 @@ func RenderLLMsTxt(ctx context.Context, queries *store.Queries, siteID string, w
 	}
 
 	return WriteFile(filepath.Join(wsDir, "public", "llms.txt"), b.String())
+}
+
+// pageURLPath turns a stored page slug into the site-relative URL Astro
+// actually serves it at.
+//
+// Slugs are stored without a leading slash, so concatenating base+slug
+// emitted "https://example.comour-products" for every entry in llms.txt.
+// The homepage is stored as the slug "index" (it becomes src/pages/index.astro,
+// which Astro serves at "/"), and every other page gets a trailing slash to
+// match the canonical URL in the built HTML.
+func pageURLPath(slug string) string {
+	s := strings.Trim(strings.TrimSpace(slug), "/")
+	if s == "" || s == "index" {
+		return "/"
+	}
+	return "/" + s + "/"
 }
 
 // --- helpers ---

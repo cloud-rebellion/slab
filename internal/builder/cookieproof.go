@@ -182,7 +182,20 @@ func buildCookieProofEmbedConfig(cfg CookieProofConfig) ([]byte, error) {
 	if trackPath == "" {
 		trackPath = "/t"
 	}
+	// CookieProof enables proof delivery only for an absolute https:// endpoint
+	// (consent-manager.ts: `config.proofEndpoint && /^https:\/\//i.test(...)`,
+	// else a console warning and proof delivery stays off). Emitting the bare
+	// path "/t/consent" therefore silently disabled consent-proof recording on
+	// every site this builder has produced: the route has logged zero hits in
+	// production. The server already serves POST /t/consent with CORS for
+	// exactly this cross-origin call.
+	//
+	// Falls back to the relative path when the site has no usable https domain
+	// yet (pre-cert builds), which is no worse than the previous behaviour.
 	proofEndpoint := strings.TrimRight(trackPath, "/") + "/consent"
+	if base := canonicalDomain(cfg.Domain); strings.HasPrefix(base, "https://") {
+		proofEndpoint = base + proofEndpoint
+	}
 
 	type embedConfig struct {
 		SiteID           string           `json:"siteId"`
