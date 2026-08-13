@@ -5,7 +5,9 @@ import (
 	"go/parser"
 	"go/token"
 	"io/fs"
+	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -94,18 +96,27 @@ func (s blockWriteSite) key() string { return s.pkg + "." + s.fn }
 // in internal/handlers, but the seeders are in internal/agent and
 // internal/starterkits and the MCP writers are in internal/mcp, so a
 // package-scoped walk would have declared victory while missing them.
-func moduleGoFiles(t *testing.T) (string, []string) {
+// moduleRoot resolves the atomicsite module root from this package's
+// directory (internal/handlers, two levels down). Shared by moduleGoFiles
+// and the SQL-derivation walk below so both look at the same tree.
+func moduleRoot(t *testing.T) string {
 	t.Helper()
 	root, err := filepath.Abs("../..")
 	if err != nil {
 		t.Fatalf("resolve module root: %v", err)
 	}
+	return root
+}
+
+func moduleGoFiles(t *testing.T) (string, []string) {
+	t.Helper()
+	root := moduleRoot(t)
 	var out []string
 	skipDirs := map[string]bool{
 		".git": true, "node_modules": true, "frontend": true,
 		"dist": true, "testdata": true, "vendor": true,
 	}
-	err = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -133,6 +144,234 @@ func moduleGoFiles(t *testing.T) (string, []string) {
 		t.Fatalf("module walk found only %d Go files under %s; the walk is broken, not the code", len(out), root)
 	}
 	return root, out
+}
+
+// --- SQL-derived writer list -------------------------------------------
+//
+// blockPayloadWriters above is a hand list: a name every writer must appear
+// under, verified by anti-vacuity 1 to still resolve to a call site. But
+// "still resolves" only checks names that are ALREADY on the list; a new
+// sqlc query that writes a block payload is invisible until someone
+// remembers to add it here. That is exactly how writers 4-6 were missed,
+// and it is how a seventh (a new store method, not a new caller of an
+// existing one) would be missed again.
+//
+// TestBlockPayloadWriters_MatchesSQLPayloadQueries below closes that gap by
+// deriving the writer set straight from internal/db/queries/*.sql instead of
+// trusting the list: it flags any query that INSERTs or UPDATEs the
+// data_json column on blocks, global_blocks, or block_locales, and fails if
+// that set and blockPayloadWriters disagree in either direction.
+
+// blockPayloadTables are the tables whose data_json column is the rendered
+// block payload this guard exists to cover. Verified against
+// internal/db/schema.sql: blocks, global_blocks and block_locales each carry
+// exactly one such column, data_json; style_json on the same rows is
+// presentation, not tenant content, and out of scope (confirmed by grepping
+// every writer of it, which is the same five methods below). Scoping by
+// TABLE, not by query filename, means a payload-writing query landing in any
+// .sql file, including a new or misnamed one, is still caught. collections.sql
+// also writes a column named data_json, on collection_items, which is a
+// different feature (CMS collection entries, not page-builder blocks) and is
+// correctly out of scope here because its table isn't in this set.
+var blockPayloadTables = map[string]bool{
+	"blocks":        true,
+	"global_blocks": true,
+	"block_locales": true,
+}
+
+// blockPayloadColumn is the column blockPayloadTables render as content.
+const blockPayloadColumn = "data_json"
+
+// sqlQuery is one sqlc "-- name: X :verb" statement, with its body (the SQL
+// text from just after that marker to the next one, or EOF).
+type sqlQuery struct {
+	name string
+	body string
+}
+
+var sqlNameLine = regexp.MustCompile(`(?m)^-- name:\s*(\S+)\s*:\w+\s*$`)
+
+// parseSQLQueries splits a sqlc query file into its named statements.
+func parseSQLQueries(t *testing.T, path string) []sqlQuery {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	content := string(data)
+	locs := sqlNameLine.FindAllStringSubmatchIndex(content, -1)
+	var out []sqlQuery
+	for i, loc := range locs {
+		name := content[loc[2]:loc[3]]
+		start := loc[1]
+		end := len(content)
+		if i+1 < len(locs) {
+			end = locs[i+1][0]
+		}
+		out = append(out, sqlQuery{name: name, body: content[start:end]})
+	}
+	return out
+}
+
+// stripSQLComments drops "--" comment lines so a comment that happens to
+// mention a table or column name (internal/db/queries/forms.sql does, for
+// form_submissions.data_json) can never be mistaken for a statement.
+func stripSQLComments(body string) string {
+	lines := strings.Split(body, "\n")
+	kept := lines[:0]
+	for _, l := range lines {
+		if strings.HasPrefix(strings.TrimSpace(l), "--") {
+			continue
+		}
+		kept = append(kept, l)
+	}
+	return strings.Join(kept, "\n")
+}
+
+var (
+	insertIntoRe  = regexp.MustCompile(`(?is)INSERT\s+INTO\s+(\w+)\s*\(([^)]*)\)`)
+	updateTableRe = regexp.MustCompile(`(?is)UPDATE\s+(\w+)\s+SET\b`)
+	doUpdateSetRe = regexp.MustCompile(`(?is)DO\s+UPDATE\s+SET\b`)
+	whereRe       = regexp.MustCompile(`(?i)\bWHERE\b`)
+)
+
+// columnListed reports whether column appears in an INSERT column list.
+func columnListed(cols, column string) bool {
+	for _, c := range strings.Split(cols, ",") {
+		if strings.EqualFold(strings.TrimSpace(c), column) {
+			return true
+		}
+	}
+	return false
+}
+
+// columnAssigned reports whether column is set in a SET clause. Callers
+// trim the clause to end at WHERE first, so a filter that happens to compare
+// the column ("WHERE data_json = ?") is never read as a write.
+func columnAssigned(clause, column string) bool {
+	re := regexp.MustCompile(`(?i)\b` + regexp.QuoteMeta(column) + `\s*=`)
+	return re.MatchString(clause)
+}
+
+func cutAtWhere(s string) string {
+	if loc := whereRe.FindStringIndex(s); loc != nil {
+		return s[:loc[0]]
+	}
+	return s
+}
+
+// writesPayloadColumn reports the table a query's INSERT or UPDATE targets,
+// and whether it writes column on that table. UPDATE ... SET and INSERT ...
+// ON CONFLICT DO UPDATE SET are both checked, each trimmed to end at WHERE
+// so a read filter is never mistaken for a write. Queries that are neither
+// INSERT nor UPDATE (SELECT, DELETE) never match.
+func writesPayloadColumn(rawBody, column string) (table string, writes bool) {
+	body := stripSQLComments(rawBody)
+
+	if m := insertIntoRe.FindStringSubmatch(body); m != nil {
+		table = strings.ToLower(m[1])
+		if columnListed(m[2], column) {
+			return table, true
+		}
+		if loc := doUpdateSetRe.FindStringIndex(body); loc != nil {
+			clause := cutAtWhere(body[loc[1]:])
+			if columnAssigned(clause, column) {
+				return table, true
+			}
+		}
+		return table, false
+	}
+
+	if m := updateTableRe.FindStringSubmatchIndex(body); m != nil {
+		table = strings.ToLower(body[m[2]:m[3]])
+		clause := cutAtWhere(body[m[1]:])
+		return table, columnAssigned(clause, column)
+	}
+
+	return "", false
+}
+
+// sqlDerivedBlockPayloadWriters walks every .sql file in
+// internal/db/queries (a directory listing, not a fixed filename list, so a
+// new or misnamed query file is still walked) and returns the sqlc query
+// names that write blockPayloadColumn on a table in blockPayloadTables.
+func sqlDerivedBlockPayloadWriters(t *testing.T, root string) []string {
+	t.Helper()
+	dir := filepath.Join(root, "internal", "db", "queries")
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("read query dir %s: %v", dir, err)
+	}
+	var files []string
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".sql") {
+			continue
+		}
+		files = append(files, filepath.Join(dir, e.Name()))
+	}
+	sort.Strings(files)
+	// Anti-vacuity on this walk too, same shape as moduleGoFiles: a directory
+	// listing that silently returns nothing would pass every assertion below
+	// while covering zero queries.
+	if len(files) < 10 {
+		t.Fatalf("query dir walk found only %d .sql files under %s; the walk is broken, not the schema", len(files), dir)
+	}
+
+	var names []string
+	for _, f := range files {
+		for _, q := range parseSQLQueries(t, f) {
+			table, writes := writesPayloadColumn(q.body, blockPayloadColumn)
+			if writes && blockPayloadTables[table] {
+				names = append(names, q.name)
+			}
+		}
+	}
+	sort.Strings(names)
+	return names
+}
+
+// TestBlockPayloadWriters_MatchesSQLPayloadQueries is the derivation half of
+// the coverage guard: it fails if blockPayloadWriters (the hand list
+// TestBlockPayloadWrites_EveryWriterRunsTheGuardrailEngine trusts) and the
+// set of sqlc queries that actually write a block payload column disagree in
+// either direction. A new payload-writing query left off the hand list fails
+// here by name, on the day it is added, instead of shipping unguarded and
+// undetected the way writers 4-6 did.
+func TestBlockPayloadWriters_MatchesSQLPayloadQueries(t *testing.T) {
+	root := moduleRoot(t)
+	derived := sqlDerivedBlockPayloadWriters(t, root)
+
+	derivedSet := map[string]bool{}
+	for _, n := range derived {
+		derivedSet[n] = true
+	}
+	handSet := map[string]bool{}
+	for _, n := range blockPayloadWriters {
+		handSet[n] = true
+	}
+
+	for _, n := range derived {
+		if !handSet[n] {
+			t.Errorf("sqlc query %q writes a block payload column (data_json on "+
+				"blocks/global_blocks/block_locales) but is missing from "+
+				"blockPayloadWriters.\n"+
+				"  Add it to the list in block_payload_coverage_test.go, then make "+
+				"sure every caller runs the guardrail engine before calling it.", n)
+		}
+	}
+	for _, n := range blockPayloadWriters {
+		if !derivedSet[n] {
+			t.Errorf("blockPayloadWriters lists %q, but no sqlc query in "+
+				"internal/db/queries writes data_json on blocks/global_blocks/"+
+				"block_locales under that name.\n"+
+				"  The query was renamed, removed, or no longer writes the payload "+
+				"column; update blockPayloadWriters to match.", n)
+		}
+	}
+	if t.Failed() {
+		t.Logf("SQL-derived block payload writers: %v", derived)
+		t.Logf("hand-maintained blockPayloadWriters: %v", blockPayloadWriters)
+	}
 }
 
 func blockCalleeName(call *ast.CallExpr) string {
