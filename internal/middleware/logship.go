@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"regexp"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -289,12 +290,12 @@ func (h *flareSlogHandler) ship(r slog.Record) {
 	var attrs json.RawMessage
 	if len(m) > 0 {
 		if b, err := json.Marshal(m); err == nil && len(b) <= logShipMaxAttrs {
-			attrs = b
+			attrs = scrubLogJSON(b)
 		}
 	}
 	h.shipper.enqueue(nativeLogLine{
 		Severity:   strings.ToLower(r.Level.String()),
-		Body:       r.Message,
+		Body:       scrubLogText(r.Message),
 		Attributes: attrs,
 		TraceID:    traceID,
 		Timestamp:  r.Time.UTC().Format(time.RFC3339),
@@ -311,4 +312,103 @@ func (h *flareSlogHandler) WithAttrs(as []slog.Attr) slog.Handler {
 func (h *flareSlogHandler) WithGroup(name string) slog.Handler {
 	groups := append(append([]string{}, h.groups...), name)
 	return &flareSlogHandler{next: h.next.WithGroup(name), shipper: h.shipper, minLvl: h.minLvl, attrs: h.attrs, groups: groups}
+}
+
+// The value-level egress scrub.
+//
+// isSensitiveLogKey above gates on the attribute KEY, and that is not enough on
+// its own. The key used everywhere in Go error logging is "error", which is not
+// and must not be a sensitive key, yet the value under it is routinely a
+// *url.Error whose exported URL field carries the endpoint and its ?token=
+// query. So the single most common line in the estate,
+//
+//	slog.Error("webhook delivery failed", "error", err)
+//
+// shipped credentials to the shared Flare logs store in cleartext. That store is
+// a different trust boundary from the process that logged them. The same applies
+// to the record's own message, which is free text an author formats by hand.
+//
+// This is deliberately self-contained: logship.go is a vendored copy in a dozen
+// separate Go modules with no shared package between them, and a fix that
+// depends on one project's helper is a fix the other eleven cannot take.
+var (
+	scrubLogPEM = regexp.MustCompile(`(?s)-----BEGIN [^-]*PRIVATE KEY-----.*?-----END [^-]*PRIVATE KEY-----`)
+	// Userinfo in a URL: scheme://user:password@host
+	scrubLogURLCreds = regexp.MustCompile(`([a-zA-Z][a-zA-Z0-9+.\-]*://)[^/\s:@"]+:[^/\s@"]+@`)
+	// A credential-bearing query parameter, the shape *url.Error hands over.
+	scrubLogQuery = regexp.MustCompile(`(?i)([?&](?:token|key|api[_-]?key|apikey|secret|password|passwd|pwd|sig|signature|access[_-]?token|refresh[_-]?token|auth|session|code)=)[^&\s"']+`)
+	// Bearer / Basic / Token authorization values.
+	scrubLogBearer = regexp.MustCompile(`(?i)\b(bearer|basic|token)\s+[A-Za-z0-9._\-+/=]{8,}`)
+	// key=value / key: value assignments with a credential-looking name.
+	scrubLogAssign = regexp.MustCompile(`(?i)\b(token|api[_-]?key|apikey|secret|password|passwd|pwd|access[_-]?token|refresh[_-]?token|authorization)\b(\s*[:=]\s*)["']?[^\s"',;&)}]+`)
+)
+
+// scrubLogText redacts credential shapes from one free-text value.
+//
+// Redaction, not destruction: the host and path of a failing URL survive, so an
+// operator can still tell which call broke. Only the secret is replaced.
+func scrubLogText(s string) string {
+	if s == "" {
+		return s
+	}
+	s = scrubLogPEM.ReplaceAllString(s, "[private-key]")
+	s = scrubLogURLCreds.ReplaceAllString(s, "${1}[redacted]@")
+	s = scrubLogQuery.ReplaceAllString(s, "${1}[secret]")
+	s = scrubLogBearer.ReplaceAllString(s, "${1} [secret]")
+	s = scrubLogAssign.ReplaceAllString(s, "${1}${2}[secret]")
+	return s
+}
+
+// scrubLogJSON walks a marshalled attribute document and applies scrubLogText to
+// STRING LEAVES ONLY, then re-marshals.
+//
+// Never run the text scrub over serialized JSON directly. The assignment rule
+// matches `"password":"x"` shapes across the quoting, and a text rewrite of a
+// serialized document can leave it unparseable; walking the structure cannot.
+// Numbers are decoded as literal text, because decoding into float64 silently
+// rounds every integer above 2^53, so a 19-digit id would reach the operator as
+// 1.7123456789012346e+18.
+func scrubLogJSON(raw []byte) []byte {
+	if len(raw) == 0 {
+		return raw
+	}
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.UseNumber()
+	var v any
+	if err := dec.Decode(&v); err != nil {
+		// Not JSON. Scrub as text and return a JSON string, still valid to embed.
+		if out, merr := json.Marshal(scrubLogText(string(raw))); merr == nil {
+			return out
+		}
+		return []byte(`"[unserializable]"`)
+	}
+	out, err := json.Marshal(scrubLogValue(v))
+	if err != nil {
+		// Fail closed: dropping the attrs beats shipping an unscrubbed document.
+		return []byte(`{"_scrub_error":"redacted"}`)
+	}
+	return out
+}
+
+// scrubLogValue rewrites string leaves. Object KEYS are left alone: they are
+// attribute names, isSensitiveLogKey already handled the sensitive ones, and
+// rewriting a key would change what the operator is searching on.
+func scrubLogValue(v any) any {
+	switch t := v.(type) {
+	case string:
+		return scrubLogText(t)
+	case map[string]any:
+		out := make(map[string]any, len(t))
+		for k, val := range t {
+			out[k] = scrubLogValue(val)
+		}
+		return out
+	case []any:
+		for i := range t {
+			t[i] = scrubLogValue(t[i])
+		}
+		return t
+	default:
+		return v
+	}
 }
