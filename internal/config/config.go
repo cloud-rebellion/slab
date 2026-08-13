@@ -514,6 +514,30 @@ func (c *Config) Validate() error {
 				"forwarding headers are ignored and every visitor behind the proxy collapses into one rate-limit key. "+
 				"Set real proxy addresses or ATOMICSITE_TRUSTED_PROXIES="+TrustedProxiesNone, c.TrustedProxies))
 		}
+		// A prefix that parses but names almost every address on the
+		// internet (0.0.0.0/0, ::/0, or anything narrower than the floor)
+		// is not a stated trust decision, it is the same collapsed-bucket
+		// failure the zero-prefix guard above refuses, just reached from
+		// the other direction: instead of trusting nobody the deployment
+		// now trusts everybody, so ANY caller's X-Forwarded-For is honoured
+		// and every per-IP control (login lockout, MFA throttle, the five
+		// /t/* limiters, form-spam, the admin-write bucket, the ip_hash on
+		// the consent proof) is disabled for anyone willing to set a
+		// header. This is the natural thing an operator reaches for after
+		// a fail-closed boot refusal at 2am, so the error has to say what
+		// to write instead, not just what is wrong.
+		if wide := WideTrustedProxyPrefixes(prefixes); len(wide) > 0 {
+			names := make([]string, len(wide))
+			for i, p := range wide {
+				names[i] = p.String()
+			}
+			problems = append(problems, fmt.Sprintf("ATOMICSITE_TRUSTED_PROXIES contains %s, which is wider than this deployment can trust "+
+				"(the floor is /%d for IPv4 and /%d for IPv6): a prefix that wide matches almost every address on the internet, so any caller "+
+				"can set X-Forwarded-For and disable the login lockout, the MFA throttle and every /t/* limiter. Set it to the address the "+
+				"reverse proxy actually connects from instead, e.g. ATOMICSITE_TRUSTED_PROXIES=172.18.0.1/32 for a docker bridge gateway or "+
+				"the load balancer's real CIDR (check it again after the proxy container is recreated, since that address can change)",
+				strings.Join(names, ", "), MinTrustedProxyBitsV4, MinTrustedProxyBitsV6))
+		}
 	}
 
 	// Either ATOMICSITE_PRIMARY_DOMAIN (single-root-domain shape, the

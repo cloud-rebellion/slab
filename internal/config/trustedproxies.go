@@ -23,6 +23,25 @@ import (
 // to be a positive act, the same rule ATOMICSITE_ENV already follows.
 const TrustedProxiesNone = "none"
 
+// MinTrustedProxyBitsV4 and MinTrustedProxyBitsV6 are the narrowest prefix
+// length Validate accepts for a trusted-proxy entry. Validate refuses a
+// value that is unparseable or parses to zero prefixes; it did not used to
+// refuse a value that parses fine but names almost every address on the
+// internet, and 0.0.0.0/0 or ::/0 is the exact response an operator reaches
+// for after a fail-closed boot refusal at 2am: it "fixes" the boot failure
+// and silently turns off the login lockout, the MFA throttle and every
+// /t/* limiter for any caller that can set X-Forwarded-For.
+//
+// /8 for v4 (16.7 million addresses, a whole legacy Class A) and /32 for v6
+// (a single allocation block) are both far wider than any real proxy CIDR
+// should ever need to be, so a legitimate deployment never brushes the
+// floor; a docker bridge gateway or a load balancer's CIDR is normally /32
+// down to /24 (v4) or /128 down to /64 (v6).
+const (
+	MinTrustedProxyBitsV4 = 8
+	MinTrustedProxyBitsV6 = 32
+)
+
 // ParseTrustedProxies turns the raw comma-separated env value into the
 // prefix list the middleware matches the TCP peer against.
 //
@@ -60,4 +79,22 @@ func ParseTrustedProxies(raw string) (prefixes []netip.Prefix, bad []string) {
 		bad = append(bad, part)
 	}
 	return prefixes, bad
+}
+
+// WideTrustedProxyPrefixes returns the entries in prefixes that are wider
+// than the family-appropriate floor (MinTrustedProxyBitsV4 / V6), i.e. the
+// ones Validate refuses. Exported so Validate's message-building logic and
+// tests share one definition of "too wide" rather than each computing it.
+func WideTrustedProxyPrefixes(prefixes []netip.Prefix) []netip.Prefix {
+	var wide []netip.Prefix
+	for _, p := range prefixes {
+		floor := MinTrustedProxyBitsV4
+		if p.Addr().Is6() && !p.Addr().Is4In6() {
+			floor = MinTrustedProxyBitsV6
+		}
+		if p.Bits() < floor {
+			wide = append(wide, p)
+		}
+	}
+	return wide
 }

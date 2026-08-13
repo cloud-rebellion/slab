@@ -58,6 +58,20 @@ func TestTrustedProxies_ProductionMustDeclareTheBoundary(t *testing.T) {
 		{"an unparseable entry is refused", "172.16.0.0/12x", true},
 		{"a quoted value is refused", `"172.18.0.1/32"`, true},
 		{"none mixed into a list is refused", "none,172.18.0.1/32", true},
+		// P1 finding 2: a prefix that parses fine but names almost every
+		// address on earth is the same collapsed-bucket failure as an
+		// absence, reached from the opposite direction. This is the
+		// natural response to a fail-closed boot refusal at 2am, so it
+		// has to be refused too, not just a typo or an absence.
+		{"0.0.0.0/0 is refused", "0.0.0.0/0", true},
+		{"::/0 is refused", "::/0", true},
+		{"a wide v4 supernet is refused", "10.0.0.0/7", true},
+		{"a wide v6 supernet is refused", "fd00::/16", true},
+		{"the v4 floor itself is accepted", "10.0.0.0/8", false},
+		{"the v6 floor itself is accepted", "fd00::/32", false},
+		{"a narrow v4 CIDR is accepted", "172.18.0.0/24", false},
+		{"a narrow v6 CIDR is accepted", "fd00::/64", false},
+		{"one wide entry poisons an otherwise-good list", "172.18.0.1/32,0.0.0.0/0", true},
 	}
 
 	for _, tc := range cases {
@@ -177,5 +191,66 @@ func TestParseTrustedProxies(t *testing.T) {
 	}
 	if prefixes[0].Contains(netip.MustParseAddr("10.0.6.2")) {
 		t.Error("bare IPv4 prefix must not contain a neighbour; that would trust other containers")
+	}
+}
+
+// TestWideTrustedProxyPrefixes pins the floor as a standalone unit, apart
+// from Validate's message-building, so a change to the floor constants is
+// caught here even if the wording around it changes.
+func TestWideTrustedProxyPrefixes(t *testing.T) {
+	cases := []struct {
+		name    string
+		raw     string
+		wantHit bool
+	}{
+		{"0.0.0.0/0", "0.0.0.0/0", true},
+		{"::/0", "::/0", true},
+		{"v4 one bit under the floor", "10.0.0.0/7", true},
+		{"v4 exactly at the floor", "10.0.0.0/8", false},
+		{"v6 one bit under the floor", "fd00::/31", true},
+		{"v6 exactly at the floor", "fd00::/32", false},
+		{"a bare host route is always fine", "10.0.6.1", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			prefixes, bad := ParseTrustedProxies(tc.raw)
+			if len(bad) != 0 {
+				t.Fatalf("ParseTrustedProxies(%q) produced bad entries: %v", tc.raw, bad)
+			}
+			wide := WideTrustedProxyPrefixes(prefixes)
+			if got := len(wide) > 0; got != tc.wantHit {
+				t.Errorf("WideTrustedProxyPrefixes(%q) flagged=%v, want %v", tc.raw, got, tc.wantHit)
+			}
+		})
+	}
+}
+
+// TestValidate_WideTrustedProxyMessageNamesAReplacement is the specific
+// requirement from the finding: an operator refused at boot for reaching
+// for 0.0.0.0/0 must be told what to write instead, not just that the
+// value is wrong, because the whole failure mode is reaching for the
+// biggest hammer at 2am.
+func TestValidate_WideTrustedProxyMessageNamesAReplacement(t *testing.T) {
+	cfg := prodBase()
+	cfg.TrustedProxies = "0.0.0.0/0"
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("0.0.0.0/0 booted; production must refuse it")
+	}
+	msg := err.Error()
+	for _, want := range []string{"0.0.0.0/0", "/8", "/32", "docker bridge gateway", "load balancer"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("error message missing %q, an operator cannot act on this: %s", want, msg)
+		}
+	}
+
+	cfg6 := prodBase()
+	cfg6.TrustedProxies = "::/0"
+	err6 := cfg6.Validate()
+	if err6 == nil {
+		t.Fatal("::/0 booted; production must refuse it")
+	}
+	if !strings.Contains(err6.Error(), "::/0") {
+		t.Errorf("error message does not name the offending value: %s", err6.Error())
 	}
 }

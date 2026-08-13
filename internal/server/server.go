@@ -200,6 +200,27 @@ func (s *Server) Router() http.Handler {
 	var mcpSurfaceFn func() any
 
 	r.Use(middleware.RequestID)
+	// Runtime self-check on ATOMICSITE_TRUSTED_PROXIES. The boot-time guard
+	// in config.Validate can only refuse an absent or unparseable value; it
+	// cannot tell a real proxy CIDR apart from one that parses fine but
+	// matches no peer that actually fronts this process (topology drift:
+	// web-proxy or atomicsite_default gets recreated, docker hands out
+	// a different gateway). That leaves TrustedProxyRealIP silently trusting
+	// nobody, which collapses every per-IP control onto one shared bucket.
+	// proxyTrust watches live traffic for exactly that and is read by the
+	// /api/health handler below. Ported from hephaestus's observeProxyTrust.
+	//
+	// MUST run BEFORE TrustedProxyRealIP. TrustedProxyRealIP rewrites
+	// r.RemoteAddr to the client IP when the peer IS trusted, and the
+	// detector needs the RAW transport peer to decide trust in the first
+	// place; reading RemoteAddr after the rewrite means a CORRECTLY
+	// configured trusted peer looks like the client address, which is
+	// almost never inside the trusted set itself, and every legitimate
+	// request would misfire the mismatch warning. Confirmed by test: this
+	// ordering bug produced a false positive on TestHealth_CorrectTrustedProxyStaysClean
+	// before the middleware order was fixed.
+	proxyTrust := authmw.NewProxyTrustDetector(s.cfg.TrustedProxies)
+	r.Use(proxyTrust.Middleware)
 	// Trusted-proxy XFF middleware (replaces chi.middleware.RealIP).
 	// Honours X-Forwarded-For / X-Real-IP only when the immediate TCP
 	// peer is in the configured ATOMICSITE_TRUSTED_PROXIES list. Empty
@@ -289,13 +310,30 @@ func (s *Server) Router() http.Handler {
 				crmOutboxPending = n
 			}
 		}
+		// A trusted-proxy set that matches nothing is otherwise invisible: it
+		// is not an error, nothing fails, and the only symptom is that every
+		// per-IP control quietly becomes estate-wide. Surface it here so an
+		// operator or an uptime check with a body matcher sees it without
+		// reading logs. The peer address stays OUT of this body: /api/health
+		// is unauthenticated, so this endpoint says WHAT is wrong (see the
+		// server log for who).
+		proxyTrustField := ""
+		if seen, ok := proxyTrust.Mismatch(); ok {
+			proxyTrustField = `,"proxy_trust":{"status":"mismatch","detail":"a forwarding header arrived from a peer outside ATOMICSITE_TRUSTED_PROXIES; per-IP rate limiting and the login lockout are globalised (see the server log for the peer address)","since":"` +
+				seen.SeenAt.Format(time.RFC3339) + `"}`
+			// Degrade, never upgrade: an sqlite fail must not be masked by this.
+			if status == "ok" {
+				status = "warning"
+			}
+		}
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Cache-Control", "no-store")
 		w.WriteHeader(httpStatus)
 		body := `{"status":"` + status +
 			`","sqlite":"` + boolToOKFail(dbOK) +
 			`","analyticsdb":"` + analyticsOK +
-			`","crm_outbox_pending":` + strconv.FormatInt(crmOutboxPending, 10) + `}`
+			`","crm_outbox_pending":` + strconv.FormatInt(crmOutboxPending, 10) +
+			proxyTrustField + `}`
 		_, _ = w.Write([]byte(body))
 	})
 
