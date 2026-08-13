@@ -34,6 +34,16 @@ const (
 	keepAlive   = 30 * time.Second
 )
 
+// LookupIP is net.LookupIP behind a seam, so a caller's tests can control
+// what a hostname resolves to without touching the network or depending on
+// a real DNS record. Same shape as internal/handlers/screenshot.go's
+// screenshotLookupIP, which was added after a sandbox resolver answering
+// example.com with 127.0.0.1 turned an unrelated unit test into a false
+// SSRF-guard failure. Exported, not package-local, because the callers that
+// most need to prove this is the only DNS check standing (internal/deploy's
+// rsync target, for one) live outside this package.
+var LookupIP = net.LookupIP
+
 // CheckHostPublic reports whether host is safe to send a tenant-supplied
 // request to. It fails closed: a host it cannot resolve or cannot make sense
 // of is refused.
@@ -57,7 +67,7 @@ func CheckHostPublic(host string) error {
 	if strings.EqualFold(host, "localhost") || strings.HasSuffix(strings.ToLower(host), ".localhost") {
 		return fmt.Errorf("blocked host %q", host)
 	}
-	ips, err := net.LookupIP(host)
+	ips, err := LookupIP(host)
 	if err != nil {
 		return fmt.Errorf("DNS lookup failed for %s: %w", host, err)
 	}

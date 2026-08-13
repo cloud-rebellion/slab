@@ -11,6 +11,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/bright-interaction/slab/internal/netguard"
 )
 
 // These tests pin audit finding 13: internal/deploy was the only
@@ -246,5 +248,68 @@ func TestRsyncDeploy_RefusesInternalHostBeforeExec(t *testing.T) {
 	// "exit status" would mean rsync was actually spawned.
 	if strings.Contains(err.Error(), "exit status") {
 		t.Fatalf("rsync was executed before the guard ran: %q", err.Error())
+	}
+}
+
+// TestRsyncDeploy_DeployTimeGuardIsTheOnlyLayerForAHostname closes the gap
+// the test above leaves open. That test uses an IP literal, so
+// checkHostOffline (inside Validate, which Deploy calls first) already
+// refuses it via netguard.CheckHostPublic on the literal form, and the
+// DEPLOY-TIME netguard.CheckHostPublic call at rsync.go:288 never has to
+// fire at all; deleting it there leaves that test green.
+//
+// checkHostOffline deliberately never resolves DNS for a plain hostname
+// (Validate runs on every target save and must not fail because a resolver
+// is slow, see ssrf.go), so for a hostname target Validate has no opinion on
+// where it points. The Deploy-time call is the only place in this whole
+// path that ever resolves one, which is exactly the DNS-rebind case
+// netguard is built for: a destination that looks fine because nothing has
+// checked it yet, and turns out to resolve internal the one time something
+// finally does.
+//
+// netguard.LookupIP is the seam, same shape as
+// internal/handlers/screenshot.go's screenshotLookupIP: it lets this test
+// control what the hostname resolves to without a real DNS record.
+func TestRsyncDeploy_DeployTimeGuardIsTheOnlyLayerForAHostname(t *testing.T) {
+	const host = "rebind.tenant-target.invalid"
+
+	prev := netguard.LookupIP
+	netguard.LookupIP = func(h string) ([]net.IP, error) {
+		if h == host {
+			return []net.IP{net.ParseIP("169.254.169.254")}, nil // cloud metadata
+		}
+		return prev(h)
+	}
+	t.Cleanup(func() { netguard.LookupIP = prev })
+
+	dist := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dist, "index.html"), []byte("ok"), 0o644); err != nil {
+		t.Fatalf("write dist file: %v", err)
+	}
+
+	tgt := validRsyncTarget()
+	tgt.Config["host"] = host
+	d := NewRsyncDeployer()
+
+	// Validate alone must not catch this: it is a plain hostname, and
+	// checkHostOffline is documented to leave hostname resolution to the
+	// connect-time guards. If this starts failing, Validate grew a DNS
+	// check and the premise of this test (Deploy-time is the ONLY layer)
+	// needs re-checking, not silencing.
+	if err := d.Validate(tgt); err != nil {
+		t.Fatalf("Validate rejected a plain hostname target (should defer to the connect-time guard): %v", err)
+	}
+
+	_, err := d.Deploy(context.Background(), dist, tgt)
+	if err == nil {
+		t.Fatal("Deploy ran rsync against a hostname resolving to the metadata address")
+	}
+	// "exit status" would mean rsync was actually spawned, i.e. the
+	// Deploy-time guard did not run.
+	if strings.Contains(err.Error(), "exit status") {
+		t.Fatalf("rsync was executed before the Deploy-time guard ran: %q", err.Error())
+	}
+	if !strings.Contains(err.Error(), host) {
+		t.Fatalf("error should name the offending host, got %q", err.Error())
 	}
 }
