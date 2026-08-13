@@ -1249,6 +1249,7 @@ func (s *Server) Router() http.Handler {
 		r.Get("/api/agent/visitor-metadata", agentH.GetVisitorMetadata)
 
 		// Pages (slug via path or ?page= query param)
+		r.Get("/api/agent/pages", agentH.ListPages)
 		r.Post("/api/agent/pages", agentH.CreatePage)
 		r.Patch("/api/agent/pages/{slug}", agentH.UpdatePage)
 		r.Delete("/api/agent/pages/{slug}", agentH.DeletePage)
@@ -1256,6 +1257,7 @@ func (s *Server) Router() http.Handler {
 
 		// Blocks (page slug via ?page= query param)
 		r.Post("/api/agent/blocks", agentH.CreateBlock)
+		r.Get("/api/agent/pages/{slug}/blocks", agentH.ListBlocks)
 		r.Post("/api/agent/pages/{slug}/blocks", agentH.CreateBlock)
 		r.Patch("/api/agent/blocks/{blockID}", agentH.UpdateBlock)
 		r.Delete("/api/agent/blocks/{blockID}", agentH.DeleteBlock)
@@ -1420,6 +1422,18 @@ func (s *Server) mountFrontend(r chi.Router) {
 		path := strings.TrimPrefix(req.URL.Path, "/")
 		if path == "" {
 			serveIndex(w)
+			return
+		}
+		// An unmatched /api/* path is a client error, not a deep link into the
+		// SPA. Falling through to serveIndex returned 200 text/html for every
+		// unregistered API route, which an API client cannot distinguish from
+		// success. That masked two endpoints the /api/agent/context catalogue
+		// advertises (GET /api/agent/pages and GET /api/agent/pages/{slug}/blocks)
+		// for as long as they went unregistered.
+		if path == "api" || strings.HasPrefix(path, "api/") {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusNotFound)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": "Not found"})
 			return
 		}
 		// Reject path traversal.

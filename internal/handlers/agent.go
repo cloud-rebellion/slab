@@ -160,6 +160,45 @@ func (h *AgentHandler) DraftPreview(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write([]byte(html))
 }
 
+// ListPages returns every page on the agent's site, published and draft.
+//
+// The endpoint catalogue served by /api/agent/context has advertised
+// "GET /api/agent/pages" since the agent API shipped, but the route was never
+// registered. Unregistered /api/* paths fall through to the SPA handler, so an
+// agent following the documented contract got 200 text/html instead of an
+// error, and had no way to read back what it had created.
+func (h *AgentHandler) ListPages(w http.ResponseWriter, r *http.Request) {
+	a := requireAgent(w, r)
+	if a == nil {
+		return
+	}
+	pages, err := h.queries.ListPagesBySite(r.Context(), a.SiteID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "Failed to list pages")
+		return
+	}
+	writeJSON(w, http.StatusOK, pages)
+}
+
+// ListBlocks returns one page's blocks ordered by sort_order. Advertised in the
+// same catalogue as ListPages and unregistered for the same reason.
+func (h *AgentHandler) ListBlocks(w http.ResponseWriter, r *http.Request) {
+	a := requireAgent(w, r)
+	if a == nil {
+		return
+	}
+	page, ok := h.resolvePageBySlug(w, r, a.SiteID)
+	if !ok {
+		return
+	}
+	blocks, err := h.queries.ListBlocksByPage(r.Context(), page.ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "Failed to list blocks")
+		return
+	}
+	writeJSON(w, http.StatusOK, blocks)
+}
+
 // CreatePage creates a new page via the agent API.
 func (h *AgentHandler) CreatePage(w http.ResponseWriter, r *http.Request) {
 	a := requireAgent(w, r)
