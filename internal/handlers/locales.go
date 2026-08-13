@@ -24,6 +24,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/bright-interaction/slab/internal/agent"
 	"github.com/bright-interaction/slab/internal/config"
 	"github.com/bright-interaction/slab/internal/revisions"
 	"github.com/bright-interaction/slab/internal/store"
@@ -38,10 +39,31 @@ type LocalesHandler struct {
 	cfg      *config.Config
 	queries  *store.Queries
 	recorder *revisions.Recorder
+	// guardrails validates the per-locale overlay payload. A block_locale row
+	// is what the builder renders for that locale, so an overlay is a block
+	// payload with a different table name: it needs the same pass the base row
+	// gets. Both write paths used to check only that the string parsed as JSON,
+	// which let a <script> overlay through on every non-default locale.
+	guardrails *agent.GuardrailEngine
 }
 
 func NewLocalesHandler(cfg *config.Config, queries *store.Queries) *LocalesHandler {
-	return &LocalesHandler{cfg: cfg, queries: queries}
+	return &LocalesHandler{
+		cfg:        cfg,
+		queries:    queries,
+		guardrails: agent.NewGuardrailEngine(queries),
+	}
+}
+
+// localeBlockType returns the parent block's type so the overlay is validated
+// against the same allow_block_type rule the base row was. A missing parent is
+// reported as a type that no allowlist contains, which fails closed.
+func (h *LocalesHandler) localeBlockType(ctx context.Context, blockID string) string {
+	bl, err := h.queries.GetBlockByID(ctx, blockID)
+	if err != nil {
+		return ""
+	}
+	return bl.BlockType
 }
 
 // SetRecorder wires the revisions recorder. Nil-safe: when unset the
@@ -431,6 +453,10 @@ func (h *LocalesHandler) UpsertBlockLocale(w http.ResponseWriter, r *http.Reques
 		visible = 0
 	}
 	siteID := urlParam(r, "siteID")
+	if v, bad := validateBlockWrite(r.Context(), h.guardrails, siteID, h.localeBlockType(r.Context(), blockID), dataJSON); bad {
+		writeGuardrailViolations(w, v)
+		return
+	}
 	h.recordBlockLocaleSnapshot(r.Context(), siteID, blockID, locale)
 	if err := h.queries.UpsertBlockLocale(r.Context(), store.UpsertBlockLocaleParams{
 		BlockID:   blockID,
@@ -604,6 +630,13 @@ func (h *LocalesHandler) ApplyTranslationForAgent(ctx context.Context, siteID, p
 		var probe map[string]any
 		if err := json.Unmarshal([]byte(ov.DataJson), &probe); err != nil {
 			return errors.New("block " + ov.BlockID + " data_json is not valid JSON: " + err.Error())
+		}
+		// "Parses as JSON" was the only check this path ever ran. The overlay is
+		// what the builder renders for the target locale, so it gets the same
+		// guardrail pass as the base row, and it gets it here in the pre-write
+		// loop so a violation in overlay #5 leaves #1-4 unwritten.
+		if v, bad := validateBlockWrite(ctx, h.guardrails, siteID, bl.BlockType, ov.DataJson); bad {
+			return errors.New("block " + ov.BlockID + " " + guardrailViolationError(v).Error())
 		}
 	}
 	h.recordPageLocaleSnapshot(ctx, siteID, pageID, targetLocale)

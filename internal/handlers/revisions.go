@@ -23,6 +23,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/bright-interaction/slab/internal/agent"
 	"github.com/bright-interaction/slab/internal/config"
 	authmw "github.com/bright-interaction/slab/internal/middleware"
 	"github.com/bright-interaction/slab/internal/revisions"
@@ -40,10 +41,21 @@ type RevisionsHandler struct {
 	cfg      *config.Config
 	queries  *store.Queries
 	recorder *revisions.Recorder
+	// guardrails re-validates a snapshot before it is written back onto the
+	// live row. A snapshot is an untrusted payload by the time it is restored:
+	// the tenant may have added an allow_block_type or forbid_pattern rule
+	// since it was taken, and restoring a pre-rule snapshot was a supported way
+	// to reach a now-forbidden block type without the engine ever running.
+	guardrails *agent.GuardrailEngine
 }
 
 func NewRevisionsHandler(cfg *config.Config, queries *store.Queries, recorder *revisions.Recorder) *RevisionsHandler {
-	return &RevisionsHandler{cfg: cfg, queries: queries, recorder: recorder}
+	return &RevisionsHandler{
+		cfg:        cfg,
+		queries:    queries,
+		recorder:   recorder,
+		guardrails: agent.NewGuardrailEngine(queries),
+	}
 }
 
 // recordRevision writes a pre-mutation snapshot and logs loudly when it
@@ -350,6 +362,12 @@ func (h *RevisionsHandler) restoreBlock(w http.ResponseWriter, r *http.Request, 
 		writeError(w, http.StatusUnprocessableEntity, "snapshot not parseable as block")
 		return
 	}
+	// Validate the snapshot against the rules in force NOW, not the rules that
+	// were in force when it was taken.
+	if v, bad := validateBlockWrite(r.Context(), h.guardrails, siteID, snap.BlockType, snap.DataJson); bad {
+		writeGuardrailViolations(w, v)
+		return
+	}
 	if err := h.queries.UpdateBlock(r.Context(), store.UpdateBlockParams{
 		BlockType: snap.BlockType,
 		Name:      snap.Name,
@@ -523,6 +541,11 @@ func (h *RevisionsHandler) RestoreForAgent(ctx context.Context, siteID, entityTy
 		var snap store.Block
 		if err := json.Unmarshal([]byte(target.SnapshotJson), &snap); err != nil {
 			return nil, errSnapshotUnparseable
+		}
+		// Same re-validation as the REST restore path at :329. This is the MCP
+		// twin; the REST fix landing alone is this codebase's dominant defect.
+		if v, bad := validateBlockWrite(ctx, h.guardrails, siteID, snap.BlockType, snap.DataJson); bad {
+			return nil, guardrailViolationError(v)
 		}
 		if err := h.queries.UpdateBlock(ctx, store.UpdateBlockParams{
 			BlockType: snap.BlockType,

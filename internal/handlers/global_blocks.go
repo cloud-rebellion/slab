@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 
+	"github.com/bright-interaction/slab/internal/agent"
 	"github.com/bright-interaction/slab/internal/builder"
 	"github.com/bright-interaction/slab/internal/config"
 	"github.com/bright-interaction/slab/internal/store"
@@ -16,10 +17,20 @@ import (
 type GlobalBlockHandler struct {
 	cfg     *config.Config
 	queries *store.Queries
+	// guardrails runs the same per-site block validation the ordinary block
+	// handlers run. It was missing here entirely, and a global block renders in
+	// the header and footer of EVERY page, so a <script> payload refused by
+	// POST /api/sites/{id}/pages/{id}/blocks was accepted here and shipped
+	// site-wide. Blast radius larger than an ordinary block, not smaller.
+	guardrails *agent.GuardrailEngine
 }
 
 func NewGlobalBlockHandler(cfg *config.Config, queries *store.Queries) *GlobalBlockHandler {
-	return &GlobalBlockHandler{cfg: cfg, queries: queries}
+	return &GlobalBlockHandler{
+		cfg:        cfg,
+		queries:    queries,
+		guardrails: agent.NewGuardrailEngine(queries),
+	}
 }
 
 // allowedSlots gates create/update so a careless caller can't seed a junk
@@ -89,6 +100,10 @@ func (h *GlobalBlockHandler) Create(w http.ResponseWriter, r *http.Request) {
 	styleJSON := "{}"
 	if len(req.Style) > 0 {
 		styleJSON = string(req.Style)
+	}
+	if v, bad := validateBlockWrite(r.Context(), h.guardrails, siteID, req.BlockType, dataJSON); bad {
+		writeGuardrailViolations(w, v)
+		return
 	}
 	// Auto-assign sort_order to max(slot)+1 unless the caller explicitly
 	// supplies one. The schema has UNIQUE(site_id, slot, sort_order); the
@@ -190,6 +205,14 @@ func (h *GlobalBlockHandler) Update(w http.ResponseWriter, r *http.Request) {
 		} else {
 			params.IsActive = 0
 		}
+	}
+
+	// Validate the RESOLVED payload, not just the delta: a partial update can
+	// turn an innocuous global block into a violating one by changing data
+	// alone. Same contract as BlockHandler.Update.
+	if v, bad := validateBlockWrite(r.Context(), h.guardrails, siteID, params.BlockType, params.DataJson); bad {
+		writeGuardrailViolations(w, v)
+		return
 	}
 
 	if err := h.queries.UpdateGlobalBlock(r.Context(), params); err != nil {
