@@ -59,9 +59,9 @@ type cmpSignal struct {
 // pass. See consentPlatforms for what DOES count as full credit.
 var consentSignatures = []cmpSignal{
 	{"cookiebot", []string{"cookiebot", "*"}},         // Cookiebot.init(), .renew(), .show(), .consent = ...
-	{"onetrust", []string{"onetrust", "*"}},            // OneTrust.InsertScript(), .ToggleInfoDisplay()
-	{"onetrust", []string{"optanonwrapper"}},           // OneTrust's required page-defined callback
-	{"cookieconsent", []string{"cookieconsent", "*"}},  // CookieConsent.run(), .initialise()
+	{"onetrust", []string{"onetrust", "*"}},           // OneTrust.InsertScript(), .ToggleInfoDisplay()
+	{"onetrust", []string{"optanonwrapper"}},          // OneTrust's required page-defined callback
+	{"cookieconsent", []string{"cookieconsent", "*"}}, // CookieConsent.run(), .initialise()
 	{"cookieconsent", []string{"initcookieconsent"}},
 	{"usercentrics", []string{"uc_ui", "*"}},
 	{"usercentrics", []string{"usercentrics", "*"}},

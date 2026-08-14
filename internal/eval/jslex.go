@@ -313,8 +313,8 @@ func punctAllowsRegexAfter(p string) bool {
 	}
 }
 
-func isDigit(c byte) bool     { return c >= '0' && c <= '9' }
-func isAlnum(c byte) bool     { return isDigit(c) || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') }
+func isDigit(c byte) bool { return c >= '0' && c <= '9' }
+func isAlnum(c byte) bool { return isDigit(c) || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') }
 func isIdentStart(c byte) bool {
 	return c == '_' || c == '$' || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
 }

@@ -208,4 +208,3 @@ func (h *AuthHandler) CompleteOIDCMFA(w http.ResponseWriter, r *http.Request) {
 		},
 	})
 }
-

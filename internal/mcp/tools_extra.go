@@ -573,10 +573,10 @@ func (s *Server) registerExtraTools() {
 	})
 
 	register(Tool{
-		Name:               "revoke_allowed_script",
-		Description:        "Revokes a whitelisted origin by id. The next build regenerates CSP directives without it.",
-		InputSchema:        schema(`{"type":"object","properties":{"id":{"type":"string"}},"required":["id"]}`),
-		RequiresWrite:      true,
+		Name:          "revoke_allowed_script",
+		Description:   "Revokes a whitelisted origin by id. The next build regenerates CSP directives without it.",
+		InputSchema:   schema(`{"type":"object","properties":{"id":{"type":"string"}},"required":["id"]}`),
+		RequiresWrite: true,
 		// CSP allowlist mutation is owner/admin-only on REST (enforced in
 		// handlers/allowed_scripts.go), and "security" is not offered by the
 		// key-mint UI and can only be minted by an owner/admin, so a plain

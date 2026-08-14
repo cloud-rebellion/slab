@@ -52,7 +52,7 @@ func TestSafeErrorTextFailsClosedOnUnknownShapes(t *testing.T) {
 // every typo. A guard that destroys all signal gets removed.
 func TestSafeErrorTextKeepsActionableSignal(t *testing.T) {
 	cases := map[string]string{
-		"refusing to connect to private address 10.0.0.1": "publicly reachable",
+		"refusing to connect to private address 10.0.0.1":  "publicly reachable",
 		"dial tcp 1.2.3.4:80: connect: connection refused": "could not reach",
 		"unsupported scheme ftp":                           "absolute http",
 	}
