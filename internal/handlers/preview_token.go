@@ -123,7 +123,7 @@ func (m *PreviewTokenManager) Serve(w http.ResponseWriter, r *http.Request) {
 	// Headers, including the CSP that contains this document, are set in
 	// serveDraftPreview so all three RenderPageDraft routes share one policy.
 	// This route previously set no CSP at all.
-	serveDraftPreview(w, html)
+	serveDraftPreview(w, r, m.queries, ticket.siteID, html)
 }
 
 // MintAndCount is a hook used in tests to assert ticket lifecycle.

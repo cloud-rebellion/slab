@@ -54,36 +54,9 @@ func BuildSecurityHeaders(ctx context.Context, queries *store.Queries, siteID st
 		sm[s.Category+"."+s.Key] = stripCtl(s.Value)
 	}
 
-	// Group active trusted domains by kind so each kind feeds the right CSP
-	// directive. 'all' is fanned out into every list.
-	rows, err := queries.ListAllowedScriptsBySite(ctx, siteID)
+	allow, err := LoadAllowedDomains(ctx, queries, siteID)
 	if err != nil {
-		return SecurityHeaders{}, fmt.Errorf("security headers: load allowed scripts: %w", err)
-	}
-	allow := AllowedDomains{}
-	for _, s := range rows {
-		if s.IsActive != 1 {
-			continue
-		}
-		switch strings.ToLower(strings.TrimSpace(s.Kind)) {
-		case "frame":
-			allow.Frame = append(allow.Frame, s.Domain)
-		case "image":
-			allow.Image = append(allow.Image, s.Domain)
-		case "media":
-			allow.Media = append(allow.Media, s.Domain)
-		case "connect":
-			allow.Connect = append(allow.Connect, s.Domain)
-		case "all":
-			allow.Script = append(allow.Script, s.Domain)
-			allow.Connect = append(allow.Connect, s.Domain)
-			allow.Frame = append(allow.Frame, s.Domain)
-			allow.Image = append(allow.Image, s.Domain)
-			allow.Media = append(allow.Media, s.Domain)
-		default: // "" or "script"
-			allow.Script = append(allow.Script, s.Domain)
-			allow.Connect = append(allow.Connect, s.Domain)
-		}
+		return SecurityHeaders{}, err
 	}
 
 	h := SecurityHeaders{}
@@ -190,6 +163,51 @@ type AllowedDomains struct {
 	Frame   []string // -> frame-src (iframes: cal.com / YouTube / Stripe Checkout)
 	Image   []string // -> img-src (extra hosts beyond the default https: wildcard)
 	Media   []string // -> media-src (audio/video sources)
+}
+
+// LoadAllowedDomains reads the site's active allowed_scripts rows and groups
+// them by kind, so each kind feeds the right CSP directive. 'all' fans out
+// into every list.
+//
+// Exported and shared on purpose. The BUILT site (BuildSecurityHeaders) and
+// the admin DRAFT PREVIEW (handlers.serveDraftPreview) must agree about which
+// third-party frames and media a tenant has approved, or the preview lies
+// about what production will do. The first cut of the preview CSP did not
+// consult this at all and shipped default-src 'none' with no media-src or
+// frame-src, which blocked self-hosted video and every embed in the preview
+// while the built site played them. Two copies of this grouping is exactly
+// how that drift returns, so there is one.
+func LoadAllowedDomains(ctx context.Context, queries *store.Queries, siteID string) (AllowedDomains, error) {
+	rows, err := queries.ListAllowedScriptsBySite(ctx, siteID)
+	if err != nil {
+		return AllowedDomains{}, fmt.Errorf("security headers: load allowed scripts: %w", err)
+	}
+	allow := AllowedDomains{}
+	for _, s := range rows {
+		if s.IsActive != 1 {
+			continue
+		}
+		switch strings.ToLower(strings.TrimSpace(s.Kind)) {
+		case "frame":
+			allow.Frame = append(allow.Frame, s.Domain)
+		case "image":
+			allow.Image = append(allow.Image, s.Domain)
+		case "media":
+			allow.Media = append(allow.Media, s.Domain)
+		case "connect":
+			allow.Connect = append(allow.Connect, s.Domain)
+		case "all":
+			allow.Script = append(allow.Script, s.Domain)
+			allow.Connect = append(allow.Connect, s.Domain)
+			allow.Frame = append(allow.Frame, s.Domain)
+			allow.Image = append(allow.Image, s.Domain)
+			allow.Media = append(allow.Media, s.Domain)
+		default: // "" or "script"
+			allow.Script = append(allow.Script, s.Domain)
+			allow.Connect = append(allow.Connect, s.Domain)
+		}
+	}
+	return allow, nil
 }
 
 // CSPOptions is the input to buildCSP. Allow contributes directive-specific

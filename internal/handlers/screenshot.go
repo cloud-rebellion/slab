@@ -76,9 +76,20 @@ func ScreenshotAllowedSuffixes() []string {
 }
 
 // ScreenshotHandler executes a headless Chromium navigation + screenshot
-// for an agent-supplied URL. Site-scoped: the URL must belong to the
-// requesting agent's site (or a known atomicsite-hosted subdomain) so
-// the handler can't be turned into an open SSRF vector.
+// for an agent-supplied URL.
+//
+// URL-scoped, NOT site-scoped. Nothing on this path reads the requesting
+// agent's SiteID: validateScreenshotURL takes only the raw URL and checks it
+// against screenshotAllowedSuffixes, a GLOBAL allow-list shared by every
+// tenant, plus a scheme check and (in production) a port restriction to
+// 80/443. So any agent can screenshot any host that any tenant's allow-list
+// permits, and the containment is the allow-list, not tenancy.
+//
+// This comment previously claimed the URL "must belong to the requesting
+// agent's site". That was false for as long as it existed. It is corrected
+// rather than deleted because the SSRF posture here is argued from which
+// controls remain, and a reader comparing two containment comments cannot
+// tell which one to trust if one of them is fiction.
 type ScreenshotHandler struct{}
 
 func NewScreenshotHandler() *ScreenshotHandler {

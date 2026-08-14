@@ -24,6 +24,7 @@ require (
 	golang.org/x/image v0.43.0
 	golang.org/x/net v0.56.0
 	golang.org/x/sync v0.22.0
+	golang.org/x/tools v0.47.0
 	modernc.org/sqlite v1.46.1
 )
 
@@ -66,7 +67,6 @@ require (
 	golang.org/x/sys v0.46.0 // indirect
 	golang.org/x/telemetry v0.0.0-20260625142307-59b4966ccb57 // indirect
 	golang.org/x/text v0.40.0 // indirect
-	golang.org/x/tools v0.47.0 // indirect
 	golang.org/x/xerrors v0.0.0-20240903120638-7835f813f4da // indirect
 	modernc.org/libc v1.67.6 // indirect
 	modernc.org/mathutil v1.7.1 // indirect

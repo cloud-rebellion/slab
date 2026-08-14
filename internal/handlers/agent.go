@@ -144,7 +144,7 @@ func (h *AgentHandler) DraftPreview(w http.ResponseWriter, r *http.Request) {
 	}
 	// Headers, including the CSP that contains this document, are set in
 	// serveDraftPreview so all three RenderPageDraft routes share one policy.
-	serveDraftPreview(w, html)
+	serveDraftPreview(w, r, h.queries, a.SiteID, html)
 }
 
 // ListPages returns every page on the agent's site, published and draft.

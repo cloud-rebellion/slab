@@ -6,7 +6,39 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+- **The admin draft preview is now served in an opaque origin, on all three
+  routes that serve it.** `Content-Security-Policy: sandbox allow-scripts`
+  (plus the existing resource directives) is set once in
+  `handlers.serveDraftPreview`, so the agent route, the admin session route
+  and the loopback preview-token route share one policy. Previously only the
+  agent route sent a CSP, and the preview renders a stored component template
+  verbatim: a write-scoped agent key could store script that then ran as a
+  top-level document on the admin origin, where the HttpOnly + SameSite=Strict
+  session cookie is inert and a credentialed fetch to the admin API was fully
+  authorized. The sandbox directive is a response-level control, so it holds
+  however the page is loaded (window.open, iframe, or headless Chromium).
+  **Behaviour change for component authors:** the agent route previously sent
+  `script-src 'none'`; it now sends `script-src 'unsafe-inline'` so the inline
+  component animation still runs. Preview still diverges from the built site,
+  which sends `script-src 'self'` plus the tenant allowlist, so `eval`,
+  `new Function` and WASM throw in preview and work in production.
+- **New exported builder API:** `builder.LoadAllowedDomains`. The grouping of
+  `allowed_scripts` rows into per-directive host lists moved out of
+  `BuildSecurityHeaders` so the draft preview and the built site read the same
+  tenant allowlist and cannot drift.
+
 ### Fixed
+- **Self-hosted video and iframe embeds render in the draft preview again.**
+  The preview policy set `default-src 'none'` without naming `media-src` or
+  `frame-src`, and an unnamed directive falls back to `default-src`. The built
+  site falls back to `default-src 'self'`, so video and same-origin frames play
+  there; the preview fell back to `'none'` and they did not. Measured in real
+  Chrome against the markup `blocks_extra.go` emits: the mp4 request never left
+  the browser. Both directives are now named explicitly and their host lists
+  come from the tenant's own frame/media allowlist, so the preview tells the
+  truth about what production will do. Affects `video_hero` (self-hosted,
+  youtube, vimeo) and `embed` blocks.
 - **Custom blocks kept their CSS, SVG and ARIA through the build.**
   `renderCustomBlock` was sanitizing with `rawHTMLPolicy` (bluemonday's
   UGC policy) to close a stored-XSS hole. That policy also deletes

@@ -133,9 +133,9 @@ func draftPreviewCSPValue(t *testing.T) string {
 			"and that file is now unreadable: %v", err)
 	}
 	body := string(src)
-	start := strings.Index(body, "const DraftPreviewCSP =")
+	start := strings.Index(body, "const draftPreviewCSPBase =")
 	if start < 0 {
-		t.Fatal("const DraftPreviewCSP not found in handlers/draft_preview_serve.go; " +
+		t.Fatal("const draftPreviewCSPBase not found in handlers/draft_preview_serve.go; " +
 			"this guard is keyed on it and has drifted")
 	}
 	// The declaration runs to the first line that does not continue the
@@ -178,6 +178,18 @@ const { label } = Astro.props;
 	}
 	if strings.Contains(got, "<script>alert(1)</script>") {
 		t.Errorf("a prop value reached the preview document as live markup: %q", got)
+	}
+	// The POSITIVE half. Asserting only the absence of the payload lets a
+	// mutant that deletes the substitution entirely pass: the output would
+	// keep the literal `{label}` and contain no <script> at all. The prop has
+	// to actually arrive, escaped.
+	if !strings.Contains(got, "&lt;script&gt;") {
+		t.Errorf("the prop did not arrive in escaped form; substitution may have been "+
+			"dropped rather than escaped: %q", got)
+	}
+	if strings.Contains(got, "{label}") {
+		t.Errorf("the prop placeholder survived unsubstituted, so this test was "+
+			"asserting nothing about escaping: %q", got)
 	}
 }
 

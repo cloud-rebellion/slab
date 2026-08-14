@@ -470,7 +470,7 @@ func (h *PageHandler) PageDraftPreview(w http.ResponseWriter, r *http.Request) {
 	// serveDraftPreview so all three RenderPageDraft routes share one policy.
 	// This route previously set no CSP at all, which is what made the stored
 	// component template a same-origin privilege escalation.
-	serveDraftPreview(w, html)
+	serveDraftPreview(w, r, h.queries, siteID, html)
 }
 
 // PreviewSource returns the assembled .astro source for a single page so the
