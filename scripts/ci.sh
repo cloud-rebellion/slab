@@ -101,6 +101,13 @@ vuln_scan() {
 step "build"                     go build ./...
 step "vet"                       go vet ./...
 step "gofmt"                     fmt_check
+# The screenshot egress guard (SSRF containment) is only actually proven by the
+# tests that drive a real headless browser. Those SKIP when Chromium is absent,
+# and `go test` without -v prints nothing but `ok`, so on a runner without a
+# browser the whole proof would disappear silently. This makes an absent browser
+# a CI FAILURE while a laptop without Chrome still skips cleanly.
+export SLAB_REQUIRE_BROWSER_TESTS=1
+
 step "tests (RUN, not compiled)" go test ./... -count=1
 step "frontend build (what the binary embeds)" frontend_build
 step "secret scan (working tree)" secret_scan
