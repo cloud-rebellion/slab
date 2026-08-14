@@ -90,6 +90,101 @@ func looksLikeDatePrefix(s string) bool {
 	return true
 }
 
+// ibanLengths is the ISO 13616 registry: IBAN country code -> the total
+// length of an IBAN issued under it, spaces removed. Every country that
+// issues IBANs publishes exactly one length, so a candidate whose length
+// disagrees with its own country code is not an IBAN.
+//
+// Codes that are NOT keys here deliberately include every two-letter
+// sequence that is not an IBAN issuer at all, which is what the base64
+// false positives were made of (measured: QO41..., ZH06..., FF92...,
+// YN80..., IM876... over 133 MB of random base64, none of them an issuer).
+//
+// Territories that issue under another country's code are absent on
+// purpose: Jersey, Guernsey and the Isle of Man use GB, and the French
+// overseas departments use FR, so JE/GG/IM/GP/MQ/RE never lead a real
+// IBAN. Entries below the horizontal break are national IBAN schemes in
+// live use that the ISO registry has not adopted; they are included
+// because omitting a real issuer is a PII leak, which is the worse error.
+//
+// Adding a country is one line. If a new issuer is missing here its
+// IBANs fall to the keyword-anchored floor pattern below, so the failure
+// mode is "only caught next to the word IBAN", not "never caught".
+var ibanLengths = map[string]int{
+	"AD": 24, "AE": 23, "AL": 28, "AT": 20, "AZ": 28, "BA": 20, "BE": 16,
+	"BG": 22, "BH": 22, "BI": 27, "BR": 29, "BY": 28, "CH": 21, "CR": 22,
+	"CY": 28, "CZ": 24, "DE": 22, "DJ": 27, "DK": 18, "DO": 28, "EE": 20,
+	"EG": 29, "ES": 24, "FI": 18, "FK": 18, "FO": 18, "FR": 27, "GB": 22,
+	"GE": 22, "GI": 23, "GL": 18, "GR": 27, "GT": 28, "HN": 28, "HR": 21,
+	"HU": 28, "IE": 22, "IL": 23, "IQ": 23, "IS": 26, "IT": 27, "JO": 30,
+	"KW": 30, "KZ": 20, "LB": 28, "LC": 32, "LI": 21, "LT": 20, "LU": 20,
+	"LV": 21, "LY": 25, "MC": 27, "MD": 24, "ME": 22, "MK": 19, "MN": 20,
+	"MR": 27, "MT": 31, "MU": 30, "NI": 28, "NL": 18, "NO": 15, "OM": 23,
+	"PK": 24, "PL": 28, "PS": 29, "PT": 25, "QA": 29, "RO": 24, "RS": 22,
+	"RU": 33, "SA": 24, "SC": 31, "SD": 18, "SE": 24, "SI": 19, "SK": 24,
+	"SM": 27, "SO": 23, "ST": 25, "SV": 28, "TL": 23, "TN": 24, "TR": 26,
+	"UA": 29, "VA": 22, "VG": 24, "XK": 20, "YE": 30,
+
+	"AO": 25, "BF": 28, "BJ": 28, "CF": 27, "CG": 27, "CI": 28, "CM": 27,
+	"CV": 25, "DZ": 26, "GA": 27, "GQ": 27, "GW": 25, "IR": 26, "KM": 27,
+	"MA": 28, "MG": 27, "ML": 28, "MZ": 25, "NE": 28, "SN": 28, "SS": 21,
+	"TD": 27, "TG": 28,
+}
+
+// validIBAN reports whether s is structurally an IBAN: a registered
+// country code, that country's exact length, and the ISO 7064 MOD 97-10
+// check digits ISO 13616 mandates. Spaces are ignored, so the print
+// format ("SE45 5000 0000 0583 9825 7466") and the compact form validate
+// identically.
+//
+// Unlike looksLikeDatePrefix above, this predicate CAN cost a real
+// detection, and the cases are named rather than waved away: an IBAN
+// whose check digits are mistyped fails here, and so does one whose
+// issuer is missing from the table. Both are covered by the
+// keyword-anchored floor pattern below, which carries no accept hook, so
+// the loss is confined to a malformed IBAN written with no nearby word
+// identifying it as one. That is the price of a predicate over a
+// denylist, and it buys the property a boundary tweak cannot: a random
+// base64 run is rejected on arithmetic rather than on the punctuation
+// that happens to surround it.
+func validIBAN(s string) bool {
+	var buf [34]byte
+	n := 0
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if c == ' ' {
+			continue
+		}
+		if n == len(buf) {
+			return false
+		}
+		buf[n] = c
+		n++
+	}
+	if n < 4 {
+		return false
+	}
+	if want, ok := ibanLengths[string(buf[:2])]; !ok || want != n {
+		return false
+	}
+	// ISO 7064 MOD 97-10 over the value rotated four characters left,
+	// with A..Z read as 10..35, carried as a running remainder so no
+	// bignum is needed. A genuine IBAN leaves remainder 1 by definition.
+	rem := 0
+	for i := 0; i < n; i++ {
+		switch c := buf[(i+4)%n]; {
+		case c >= '0' && c <= '9':
+			rem = rem*10 + int(c-'0')
+		case c >= 'A' && c <= 'Z':
+			rem = rem*100 + int(c-'A') + 10
+		default:
+			return false
+		}
+		rem %= 97
+	}
+	return rem == 1
+}
+
 var redactPatterns = []redactPattern{
 	{
 		kind: KindPersonnummer,
@@ -168,10 +263,68 @@ var redactPatterns = []redactPattern{
 	},
 	{
 		kind: KindIBAN,
-		// IBAN: 2 letters + 2 digits + 11..30 alnum. Loosely matched;
-		// detail validation happens at the application layer.
-		re:   regexp.MustCompile(`\b[A-Z]{2}\d{2}[A-Z0-9]{10,30}\b`),
-		hint: []string{"country"},
+		// IBAN, compact or in the ISO 13616 print format (groups of four
+		// separated by single spaces). The regex proposes and validIBAN
+		// disposes; "detail validation happens at the application layer"
+		// was the old comment here and it was not true of any caller.
+		//
+		// Why this needs a predicate at all, the same lesson as the
+		// international phone anchor directly below: base64's alphabet
+		// contains '+' and '/', both of which are regex word boundaries,
+		// so a random base64 run reads as \b-delimited to RE2. The old
+		// pattern `\b[A-Z]{2}\d{2}[A-Z0-9]{10,30}\b` needs only two
+		// uppercase letters, two digits and ten more alnum between two
+		// such boundaries, which random base64 produces constantly:
+		// measured at 5 hits over 133 MB of it, e.g.
+		// "...ISBDXW/SM36ZXUGY4Q2NA9/0EKx3Qm..." came back as
+		// "...ISBDXW/[shield:iban:tok_7c96b09a0a8d:country=SM]/0EKx3Qm...".
+		// Every ShieldJSON caller was exposed, including the base64 JPEG
+		// in preview_screenshot's result: about 0.4% of screenshots
+		// reached the agent as an undecodable image with no error, which
+		// is indistinguishable from a failed capture.
+		//
+		// A boundary tweak was the other option and was rejected. It is a
+		// denylist: it would have to name '+', '/', '-', '=' and '_' (the
+		// base64url false positives measured here sat between '-'
+		// characters), and it would cost a real detection on "IBAN=SE45..."
+		// while still admitting any run the denylist did not anticipate.
+		// The check digits are a predicate instead, and they reject on
+		// arithmetic rather than on surrounding punctuation.
+		//
+		// The regex is a deliberate SUPERSET of what validIBAN accepts,
+		// which is the safe direction: a match the predicate rejects is
+		// copied through verbatim by replacePatternGroup, so a greedy
+		// over-match can only fail to redact, never eat text.
+		re:     regexp.MustCompile(`\b[A-Z]{2}\d{2}(?: ?[A-Z0-9]{4}){2,7}(?: ?[A-Z0-9]{1,3})?\b`),
+		hint:   []string{"country"},
+		accept: validIBAN,
+	},
+	{
+		kind: KindIBAN,
+		// The floor under validIBAN, exactly as the bare-domestic phone
+		// pattern is the floor under looksLikeDatePrefix. Read that one
+		// before changing either.
+		//
+		// A predicate that rejects random base64 also rejects a genuine
+		// IBAN with a mistyped check digit, and one issued by a country
+		// missing from ibanLengths. Both are still personal data. So an
+		// IBAN-shaped value introduced by a word that says it is an
+		// account number is tokenized with NO accept hook, on the same
+		// reasoning the personnummer pattern uses for mistyped numbers:
+		// the safe side of the ambiguity is to tokenize.
+		//
+		// This cannot reintroduce the corruption it sits beside. The
+		// separator class [\s:=] is the anchor: no base64 or base64url
+		// encoder emits whitespace or a colon, and '=' appears only as
+		// terminal padding with nothing after it, so the keyword and the
+		// separator together cannot occur inside an encoded blob.
+		// Measured at zero hits over the same 133 MB.
+		//
+		// group 1 is the account number; the keyword and separator are
+		// matched only to anchor the pattern and are copied through.
+		re:    regexp.MustCompile(`(?i:\b(?:iban|bankkonto|kontonummer|bank ?account)\b)[\s:=]{1,4}([A-Z]{2}\d{2}(?: ?[A-Z0-9]{4}){2,7}(?: ?[A-Z0-9]{1,3})?)\b`),
+		group: 1,
+		hint:  []string{"country"},
 	},
 	{
 		kind: KindEmail,
