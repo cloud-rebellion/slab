@@ -360,8 +360,62 @@ func TestScreenshotEgressPolicy(t *testing.T) {
 		if _, perr := e.permit("169.254.169.254:80", "80"); perr == nil {
 			t.Error("the cloud metadata address must not be permitted")
 		}
-		if _, perr := e.permit("example.com:8443", "443"); perr == nil {
-			t.Error("a non-80/443 port must not be permitted")
+	})
+
+	// This subtest pins a DELIBERATE RELAXATION so a future reader can tell it
+	// apart from a leak. Sub-resources are bounded by netguard, not by the
+	// screenshot allow-list: an off-allow-list PUBLIC origin (a webfont host, a
+	// CDN image) is reachable, because a capture that silently drops a tenant's
+	// typography makes design critique and Inspector grading misjudge the exact
+	// thing they exist to judge. Everything netguard calls internal stays
+	// refused, which is the whole of the measured SSRF finding.
+	t.Run("sub-resources are bounded by netguard, not by the allow-list", func(t *testing.T) {
+		ConfigureScreenshotAllowList("example.com")
+		e, err := startScreenshotEgress("https://example.com/page")
+		if err != nil {
+			t.Fatalf("start: %v", err)
+		}
+		defer e.stop()
+
+		// PERMITTED: public third-party sub-resource origins, none of which are
+		// on the allow-list. Hostnames defer to DialControl at connect time;
+		// public literals pass outright.
+		for _, allowed := range []string{
+			"fonts.gstatic.com:443",
+			"fonts.googleapis.com:443",
+			"cdn.jsdelivr.net:443",
+			"93.184.216.34:443",
+			// The port ceiling does not apply to sub-resources any more. This
+			// is the known consequence of the relaxation, pinned so that a
+			// change to it is a visible decision rather than a surprise.
+			"cdn.example.net:8443",
+		} {
+			if _, perr := e.permit(allowed, "443"); perr != nil {
+				t.Errorf("public sub-resource origin %q must be permitted: %v", allowed, perr)
+			}
+		}
+
+		// STILL REFUSED: everything netguard classifies as internal. These are
+		// the addresses the SSRF matrix actually reached.
+		for _, blocked := range []string{
+			"10.1.2.3:80",
+			"172.16.5.5:80",
+			"192.168.68.102:80",
+			"100.64.0.1:80",      // CGNAT / Tailscale
+			"169.254.169.254:80", // cloud metadata
+			"127.0.0.1:8091",     // co-located admin API
+			"[::1]:8091",
+			"[fc00::1]:80",         // ULA
+			"[64:ff9b::7f00:1]:80", // NAT64 spelling of 127.0.0.1
+		} {
+			if _, perr := e.permit(blocked, "80"); perr == nil {
+				t.Errorf("internal origin %q must still be refused as a sub-resource", blocked)
+			}
+		}
+
+		// And the dialer stays authoritative for the hostname case.
+		if _, derr := e.dial(context.Background(), "10.1.2.3:80", "80", false); derr == nil {
+			t.Error("the guarded dialer must refuse a private address")
 		}
 	})
 

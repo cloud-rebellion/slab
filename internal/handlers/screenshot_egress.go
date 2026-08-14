@@ -60,8 +60,7 @@ const screenshotEgressDialTimeout = 15 * time.Second
 // An origin is reachable if and only if:
 //
 //	(a) it equals exemptOrigin exactly, and resolves to a loopback address; or
-//	(b) validateScreenshotURL permits it AND netguard.DialControl permits the
-//	    address it actually resolves to at connect time.
+//	(b) netguard permits the address it actually resolves to at connect time.
 //
 // exemptOrigin is the capture target's own origin, and is set ONLY when that
 // target is itself a loopback host, i.e. the server-minted
@@ -71,6 +70,37 @@ const screenshotEgressDialTimeout = 15 * time.Second
 // anything the rendered page says. Rule (b) can never yield a loopback
 // destination, because netguard.DialControl refuses loopback, so the preview
 // page cannot reach a SECOND loopback port.
+//
+// WHY RULE (b) IS NETGUARD AND NOT THE SCREENSHOT ALLOW-LIST. This is a
+// deliberate decision, not an oversight, and it has been argued once already:
+// please do not "restore" validateScreenshotURL here without reading this.
+//
+// HOP ZERO IS STILL ALLOW-LISTED. validateScreenshotURL continues to gate the
+// URL the caller asked for, in CaptureScreenshot, before the browser starts.
+// The relaxation below applies only to SUB-RESOURCES and later hops, which is
+// exactly the surface that was previously unguarded.
+//
+// For those sub-resources netguard is the whole control, and netguard refuses
+// loopback, RFC1918, CGNAT/Tailscale, link-local including the cloud metadata
+// address, ULA, NAT64 and 6to4/Teredo, behind an allowlist-first global-unicast
+// check that fails closed on anything unlisted. That is the entire measured
+// finding: every leak target in the SSRF matrix this file was written against
+// was a private address.
+//
+// Adding validateScreenshotURL on top would buy exactly one extra property,
+// "the page cannot reach an arbitrary PUBLIC host", and would cost the product
+// its typography and CDN imagery: a tenant site would screenshot with its
+// webfonts and third-party images silently missing. This capture feeds design
+// critique and Inspector grading, so a render that drops the fonts makes the
+// tool misjudge the precise thing it exists to judge. And the exfil-to-a-public
+// -host channel that extra property would close is one the draft-preview CSP
+// already permits via img-src https:, to a party that already holds the data.
+//
+// KNOWN CONSEQUENCE, flagged rather than hidden: dropping validateScreenshotURL
+// for sub-resources also drops its 80/443 port ceiling for sub-resources, so a
+// sub-resource may now reach a PUBLIC host on an arbitrary port. Real webfonts
+// and CDNs live on 443, so re-adding a port ceiling to rule (b) would cost
+// nothing and is a one-line change if a reviewer wants that defence back.
 type screenshotEgress struct {
 	// exemptOrigin is the one normalized "host:port" reachable under rule (a),
 	// or "" when the capture target is not a loopback host.
@@ -131,6 +161,16 @@ func (e *screenshotEgress) stop() {
 // permit applies the single policy. It returns whether the destination is the
 // exempt origin (which selects the loopback-pinned dialer) or must go through
 // the netguard-guarded dialer, and an error when neither rule allows it.
+//
+// Sub-resources are bounded by netguard, NOT by the screenshot allow-list. See
+// the decision recorded on the screenshotEgress type before changing this.
+//
+// The literal-IP check below is an early, well-logged refusal for the common
+// SSRF probe shape (the page names an address outright, which is what every
+// mechanism in the leak matrix did). It is an optimisation of the log, not the
+// control: netguard.DialControl in dial is authoritative, runs on the address
+// actually resolved at connect time, and is what catches a HOSTNAME pointed
+// inside, including one that rebinds after this check.
 func (e *screenshotEgress) permit(hostPort, defaultPort string) (exempt bool, err error) {
 	origin, err := normalizeScreenshotOrigin(hostPort, defaultPort)
 	if err != nil {
@@ -141,16 +181,15 @@ func (e *screenshotEgress) permit(hostPort, defaultPort string) (exempt bool, er
 	if e.exemptOrigin != "" && origin == e.exemptOrigin {
 		return true, nil
 	}
-	// Rule (b): the public allow-list the screenshot tool already enforces.
-	// Synthesizing the URL rather than re-implementing the check keeps this
-	// from drifting away from validateScreenshotURL, which also carries the
-	// 80/443 port ceiling and the DNS-rebind pre-flight.
-	scheme := "http"
-	if defaultPort == "443" {
-		scheme = "https"
+	// Rule (b). No DNS round trip here on purpose: a resolving pre-flight would
+	// add a lookup per sub-resource and could still only refuse what DialControl
+	// refuses anyway.
+	host, _, serr := net.SplitHostPort(origin)
+	if serr != nil {
+		return false, serr
 	}
-	if verr := validateScreenshotURL(scheme + "://" + origin + "/"); verr != nil {
-		return false, verr
+	if ip := net.ParseIP(host); ip != nil && netguard.IsForbidden(ip) {
+		return false, fmt.Errorf("refusing blocked address %s", ip)
 	}
 	return false, nil
 }
