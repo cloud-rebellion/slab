@@ -105,6 +105,63 @@ func requireOrSkipBrowser(t *testing.T) {
 	t.Skipf("SKIPPED FOR A REASON, NOT PASSING: %s on this machine", msg)
 }
 
+// browserLaunchFailure reports whether err is headless Chrome failing to COME
+// UP, as opposed to any result about egress policy.
+//
+// chromedp waits wsURLReadTimeout (20s by default, chromedp@v0.15.1
+// allocate.go:40) for Chrome to print its DevTools websocket URL, and gives up
+// with "websocket url timeout reached". On a loaded machine Chrome can miss
+// that, and captureScreenshot's own budget is 30s, so startup contention eats
+// most of it. When that happens NO capture occurs: the victim is never probed,
+// the proxy is never consulted, and none of the four numbers this test decides
+// on are ever produced.
+//
+// That is why this is classified rather than retried blindly. A retry on a
+// mechanism-timing flake could discard a real intermittent leak; a retry here
+// cannot, because there is no assertion result to discard.
+func browserLaunchFailure(err error) bool {
+	if err == nil {
+		return false
+	}
+	s := err.Error()
+	for _, sig := range []string{
+		"websocket url timeout reached",
+		"chrome failed to start",
+		"exec: no command",
+		"context deadline exceeded",
+	} {
+		if strings.Contains(s, sig) {
+			return true
+		}
+	}
+	return false
+}
+
+// captureForTest runs a capture and separates "the browser did not start" from
+// "the guard produced a result". It retries a launch failure ONCE and fails
+// loudly if the browser will not come up twice, so an infrastructure problem can
+// never be read as either containment or a leak.
+func captureForTest(t *testing.T, ctx context.Context, req ScreenshotRequest) *ScreenshotResult {
+	t.Helper()
+	for attempt := 1; attempt <= 2; attempt++ {
+		res, err := CaptureLoopbackScreenshot(ctx, req)
+		if err == nil {
+			return res
+		}
+		if !browserLaunchFailure(err) {
+			t.Fatalf("capture failed for a NON-BROWSER reason, which is a real result and not infrastructure: %v", err)
+		}
+		if attempt == 1 {
+			t.Logf("INFRASTRUCTURE, NOT A CONTAINMENT RESULT: headless Chrome failed to launch (%v); retrying once. No capture happened, so nothing about the egress guard was observed on this attempt.", err)
+			continue
+		}
+		t.Fatalf("BROWSER FAILED TO LAUNCH TWICE: %v\n"+
+			"This is NOT a leak and NOT a passing guard: no capture occurred, so the egress assertions never ran. "+
+			"Chrome could not produce its DevTools websocket URL inside chromedp's 20s wsURLReadTimeout, which happens under CPU contention.", err)
+	}
+	return nil
+}
+
 // magentaPNG is the image body the fake internal service serves for <img>.
 func magentaPNG(t *testing.T) []byte {
 	t.Helper()
@@ -308,15 +365,12 @@ func TestScreenshotEgressBlocksInternalReads(t *testing.T) {
 				ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 				defer cancel()
 
-				res, err := CaptureLoopbackScreenshot(ctx, ScreenshotRequest{
+				res := captureForTest(t, ctx, ScreenshotRequest{
 					URL:            page.URL + "/",
 					ViewportWidth:  600,
 					ViewportHeight: 400,
 					WaitMs:         2000,
 				})
-				if err != nil {
-					t.Fatalf("capture failed: %v", err)
-				}
 
 				// PRIMARY: the internal service was never reached. This is the
 				// assertion that carries the finding, because it is immune to
@@ -378,15 +432,12 @@ func TestScreenshotEgressAllowsTheCaptureTarget(t *testing.T) {
 	})
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
-	res, err := CaptureLoopbackScreenshot(ctx, ScreenshotRequest{
+	res := captureForTest(t, ctx, ScreenshotRequest{
 		URL:            page.URL + "/",
 		ViewportWidth:  600,
 		ViewportHeight: 400,
 		WaitMs:         1200,
 	})
-	if err != nil {
-		t.Fatalf("capture of the exempt origin failed: %v", err)
-	}
 	// The page paints magenta everywhere, and startAttackPage overlays a 25%
 	// cyan sentinel strip, so the expected split is roughly 75/25. Asserting
 	// BOTH bands rather than one keeps this honest: a blank white frame would
@@ -932,14 +983,12 @@ func TestScreenshotEgressBlocksWebRTCUDP(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
-	if _, cerr := CaptureLoopbackScreenshot(ctx, ScreenshotRequest{
+	captureForTest(t, ctx, ScreenshotRequest{
 		URL:            page.URL + "/",
 		ViewportWidth:  400,
 		ViewportHeight: 300,
 		WaitMs:         4000,
-	}); cerr != nil {
-		t.Fatalf("capture failed: %v", cerr)
-	}
+	})
 	// ICE gathering is asynchronous; give any in-flight datagram time to land
 	// rather than winning the assertion on a race.
 	time.Sleep(1500 * time.Millisecond)
