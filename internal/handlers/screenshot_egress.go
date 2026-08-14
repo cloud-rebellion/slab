@@ -121,10 +121,11 @@ const screenshotEgressDialTimeout = 15 * time.Second
 // it would buy exactly one extra property, "the page cannot reach an arbitrary
 // PUBLIC host", and would cost the product its typography and CDN imagery: a
 // tenant site would screenshot with its webfonts and third-party images
-// silently missing. This capture feeds design critique and Inspector grading,
-// so a render that drops the fonts makes the tool misjudge the precise thing it
-// exists to judge. And the exfil-to-a-public-host channel that extra property
-// would close is one the draft-preview CSP already permits via img-src https:,
+// silently missing. The consumer of a capture is a human or a vision-capable
+// model looking at typography, layout and imagery, so a render missing those
+// misrepresents the page to the only thing that reads it. And the
+// exfil-to-a-public-host channel that extra property would close is one the
+// draft-preview CSP already permits via img-src https: (handlers/agent.go:157),
 // to a party that already holds the data.
 //
 // KNOWN CONSEQUENCE, now CLOSED. Dropping the host allow-list initially dropped
@@ -219,11 +220,13 @@ func (e *screenshotEgress) stop() {
 		_ = c.Close()
 	}
 
-	// Brief graceful pass, then a hard Close. Shutdown alone cost a flat 2s
-	// whenever anything was still active and STILL let an in-flight plain-HTTP
-	// request complete after stop returned (measured: stop back in 2.0022s,
-	// client still got 200, upstream finished 4.5s later). The capture is over
-	// by this point, so there is nothing worth waiting for.
+	// Brief graceful pass, then a hard Close. Shutdown waits for active
+	// connections to finish, so on its own it both delayed stop for as long as
+	// the graceful deadline allowed and let an in-flight plain-HTTP request
+	// complete after stop returned. The capture is over by this point, so
+	// there is nothing worth waiting for.
+	// TestScreenshotEgressStopClosesHijackedTunnels asserts stop stays under a
+	// second; it currently returns in tens of microseconds.
 	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
 	defer cancel()
 	_ = e.srv.Shutdown(ctx)
