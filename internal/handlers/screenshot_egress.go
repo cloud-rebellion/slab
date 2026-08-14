@@ -60,7 +60,8 @@ const screenshotEgressDialTimeout = 15 * time.Second
 // An origin is reachable if and only if:
 //
 //	(a) it equals exemptOrigin exactly, and resolves to a loopback address; or
-//	(b) netguard permits the address it actually resolves to at connect time.
+//	(b) netguard permits the address it actually resolves to at connect time,
+//	    AND the port is 80 or 443.
 //
 // exemptOrigin is the capture target's own origin, and is set ONLY when that
 // target is itself a loopback host, i.e. the server-minted
@@ -80,27 +81,29 @@ const screenshotEgressDialTimeout = 15 * time.Second
 // The relaxation below applies only to SUB-RESOURCES and later hops, which is
 // exactly the surface that was previously unguarded.
 //
-// For those sub-resources netguard is the whole control, and netguard refuses
-// loopback, RFC1918, CGNAT/Tailscale, link-local including the cloud metadata
-// address, ULA, NAT64 and 6to4/Teredo, behind an allowlist-first global-unicast
-// check that fails closed on anything unlisted. That is the entire measured
-// finding: every leak target in the SSRF matrix this file was written against
-// was a private address.
+// For those sub-resources the control is netguard PLUS an 80/443 port ceiling,
+// and netguard refuses loopback, RFC1918, CGNAT/Tailscale, link-local including
+// the cloud metadata address, ULA, NAT64 and 6to4/Teredo, behind an
+// allowlist-first global-unicast check that fails closed on anything unlisted.
+// That is the entire measured finding: every leak target in the SSRF matrix
+// this file was written against was a private address.
 //
-// Adding validateScreenshotURL on top would buy exactly one extra property,
-// "the page cannot reach an arbitrary PUBLIC host", and would cost the product
-// its typography and CDN imagery: a tenant site would screenshot with its
-// webfonts and third-party images silently missing. This capture feeds design
-// critique and Inspector grading, so a render that drops the fonts makes the
-// tool misjudge the precise thing it exists to judge. And the exfil-to-a-public
-// -host channel that extra property would close is one the draft-preview CSP
-// already permits via img-src https:, to a party that already holds the data.
+// What is NOT kept from validateScreenshotURL is its host allow-list. Keeping
+// it would buy exactly one extra property, "the page cannot reach an arbitrary
+// PUBLIC host", and would cost the product its typography and CDN imagery: a
+// tenant site would screenshot with its webfonts and third-party images
+// silently missing. This capture feeds design critique and Inspector grading,
+// so a render that drops the fonts makes the tool misjudge the precise thing it
+// exists to judge. And the exfil-to-a-public-host channel that extra property
+// would close is one the draft-preview CSP already permits via img-src https:,
+// to a party that already holds the data.
 //
-// KNOWN CONSEQUENCE, flagged rather than hidden: dropping validateScreenshotURL
-// for sub-resources also drops its 80/443 port ceiling for sub-resources, so a
-// sub-resource may now reach a PUBLIC host on an arbitrary port. Real webfonts
-// and CDNs live on 443, so re-adding a port ceiling to rule (b) would cost
-// nothing and is a one-line change if a reviewer wants that defence back.
+// KNOWN CONSEQUENCE, now CLOSED. Dropping the host allow-list initially dropped
+// the 80/443 port ceiling with it, which left "any public host on any port"
+// reachable as a sub-resource. That was wider than the fidelity argument above
+// supports, so the ceiling is kept explicitly in permit: real webfonts and CDNs
+// are served over 80/443 without exception, so it costs the render nothing.
+// Rule (b) is therefore netguard plus a port ceiling, not netguard alone.
 type screenshotEgress struct {
 	// exemptOrigin is the one normalized "host:port" reachable under rule (a),
 	// or "" when the capture target is not a loopback host.
@@ -184,12 +187,19 @@ func (e *screenshotEgress) permit(hostPort, defaultPort string) (exempt bool, er
 	// Rule (b). No DNS round trip here on purpose: a resolving pre-flight would
 	// add a lookup per sub-resource and could still only refuse what DialControl
 	// refuses anyway.
-	host, _, serr := net.SplitHostPort(origin)
+	host, port, serr := net.SplitHostPort(origin)
 	if serr != nil {
 		return false, serr
 	}
 	if ip := net.ParseIP(host); ip != nil && netguard.IsForbidden(ip) {
 		return false, fmt.Errorf("refusing blocked address %s", ip)
+	}
+	// Port ceiling. Webfonts and CDNs are served over 80/443 without exception,
+	// so this costs the render nothing while keeping "any public host on any
+	// port" off the reachable surface. It is the one piece of
+	// validateScreenshotURL that rule (b) deliberately keeps.
+	if port != "80" && port != "443" {
+		return false, fmt.Errorf("refusing sub-resource port %q (only 80/443)", port)
 	}
 	return false, nil
 }

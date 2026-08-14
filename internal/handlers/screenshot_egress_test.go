@@ -377,18 +377,16 @@ func TestScreenshotEgressPolicy(t *testing.T) {
 		}
 		defer e.stop()
 
-		// PERMITTED: public third-party sub-resource origins, none of which are
-		// on the allow-list. Hostnames defer to DialControl at connect time;
-		// public literals pass outright.
+		// PERMITTED: public third-party sub-resource origins on 80/443, none of
+		// which are on the allow-list. Hostnames defer to DialControl at
+		// connect time; public literals pass outright. This is the fidelity the
+		// relaxation exists to buy: webfonts and CDN imagery render.
 		for _, allowed := range []string{
 			"fonts.gstatic.com:443",
 			"fonts.googleapis.com:443",
 			"cdn.jsdelivr.net:443",
 			"93.184.216.34:443",
-			// The port ceiling does not apply to sub-resources any more. This
-			// is the known consequence of the relaxation, pinned so that a
-			// change to it is a visible decision rather than a surprise.
-			"cdn.example.net:8443",
+			"cdn.jsdelivr.net:80",
 		} {
 			if _, perr := e.permit(allowed, "443"); perr != nil {
 				t.Errorf("public sub-resource origin %q must be permitted: %v", allowed, perr)
@@ -410,6 +408,25 @@ func TestScreenshotEgressPolicy(t *testing.T) {
 		} {
 			if _, perr := e.permit(blocked, "80"); perr == nil {
 				t.Errorf("internal origin %q must still be refused as a sub-resource", blocked)
+			}
+		}
+
+		// ALSO REFUSED: a PUBLIC host on a non-web port. The port ceiling is
+		// deliberate, and is the one piece of validateScreenshotURL that rule
+		// (b) keeps. Dropping the host allow-list for render fidelity does not
+		// require dropping the ceiling with it: webfonts and CDNs are served
+		// over 80/443 without exception, so the ceiling costs the render
+		// nothing, while without it "any public host on any port" stays
+		// reachable from a rendered page (an internet-exposed :9200, say). If
+		// one of these ever moves to the permitted column, that is a security
+		// decision and should be made as one.
+		for _, blocked := range []string{
+			"cdn.example.net:8443",
+			"93.184.216.34:9200",
+			"fonts.gstatic.com:22",
+		} {
+			if _, perr := e.permit(blocked, "443"); perr == nil {
+				t.Errorf("public origin %q on a non-web port must be refused as a sub-resource", blocked)
 			}
 		}
 
