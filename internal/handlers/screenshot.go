@@ -255,6 +255,15 @@ func captureScreenshot(ctx context.Context, target string, req ScreenshotRequest
 		// destinations by default, which would leave every co-located
 		// 127.0.0.1 service directly reachable by the rendered page.
 		chromedp.Flag("proxy-bypass-list", "<-loopback>"),
+		// The proxy above is TCP-only. WebRTC opens its own UDP sockets and
+		// does its own DNS, so a page could sweep internal ranges with stun:
+		// URLs and read liveness off ICE-candidate timing without the proxy
+		// ever seeing a packet. This flag is what closes UDP.
+		//
+		// The name matters: --force-webrtc-ip-handling-policy is a no-op here,
+		// measured. Do not respell this as a disable-features entry either;
+		// chromedp.Flag is a map set and would clobber chromedp's own default.
+		chromedp.Flag("webrtc-ip-handling-policy", "disable_non_proxied_udp"),
 		chromedp.WindowSize(vw, vh),
 	)
 	allocCtx, allocCancel := chromedp.NewExecAllocator(captureCtx, opts...)
