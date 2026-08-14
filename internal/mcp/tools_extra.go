@@ -794,7 +794,12 @@ func (s *Server) registerExtraTools() {
 
 	register(Tool{
 		Name:        "preview_screenshot",
-		Description: "Captures a headless Chromium screenshot of the current DRAFT page (current DB state, no build needed). Fixes the loop where the agent had to trigger_build + wait + screenshot the deploy URL to see its own work. Server-side path: mints a one-shot loopback token, drives chromedp at /_preview/{token}, the loopback handler swaps the token for the rendered draft HTML (same renderer as the admin draft-preview, including the inline-rendered component blocks). Fonts load from the same loopback origin. Args: page_id (preferred) OR slug (the agent's known slug for the page). Optional: viewport_width (320-3840, default 1440), viewport_height (240-2160, default 900), full_page (default true), wait_ms (default 1200, lets the canvas globe + cost-calculator islands paint). Returns base64 PNG; vision-capable agents decode it and reason about pixels in the same turn. Use this BEFORE trigger_build to iterate fast.",
+		Description: "Captures a headless Chromium screenshot of the current DRAFT page (current DB state, no build needed). Fixes the loop where the agent had to trigger_build + wait + screenshot the deploy URL to see its own work. Server-side path: mints a one-shot loopback token, drives chromedp at /_preview/{token}, the loopback handler swaps the token for the rendered draft HTML (same renderer as the admin draft-preview, including the inline-rendered component blocks). Fonts load from the same loopback origin. Args: page_id (preferred) OR slug (the agent's known slug for the page). Optional: viewport_width (320-3840, default 1440), viewport_height (240-2160, default 900), full_page (default true), wait_ms (default 1200, lets the canvas globe + cost-calculator islands paint). Returns a base64-encoded image whose actual encoding is named by the 'format' field (full_page captures are JPEG); vision-capable agents decode it and reason about pixels in the same turn. Use this BEFORE trigger_build to iterate fast.",
+		// Drives a headless browser process and returns a render of site
+		// content, exactly like the sibling `screenshot` tool, which has always
+		// been RequiresWrite. Without this flag an active READ-ONLY key could
+		// spend browser slots and read back rendered draft pages.
+		RequiresWrite: true,
 		InputSchema: schema(`{
 			"type":"object",
 			"properties":{
@@ -882,7 +887,7 @@ func (s *Server) registerExtraTools() {
 				"full_page":    res.FullPage,
 				"size_bytes":   res.SizeBytes,
 				"viewport":     map[string]int{"width": res.Viewport.Width, "height": res.Viewport.Height},
-				"hint":         "image_base64 is a base64-encoded PNG. Vision-capable agents decode it and reason about pixels. Capture is of the CURRENT DRAFT (no build needed), so you can iterate before trigger_build.",
+				"hint":         "image_base64 is a base64-encoded image; the 'format' field names the actual encoding (full_page captures are jpeg, not png). Decode by that field, not by assumption. Vision-capable agents decode it and reason about pixels. Capture is of the CURRENT DRAFT (no build needed), so you can iterate before trigger_build.",
 			}
 			return mustJSON(out), nil
 		},

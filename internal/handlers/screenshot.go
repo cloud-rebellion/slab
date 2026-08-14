@@ -97,8 +97,13 @@ type ScreenshotRequest struct {
 }
 
 // ScreenshotResult is the canonical response shape for a successful
-// screenshot capture. image_base64 is a base64-encoded PNG; vision-
+// screenshot capture. image_base64 is a base64-encoded image; vision-
 // capable agents decode it and reason about pixels directly.
+//
+// Format names the actual encoding of those bytes ("png" or "jpeg"),
+// sniffed from the bytes by screenshotImageFormat rather than assumed.
+// The full-page path currently yields JPEG; decode by content, not by
+// assumption.
 type ScreenshotResult struct {
 	URL         string `json:"url"`
 	ImageBase64 string `json:"image_base64"`
@@ -217,12 +222,28 @@ func captureScreenshot(ctx context.Context, target string, req ScreenshotRequest
 	captureCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
+	// Every connection the renderer makes goes through this proxy, which
+	// applies the same policy the caller's URL check applied. Without it the
+	// URL check is a one-shot gate on the FIRST request only, and the page
+	// itself can reach anything the host can reach; see screenshot_egress.go.
+	// Fails closed: no proxy, no capture.
+	egress, err := startScreenshotEgress(target)
+	if err != nil {
+		return nil, err
+	}
+	defer egress.stop()
+
 	opts := append(chromedp.DefaultExecAllocatorOptions[:],
 		chromedp.NoSandbox,
 		chromedp.Flag("headless", true),
 		chromedp.Flag("disable-gpu", true),
 		chromedp.Flag("hide-scrollbars", true),
 		chromedp.Flag("mute-audio", true),
+		chromedp.Flag("proxy-server", egress.proxyURL()),
+		// Load-bearing. Chromium bypasses a configured proxy for loopback
+		// destinations by default, which would leave every co-located
+		// 127.0.0.1 service directly reachable by the rendered page.
+		chromedp.Flag("proxy-bypass-list", "<-loopback>"),
 		chromedp.WindowSize(vw, vh),
 	)
 	allocCtx, allocCancel := chromedp.NewExecAllocator(captureCtx, opts...)
@@ -248,13 +269,38 @@ func captureScreenshot(ctx context.Context, target string, req ScreenshotRequest
 	res := &ScreenshotResult{
 		URL:         target,
 		ImageBase64: base64.StdEncoding.EncodeToString(buf),
-		Format:      "png",
+		Format:      screenshotImageFormat(buf),
 		FullPage:    fullPage,
 		SizeBytes:   len(buf),
 	}
 	res.Viewport.Width = vw
 	res.Viewport.Height = vh
 	return res, nil
+}
+
+// screenshotImageFormat reports the encoding of the bytes actually produced,
+// by sniffing their magic number.
+//
+// This used to be the literal string "png" while the full-page path called
+// chromedp.FullScreenshot(&buf, 90), and chromedp emits JPEG for any quality
+// other than 100 (chromedp@v0.15.1 screenshot.go:144-147). So every full-page
+// capture was JPEG bytes labelled PNG. That is not cosmetic: a caller who
+// believes the label reaches for png.Decode, gets "invalid format", and
+// concludes the capture failed, which is exactly how someone re-measuring an
+// SSRF against this endpoint would wrongly decide the leak does not reproduce.
+// Sniffing the bytes means the label cannot drift from them again if the
+// quality argument or the chromedp default ever changes.
+func screenshotImageFormat(buf []byte) string {
+	switch {
+	case len(buf) >= 8 && string(buf[:8]) == "\x89PNG\r\n\x1a\n":
+		return "png"
+	case len(buf) >= 3 && buf[0] == 0xFF && buf[1] == 0xD8 && buf[2] == 0xFF:
+		return "jpeg"
+	case len(buf) >= 12 && string(buf[:4]) == "RIFF" && string(buf[8:12]) == "WEBP":
+		return "webp"
+	default:
+		return "unknown"
+	}
 }
 
 // Screenshot is the HTTP entry point. Reads JSON body, calls

@@ -306,6 +306,12 @@ func TestExtraWriteToolsRegistered(t *testing.T) {
 		"upload_font",
 		"add_design_reference",
 		"delete_design_reference",
+		// Not a mutator, but it drives a headless browser process and returns
+		// a render of site content, so it gates like its sibling `screenshot`.
+		// It shipped without the flag, which let any active read-only key run
+		// captures.
+		"preview_screenshot",
+		"screenshot",
 	}
 	for _, name := range writeTools {
 		tool, ok := s.tools[name]
