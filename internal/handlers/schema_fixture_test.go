@@ -36,8 +36,15 @@ func TestMain(m *testing.M) {
 // empty database measures 441ms under -race on a quiet laptop --
 // modernc.org/sqlite is SQLite transpiled to Go, so the race detector
 // instruments every access inside the engine itself -- and this package paid
-// that once per test across 338 tests. That is ~149s of a 161s suite: the
-// suite was ~93% schema application and ~7% testing.
+// that once per fixture call.
+//
+// The multiplier is 264, NOT the 338 test functions: 177 of them live in files
+// that never call a fixture, and 264 is what an atomic counter measured,
+// identical across three runs. So it was ~116s of a ~173s suite -- roughly two
+// thirds schema application, one third testing. An earlier draft of this
+// comment said 93%/7% by using the test-function count, which overstates the
+// headroom this change buys by about 6x; the per-call physics were right and
+// the multiplier was not.
 //
 // It read as a hang. On the 4-vCPU CI runner the same suite ran past ci-go's
 // `go test -timeout=600s` and panicked with 100+ goroutines parked in
@@ -50,6 +57,12 @@ func TestMain(m *testing.M) {
 // measured the same way. Isolation is unchanged, because a copy is a separate
 // database -- its own file, in the test's own t.TempDir(), closed on cleanup.
 // No handle, page cache or transaction is shared between tests.
+//
+// Measured end to end, 8 vCPU, private TMPDIR: 172.83s -> 74.46s mean, a 2.32x
+// improvement, and on the real 4-vCPU runner dir=atomicsite went from 922s plus
+// a timeout panic to 274s. That is roughly 2x of headroom under the 600s
+// ceiling, not the order of magnitude a share-of-suite figure suggests. Budget
+// a slow test against 274s on the runner, not against the laptop number.
 func newSchemaDB(t *testing.T, file string) (*sql.DB, string) {
 	t.Helper()
 	dir := t.TempDir()

@@ -44,8 +44,12 @@ func TestNoTestAppliesTheSchemaDirectly(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read %s: %v", fixture, err)
 	}
-	if !strings.Contains(string(tmpl), applies) {
-		t.Fatalf("%s no longer applies the schema itself; this guard is now checking for a string that has moved, so it would pass over any number of new copies", fixture)
+	// Exactly ONE site, not "at least one". Skipping the fixture file wholesale
+	// was a hole: a second DDL-applying helper appended INTO schema_fixture_test.go
+	// -- a sibling newSchemaDBNoWAL is exactly what the WAL tradeoff discussed in
+	// that file would motivate -- runs 441ms per test and the guard reports clean.
+	if n := strings.Count(string(tmpl), applies); n != 1 {
+		t.Fatalf("%s must apply the schema at exactly one site, found %d. Either the one site moved (this guard is now checking for a string that no longer exists, and would pass over any number of new copies) or a second one was added inside the exempt file.", fixture, n)
 	}
 
 	for _, f := range files {
