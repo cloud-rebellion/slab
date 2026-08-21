@@ -7,13 +7,11 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"path/filepath"
 	"strings"
 	"testing"
 
 	_ "modernc.org/sqlite"
 
-	dbpkg "github.com/bright-interaction/slab/internal/db"
 	"github.com/bright-interaction/slab/internal/store"
 )
 
@@ -23,17 +21,7 @@ import (
 // pre-seeded site_id so tests can immediately seed content.
 func newSearchHandlerForTest(t *testing.T) (*SearchHandler, *sql.DB, *store.Queries, string) {
 	t.Helper()
-	dir := t.TempDir()
-	dbPath := filepath.Join(dir, "search.db")
-	sqlDB, err := sql.Open("sqlite", dbPath+"?_journal_mode=WAL&_pragma=foreign_keys(1)")
-	if err != nil {
-		t.Fatal(err)
-	}
-	sqlDB.SetMaxOpenConns(1)
-	if _, err := sqlDB.Exec(string(dbpkg.Schema)); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { sqlDB.Close() })
+	sqlDB, _ := newSchemaDB(t, "search.db")
 	q := store.New(sqlDB)
 	siteID := "abcdef0123456789abcdef88"
 	if err := q.CreateSite(context.Background(), store.CreateSiteParams{

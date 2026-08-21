@@ -2,7 +2,6 @@ package handlers
 
 import (
 	"context"
-	"database/sql"
 	"encoding/base64"
 	"net/http"
 	"net/http/httptest"
@@ -13,7 +12,6 @@ import (
 	_ "modernc.org/sqlite"
 
 	"github.com/bright-interaction/slab/internal/config"
-	dbpkg "github.com/bright-interaction/slab/internal/db"
 	"github.com/bright-interaction/slab/internal/migration"
 	"github.com/bright-interaction/slab/internal/storage"
 	"github.com/bright-interaction/slab/internal/store"
@@ -35,17 +33,7 @@ func decodeTinyPNG(t *testing.T) []byte {
 
 func newUploaderTestStack(t *testing.T) (*MediaHandler, *store.Queries, string, string) {
 	t.Helper()
-	dir := t.TempDir()
-	dbPath := filepath.Join(dir, "uploader.db")
-	sqlDB, err := sql.Open("sqlite", dbPath+"?_journal_mode=WAL&_pragma=foreign_keys(1)")
-	if err != nil {
-		t.Fatal(err)
-	}
-	sqlDB.SetMaxOpenConns(1)
-	if _, err := sqlDB.Exec(string(dbpkg.Schema)); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { sqlDB.Close() })
+	sqlDB, dir := newSchemaDB(t, "uploader.db")
 	q := store.New(sqlDB)
 	siteID := "abcdef0123456789abcdefuu"
 	if err := q.CreateSite(context.Background(), store.CreateSiteParams{

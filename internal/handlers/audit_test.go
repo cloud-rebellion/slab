@@ -2,30 +2,17 @@ package handlers
 
 import (
 	"context"
-	"database/sql"
 	"net/http/httptest"
-	"path/filepath"
 	"testing"
 
 	_ "modernc.org/sqlite"
 
-	dbpkg "github.com/bright-interaction/slab/internal/db"
 	"github.com/bright-interaction/slab/internal/store"
 )
 
 func openAuditTestDB(t *testing.T) *store.Queries {
 	t.Helper()
-	dir := t.TempDir()
-	dbPath := filepath.Join(dir, "audit.db")
-	sqlDB, err := sql.Open("sqlite", dbPath+"?_journal_mode=WAL&_pragma=foreign_keys(1)")
-	if err != nil {
-		t.Fatal(err)
-	}
-	sqlDB.SetMaxOpenConns(1)
-	if _, err := sqlDB.Exec(string(dbpkg.Schema)); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { sqlDB.Close() })
+	sqlDB, _ := newSchemaDB(t, "audit.db")
 	return store.New(sqlDB)
 }
 

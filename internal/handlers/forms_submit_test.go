@@ -2,12 +2,10 @@ package handlers
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -17,7 +15,6 @@ import (
 	_ "modernc.org/sqlite"
 
 	"github.com/bright-interaction/slab/internal/config"
-	dbpkg "github.com/bright-interaction/slab/internal/db"
 	"github.com/bright-interaction/slab/internal/identify"
 	authmw "github.com/bright-interaction/slab/internal/middleware"
 	"github.com/bright-interaction/slab/internal/store"
@@ -46,17 +43,7 @@ func (c *capturingMail) SendFormNotification(_ context.Context, to, siteName, fo
 
 func newFormHandlerForTest(t *testing.T, mail MailSender) (*FormHandler, *store.Queries, string, string) {
 	t.Helper()
-	dir := t.TempDir()
-	dbPath := filepath.Join(dir, "forms.db")
-	sqlDB, err := sql.Open("sqlite", dbPath+"?_journal_mode=WAL&_pragma=foreign_keys(1)")
-	if err != nil {
-		t.Fatal(err)
-	}
-	sqlDB.SetMaxOpenConns(1)
-	if _, err := sqlDB.Exec(string(dbpkg.Schema)); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { sqlDB.Close() })
+	sqlDB, _ := newSchemaDB(t, "forms.db")
 	q := store.New(sqlDB)
 	siteID := "abcdef0123456789abcdef01"
 	if err := q.CreateSite(context.Background(), store.CreateSiteParams{
@@ -299,17 +286,7 @@ func TestFormSubmit_AutoIdentifiesVisitor(t *testing.T) {
 	// constructs with nil. So we do the open-DB + create-site +
 	// create-form + construct-handler dance inline with the
 	// recorder wired.
-	dir := t.TempDir()
-	dbPath := filepath.Join(dir, "forms.db")
-	sqlDB, err := sql.Open("sqlite", dbPath+"?_journal_mode=WAL&_pragma=foreign_keys(1)")
-	if err != nil {
-		t.Fatal(err)
-	}
-	sqlDB.SetMaxOpenConns(1)
-	if _, err := sqlDB.Exec(string(dbpkg.Schema)); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { sqlDB.Close() })
+	sqlDB, _ := newSchemaDB(t, "forms.db")
 	q := store.New(sqlDB)
 	siteID := "abcdef0123456789abcdef02"
 	if err := q.CreateSite(context.Background(), store.CreateSiteParams{

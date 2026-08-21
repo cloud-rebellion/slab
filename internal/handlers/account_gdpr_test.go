@@ -9,13 +9,11 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"path/filepath"
 	"strings"
 	"testing"
 
 	_ "modernc.org/sqlite"
 
-	dbpkg "github.com/bright-interaction/slab/internal/db"
 	authmw "github.com/bright-interaction/slab/internal/middleware"
 	"github.com/bright-interaction/slab/internal/store"
 )
@@ -24,17 +22,7 @@ import (
 // the handler + the *sql.DB so tests can inspect deletion state.
 func newGDPRTestStack(t *testing.T) (*AccountGDPRHandler, *sql.DB, *store.Queries, string) {
 	t.Helper()
-	dir := t.TempDir()
-	dbPath := filepath.Join(dir, "gdpr.db")
-	sqlDB, err := sql.Open("sqlite", dbPath+"?_journal_mode=WAL&_pragma=foreign_keys(1)")
-	if err != nil {
-		t.Fatal(err)
-	}
-	sqlDB.SetMaxOpenConns(1)
-	if _, err := sqlDB.Exec(string(dbpkg.Schema)); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { sqlDB.Close() })
+	sqlDB, _ := newSchemaDB(t, "gdpr.db")
 	q := store.New(sqlDB)
 	if err := q.CreateUser(context.Background(), store.CreateUserParams{
 		ID: "user-gdpr", Email: "alice@example.com", Name: "Alice",

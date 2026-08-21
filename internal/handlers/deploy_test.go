@@ -15,24 +15,13 @@ import (
 	_ "modernc.org/sqlite"
 
 	"github.com/bright-interaction/slab/internal/config"
-	dbpkg "github.com/bright-interaction/slab/internal/db"
 	authmw "github.com/bright-interaction/slab/internal/middleware"
 	"github.com/bright-interaction/slab/internal/store"
 )
 
 func setupDeployTestDB(t *testing.T) (*sql.DB, *store.Queries) {
 	t.Helper()
-	dir := t.TempDir()
-	dbPath := filepath.Join(dir, "test.sqlite")
-	sqlDB, err := sql.Open("sqlite", dbPath+"?_journal_mode=WAL&_busy_timeout=5000&_pragma=foreign_keys(1)")
-	if err != nil {
-		t.Fatalf("open db: %v", err)
-	}
-	sqlDB.SetMaxOpenConns(1)
-	if _, err := sqlDB.Exec(string(dbpkg.Schema)); err != nil {
-		t.Fatalf("apply schema: %v", err)
-	}
-	t.Cleanup(func() { sqlDB.Close() })
+	sqlDB, _ := newSchemaDB(t, "test.sqlite")
 	return sqlDB, store.New(sqlDB)
 }
 

@@ -16,7 +16,6 @@ import (
 	_ "modernc.org/sqlite"
 
 	"github.com/bright-interaction/slab/internal/config"
-	dbpkg "github.com/bright-interaction/slab/internal/db"
 	"github.com/bright-interaction/slab/internal/store"
 	"github.com/go-chi/chi/v5"
 )
@@ -26,17 +25,7 @@ import (
 // to plant a dist tree and a deployment row.
 func newExportTestStack(t *testing.T) (*BuildHandler, *sql.DB, *store.Queries, string) {
 	t.Helper()
-	dir := t.TempDir()
-	dbPath := filepath.Join(dir, "build.sqlite")
-	sqlDB, err := sql.Open("sqlite", dbPath+"?_journal_mode=WAL&_pragma=foreign_keys(1)")
-	if err != nil {
-		t.Fatal(err)
-	}
-	sqlDB.SetMaxOpenConns(1)
-	if _, err := sqlDB.Exec(string(dbpkg.Schema)); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { sqlDB.Close() })
+	sqlDB, dir := newSchemaDB(t, "build.sqlite")
 	q := store.New(sqlDB)
 	cfg := &config.Config{DataDir: dir}
 	h := NewBuildHandler(cfg, q, nil)

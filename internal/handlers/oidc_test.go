@@ -2,34 +2,21 @@ package handlers
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"path/filepath"
 	"strings"
 	"testing"
 
 	_ "modernc.org/sqlite"
 
 	"github.com/bright-interaction/slab/internal/config"
-	dbpkg "github.com/bright-interaction/slab/internal/db"
 	"github.com/bright-interaction/slab/internal/store"
 )
 
 func newOIDCHandlerForTest(t *testing.T, allowDomains string) (*OIDCHandler, *store.Queries) {
 	t.Helper()
-	dir := t.TempDir()
-	dbPath := filepath.Join(dir, "oidc.db")
-	sqlDB, err := sql.Open("sqlite", dbPath+"?_journal_mode=WAL&_pragma=foreign_keys(1)")
-	if err != nil {
-		t.Fatal(err)
-	}
-	sqlDB.SetMaxOpenConns(1)
-	if _, err := sqlDB.Exec(string(dbpkg.Schema)); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { sqlDB.Close() })
+	sqlDB, _ := newSchemaDB(t, "oidc.db")
 	q := store.New(sqlDB)
 	cfg := &config.Config{
 		BaseURL:          "http://localhost:8080",
