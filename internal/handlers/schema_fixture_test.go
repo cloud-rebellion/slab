@@ -10,6 +10,24 @@ import (
 	dbpkg "github.com/bright-interaction/slab/internal/db"
 )
 
+// TestMain removes the schema template directory after the binary finishes.
+//
+// The template cannot live in a t.TempDir (it must outlive the test that
+// happened to build it) and nothing else deletes an os.MkdirTemp directory, so
+// without this every `go test ./internal/handlers` on a developer machine
+// leaves one behind for the OS to collect whenever it feels like it.
+//
+// Cleanup is best-effort and deliberately not reported: a failure to remove a
+// temp directory is not a test result, and turning it into one would fail the
+// suite for something no change in this package can cause.
+func TestMain(m *testing.M) {
+	code := m.Run()
+	if schemaTemplate != "" {
+		_ = os.RemoveAll(filepath.Dir(schemaTemplate))
+	}
+	os.Exit(code)
+}
+
 // newSchemaDB opens a fresh, schema-applied SQLite database for one test and
 // returns it together with the temp directory it lives in.
 //
@@ -77,9 +95,11 @@ var (
 // everything in the one file; each COPY is then opened with WAL, which is what
 // the fixtures always did and what production uses.
 //
-// os.MkdirTemp rather than t.TempDir: the template outlives the first test
-// that happens to ask for it. Go removes the process's temp files on exit and
-// the CI container is discarded outright, so nothing here leaks past the run.
+// os.MkdirTemp rather than t.TempDir, because the template must outlive the
+// first test that happens to ask for it -- t.TempDir is removed when THAT test
+// ends, and every later test would then copy a file that is gone. Nothing else
+// removes an os.MkdirTemp directory, so TestMain does it once the binary is
+// done.
 func schemaTemplatePath(t *testing.T) string {
 	t.Helper()
 	schemaTemplateOnce.Do(func() {
