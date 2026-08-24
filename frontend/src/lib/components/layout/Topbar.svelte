@@ -4,6 +4,7 @@
 	import KeyboardHint from '$lib/components/ui/KeyboardHint.svelte';
 	import ThemeToggle from '$lib/components/ui/ThemeToggle.svelte';
 	import SiteSwitcher from './SiteSwitcher.svelte';
+	import WorkspaceSwitcher from './WorkspaceSwitcher.svelte';
 	import UserMenu from './UserMenu.svelte';
 	import { openPalette } from '$lib/stores/commandPalette.svelte';
 
@@ -18,7 +19,9 @@
 	class="sticky top-0 z-30 h-14 border-b border-border/50 bg-bg-surface/85 backdrop-blur"
 >
 	<div class="mx-auto flex h-full max-w-7xl items-center justify-between gap-4 px-6">
-		<div class="flex shrink-0 items-center">
+		<div class="flex min-w-0 shrink items-center gap-2">
+			<WorkspaceSwitcher />
+			<span class="text-text-muted" aria-hidden="true">/</span>
 			<SiteSwitcher {currentSiteId} />
 		</div>
 

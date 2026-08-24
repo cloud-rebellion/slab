@@ -373,3 +373,72 @@ export async function resetStub(stub: 'cookieproof' | 'crm' | 'dockyard'): Promi
 		await ctx.dispose();
 	}
 }
+
+// ---------------------------------------------------------------------
+// Workspaces (agency mode, 2026-08-24).
+//
+// The harness seeds exactly ONE user and that user is a platform admin,
+// who bypasses every workspace and site gate. So any authz assertion made
+// with `adminApi` proves nothing about the gate it is aiming at. The only
+// way to obtain a non-admin identity is to invite one and redeem the
+// invite in a fresh request context; redeemAsInvitee does exactly that and
+// hands back a context carrying that user's session.
+// ---------------------------------------------------------------------
+
+export type Workspace = {
+	id: string;
+	name: string;
+	slug: string;
+	plan: string;
+	status: string;
+	role?: string;
+};
+
+export async function createWorkspace(
+	api: APIRequestContext,
+	opts: { name?: string; plan?: string; billing_email?: string } = {}
+): Promise<Workspace> {
+	const name = opts.name ?? `WS ${rand()}`;
+	const data: Record<string, string> = { name };
+	if (opts.plan) data.plan = opts.plan;
+	if (opts.billing_email) data.billing_email = opts.billing_email;
+	const res = await api.post(u('/api/workspaces'), { data });
+	return (await jsonOrThrow(res, `createWorkspace(${name})`)) as Workspace;
+}
+
+export async function deleteWorkspace(api: APIRequestContext, workspaceID: string): Promise<void> {
+	await api.delete(u(`/api/workspaces/${workspaceID}`));
+}
+
+export async function inviteToWorkspace(
+	api: APIRequestContext,
+	workspaceID: string,
+	opts: { email?: string; role?: 'owner' | 'admin' | 'member' } = {}
+): Promise<{ email: string; token: string; url: string; id: string }> {
+	const email = opts.email ?? `${rand('invitee')}@example.test`;
+	const res = await api.post(u(`/api/workspaces/${workspaceID}/invites`), {
+		data: { email, role: opts.role ?? 'member' }
+	});
+	const body = await jsonOrThrow(res, `inviteToWorkspace(${workspaceID})`);
+	return { email, token: body.token, url: body.url, id: body.id };
+}
+
+/**
+ * Redeems a workspace invite in a brand-new context and returns it, logged
+ * in as the invited (non-admin) user. Dispose it when the spec is done.
+ */
+export async function redeemAsInvitee(
+	token: string,
+	opts: { name?: string; password?: string } = {}
+): Promise<APIRequestContext> {
+	const ctx = await request.newContext();
+	const res = await ctx.post(u(`/api/cloud/signup/${token}`), {
+		data: { name: opts.name ?? 'Invited User', password: opts.password ?? 'invitee-pw-123456' }
+	});
+	if (res.status() !== 201) {
+		const body = await res.text();
+		await ctx.dispose();
+		throw new Error(`redeemAsInvitee failed: ${res.status()} ${body}`);
+	}
+	return ctx;
+}

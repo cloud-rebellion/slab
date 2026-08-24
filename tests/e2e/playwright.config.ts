@@ -98,7 +98,12 @@ export default defineConfig({
 				// Override the per-site nginx access log dir so the analytics parser
 				// can tail a path the test can append to (default /var/log/atomicsite
 				// is unwritable in CI).
-				ATOMICSITE_LOG_DIR: `${DATA_DIR}/nginx-logs`
+				ATOMICSITE_LOG_DIR: `${DATA_DIR}/nginx-logs`,
+				// Local deploy targets are confined to <root>/<slug-or-siteID>/...
+				// The specs deploy to /tmp/{siteID}/..., which is that same shape,
+				// so the root here is /tmp. Production defaults to /srv/atomicsite,
+				// matching the wildcard host's serving layout.
+				ATOMICSITE_LOCAL_DEPLOY_ROOT: '/tmp'
 			}
 		}
 	]

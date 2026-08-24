@@ -92,6 +92,23 @@ func WorkspaceAccessMiddleware(queries *store.Queries) func(http.Handler) http.H
 				writeAuthError(w, http.StatusBadRequest, "Invalid workspaceID")
 				return
 			}
+			// A soft-deleted workspace is inert for its members. Delete
+			// only ever set status='deleted' and nothing read it back, so
+			// "delete this workspace" revoked precisely nothing: members
+			// kept full read+write and it kept appearing in their list.
+			// Platform admin keeps the audited break-glass path below so a
+			// mistaken delete is still recoverable by an operator.
+			//
+			// Only 'deleted' is gated. 'paused' is written automatically by
+			// the retention lifecycle sweep (retention.go) and has no
+			// un-pause path, so enforcing it would black-hole a live
+			// workspace with no way back.
+			if ws, wsErr := queries.GetWorkspaceByID(r.Context(), workspaceID); wsErr == nil && ws.Status == "deleted" {
+				if user.Role != "admin" {
+					writeAuthError(w, http.StatusNotFound, "Workspace not found")
+					return
+				}
+			}
 			// Membership first. Owns the happy path.
 			row, err := queries.GetWorkspaceMembership(r.Context(), store.GetWorkspaceMembershipParams{
 				WorkspaceID: workspaceID,

@@ -19,5 +19,7 @@ export * as builds from './builds';
 export * as deploy from './deploy';
 export * as analytics from './analytics';
 export * as members from './members';
+export * as workspaces from './workspaces';
+export * as mode from './mode';
 export * as consent from './consent';
 export * as cookieAnalytics from './cookieAnalytics';

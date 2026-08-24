@@ -537,6 +537,7 @@ func (h *BuildHandler) autoDeployDefault(ctx context.Context, siteID, distDir st
 		ID:     t.ID,
 		SiteID: t.SiteID,
 		Slug:   slug,
+		Root:   h.cfg.LocalDeployRoot,
 		Name:   t.Name,
 		Kind:   t.Kind,
 		Config: cfg,
@@ -825,9 +826,18 @@ func (h *BuildHandler) Deploy(w http.ResponseWriter, r *http.Request) {
 		_ = json.Unmarshal([]byte(targetRow.ConfigJson), &cfg)
 	}
 	decryptDeployConfigSecrets(deployConfigCipher(h.cfg), cfg)
+	// Slug and Root are both required for the local deployer's positional
+	// scope check; without them it cannot tell this tenant's directory from
+	// anyone else's and would refuse a legitimate slug-based path.
+	deploySlug := ""
+	if site, err := h.queries.GetSiteByID(r.Context(), targetRow.SiteID); err == nil {
+		deploySlug = site.Slug
+	}
 	target := deploy.Target{
 		ID:     targetRow.ID,
 		SiteID: targetRow.SiteID,
+		Slug:   deploySlug,
+		Root:   h.cfg.LocalDeployRoot,
 		Name:   targetRow.Name,
 		Kind:   targetRow.Kind,
 		Config: cfg,

@@ -82,15 +82,21 @@ type Config struct {
 	// value of Config is production-guarded rather than unguarded.
 	Env string
 
-	Port          int
-	DataDir       string
-	DBPath        string
-	MediaDir      string
-	FontsDir      string // self-hosted woff2 fonts uploaded per site
-	JWTSecret     string
-	BaseURL       string
-	MaxUploadSize int64
-	MediaVariants []int
+	Port     int
+	DataDir  string
+	DBPath   string
+	MediaDir string
+	FontsDir string // self-hosted woff2 fonts uploaded per site
+	// LocalDeployRoot is the only directory a `local` deploy target may write
+	// inside, and each site is confined to its own subdirectory of it
+	// (<root>/<slug> or <root>/<siteID>). The wildcard host serves tenants from
+	// /srv/atomicsite/{slug}/dist, which is the default. Empty disables the
+	// positional check, which is only safe on a single-tenant install.
+	LocalDeployRoot string
+	JWTSecret       string
+	BaseURL         string
+	MaxUploadSize   int64
+	MediaVariants   []int
 
 	// Analytics. The CookieProof widget is now embedded directly into the
 	// atomicsite Go binary (see internal/builder/widget_embed.go); the
@@ -302,15 +308,16 @@ func Load() *Config {
 		// Absent ATOMICSITE_ENV means production. See the Env constants.
 		Env: strings.ToLower(strings.TrimSpace(envOr("ATOMICSITE_ENV", EnvProduction))),
 
-		Port:          envInt("PORT", 8080),
-		DataDir:       dataDir,
-		DBPath:        filepath.Join(dataDir, "atomicsite.db"),
-		MediaDir:      filepath.Join(dataDir, "media"),
-		FontsDir:      filepath.Join(dataDir, "fonts"),
-		JWTSecret:     envOr("JWT_SECRET", "change-me-in-production"),
-		BaseURL:       envOr("BASE_URL", DefaultBaseURL),
-		MaxUploadSize: envInt64("MAX_UPLOAD_SIZE", 20<<20), // 20 MB
-		MediaVariants: envIntList("MEDIA_VARIANTS", []int{320, 640, 1280, 1920}),
+		Port:            envInt("PORT", 8080),
+		DataDir:         dataDir,
+		DBPath:          filepath.Join(dataDir, "atomicsite.db"),
+		MediaDir:        filepath.Join(dataDir, "media"),
+		FontsDir:        filepath.Join(dataDir, "fonts"),
+		LocalDeployRoot: envOr("ATOMICSITE_LOCAL_DEPLOY_ROOT", "/srv/atomicsite"),
+		JWTSecret:       envOr("JWT_SECRET", "change-me-in-production"),
+		BaseURL:         envOr("BASE_URL", DefaultBaseURL),
+		MaxUploadSize:   envInt64("MAX_UPLOAD_SIZE", 20<<20), // 20 MB
+		MediaVariants:   envIntList("MEDIA_VARIANTS", []int{320, 640, 1280, 1920}),
 
 		TrackPath:     envOr("TRACK_PATH", "/t"),
 		AnalyticsSalt: envOr("ANALYTICS_SALT", "atomicsite-default-fingerprint-salt-change-me"),

@@ -22,6 +22,10 @@ export interface AuthUser {
 
 export interface Site {
 	id: string;
+	// The owning workspace. The API has always returned this (sites.sql is a
+	// SELECT *); only the type was missing it, which is why nothing in the
+	// SPA could group or filter by workspace.
+	workspace_id: string;
 	name: string;
 	slug: string;
 	domain: string;

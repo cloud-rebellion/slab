@@ -56,15 +56,30 @@ func (d *LocalDeployer) Validate(target Target) error {
 	if cleaned == "/" {
 		return errors.New("local deploy: path must not be \"/\"")
 	}
-	// Cross-tenant isolation: a local target must write inside the site's own
-	// directory so one tenant cannot point `path` at /srv/atomicsite/<other>/dist
-	// and overwrite another tenant's served files. The wildcard host serves a
-	// tenant from /srv/atomicsite/{slug}/dist, so the legitimate path contains
-	// the site's slug; some setups use the site id instead. Accept either as a
-	// full path segment. Both are set from the authenticated site, so a member
-	// of site A can only ever supply A's slug/id here.
+	// Cross-tenant isolation. This is a WHITELIST, not a containment test.
+	//
+	// The old rule asked whether the site's slug or id appeared ANYWHERE in
+	// the path as a segment, which is containment and does not scope anything:
+	// a tenant slugged "blog" satisfied it against
+	// /srv/atomicsite/victimco/dist/blog and could publish into (and delete)
+	// another tenant's live directory. Reserving structural names like "dist"
+	// cannot fix that, because the colliding segment is a directory the VICTIM
+	// named, and no denylist can enumerate those.
+	//
+	// The rule now is positional: the path must sit under the deploy root with
+	// the tenant's own slug or id as the FIRST segment beneath it. Both values
+	// come from the authenticated site, so a member of site A can only ever
+	// name A. Everything below that point is the tenant's own business.
 	if target.SiteID != "" || target.Slug != "" {
-		if !pathHasSegment(cleaned, target.SiteID) && !(target.Slug != "" && pathHasSegment(cleaned, target.Slug)) {
+		if root := strings.TrimSpace(target.Root); root != "" {
+			if err := requireRootedInTenantDir(cleaned, filepath.Clean(root), target.SiteID, target.Slug); err != nil {
+				return err
+			}
+		} else if !pathHasSegment(cleaned, target.SiteID) && !(target.Slug != "" && pathHasSegment(cleaned, target.Slug)) {
+			// No root configured: fall back to the older containment rule.
+			// It is weaker (see requireRootedInTenantDir), but a caller that
+			// forgets to pass Root must not silently end up with NO scoping
+			// at all: that would turn a missed field into a tenancy hole.
 			want := target.Slug
 			if want == "" {
 				want = target.SiteID
@@ -90,9 +105,34 @@ func (d *LocalDeployer) Validate(target Target) error {
 	return nil
 }
 
+// requireRootedInTenantDir enforces that cleaned sits at or below
+// <root>/<slug> (or <root>/<siteID>). Anything that escapes the root, or that
+// puts a different first segment under it, is another tenant's territory.
+func requireRootedInTenantDir(cleaned, root, siteID, slug string) error {
+	rel, err := filepath.Rel(root, cleaned)
+	if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return fmt.Errorf("local deploy: path %q must be inside the deploy root %q", cleaned, root)
+	}
+	first := rel
+	if i := strings.Index(rel, string(filepath.Separator)); i >= 0 {
+		first = rel[:i]
+	}
+	if first == siteID || (slug != "" && first == slug) {
+		return nil
+	}
+	want := slug
+	if want == "" {
+		want = siteID
+	}
+	return fmt.Errorf("local deploy: path %q must be under %s/%s (this site's own directory)", cleaned, root, want)
+}
+
 // pathHasSegment reports whether seg appears as a full path component of p
 // (so "/srv/atomicsite/<id>/dist" matches <id>, but "/srv/<id>extra" does not).
 func pathHasSegment(p, seg string) bool {
+	if seg == "" {
+		return false
+	}
 	for _, s := range strings.Split(p, string(filepath.Separator)) {
 		if s == seg {
 			return true

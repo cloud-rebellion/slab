@@ -20,6 +20,9 @@ export const WIZARD_STEPS: WizardStep[] = [
 ];
 
 export interface WizardInfo {
+	// Which workspace the new site is created in. Empty means "let the server
+	// pick the caller's oldest", which is correct for anyone with exactly one.
+	workspace_id: string;
 	name: string;
 	slug: string;
 	domain: string;
@@ -54,6 +57,7 @@ function defaultState(): WizardState {
 		type: null,
 		starterKit: null,
 		info: {
+			workspace_id: '',
 			name: '',
 			slug: '',
 			domain: '',
@@ -247,6 +251,9 @@ export function buildSeedRequest(state: WizardState): SeedSiteRequest {
 		silos: isOnePager ? [] : state.silos,
 		branding: { ...branding }
 	};
+	if (info.workspace_id) {
+		req.workspace_id = info.workspace_id;
+	}
 	if (state.starterKit) {
 		req.starter_kit = state.starterKit;
 	}

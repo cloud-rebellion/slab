@@ -18,7 +18,7 @@
 //
 // The middleware extracts siteID from the URL via chi's URLParam. Routes
 // using a different param name need a different middleware instance (or
-// rename the param to siteID — every site-scoped route in atomicsite
+// rename the param to siteID, every site-scoped route in atomicsite
 // already uses {siteID}, verified at registration time).
 package middleware
 
@@ -107,11 +107,24 @@ func SiteAccessMiddleware(queries *store.Queries) func(http.Handler) http.Handle
 			}
 
 			// (3) Member of the site's own workspace passes (this is the
-			// tenant's own staff reaching their own sites).
+			// tenant's own staff reaching their own sites), UNLESS the
+			// workspace has been deleted.
+			//
+			// WorkspaceAccessMiddleware started refusing deleted workspaces,
+			// but this branch did not, so "delete the workspace" revoked the
+			// workspace routes and left roughly a hundred SITE routes wide
+			// open to the same members, including form submissions and other
+			// PII, plus the agent-key surface. The admin UI meanwhile promised
+			// "Everyone loses access to it". Two halves of one invariant have
+			// to move together.
 			if _, err := queries.GetWorkspaceMembership(r.Context(), store.GetWorkspaceMembershipParams{
 				WorkspaceID: site.WorkspaceID,
 				UserID:      user.ID,
 			}); err == nil {
+				if ws, wsErr := queries.GetWorkspaceByID(r.Context(), site.WorkspaceID); wsErr == nil && ws.Status == "deleted" {
+					writeAuthError(w, http.StatusForbidden, "No access to this site")
+					return
+				}
 				next.ServeHTTP(w, r)
 				return
 			} else if !errors.Is(err, sql.ErrNoRows) {

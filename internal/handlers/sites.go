@@ -39,7 +39,23 @@ func NewSiteHandler(cfg *config.Config, queries *store.Queries, db *sql.DB) *Sit
 }
 
 var (
-	slugPattern  = regexp.MustCompile(`^[a-z0-9-]+$`)
+	slugPattern = regexp.MustCompile(`^[a-z0-9-]+$`)
+
+	// reservedSiteSlugs are path components that appear in EVERY tenant's
+	// served directory (/srv/atomicsite/{slug}/dist) or in the built
+	// output. sites.slug is UNIQUE, so a tenant can never claim another
+	// tenant's slug, but a STRUCTURAL name is shared by all of them, and
+	// internal/deploy/local.go scopes a local deploy target by asking
+	// whether the site's slug appears as a path segment. A site slugged
+	// "dist" therefore matched /srv/atomicsite/<victim>/dist and could
+	// point a deploy at another tenant's live directory. Reserving these
+	// names is what makes that segment check sound.
+	reservedSiteSlugs = map[string]bool{
+		"dist": true, "srv": true, "atomicsite": true, "build": true,
+		"public": true, "static": true, "assets": true, "media": true,
+		"_astro": true, "admin": true, "api": true, "www": true,
+		"node_modules": true,
+	}
 	colorPattern = regexp.MustCompile(`^#[0-9a-fA-F]{6}$`)
 )
 
@@ -113,20 +129,47 @@ func applyDefaultSiteSettings(ctx context.Context, q *store.Queries, siteID stri
 	return nil
 }
 
+// validateSiteSlug is the single slug rule for every write path. Create
+// previously skipped it entirely (it only lowercased and de-spaced), so
+// the shape enforced on seed and PATCH was trivially bypassable by using
+// the other endpoint.
+func validateSiteSlug(slug string) error {
+	if slug == "" || len(slug) > 50 || !slugPattern.MatchString(slug) {
+		return errors.New("slug must be lowercase letters, digits and hyphens (max 50 chars)")
+	}
+	if reservedSiteSlugs[slug] {
+		return errors.New("that slug is reserved; choose another")
+	}
+	return nil
+}
+
 func (h *SiteHandler) List(w http.ResponseWriter, r *http.Request) {
 	sites, err := h.queries.ListSites(r.Context())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "Failed to list sites")
 		return
 	}
-	// Audit C1: non-admin users only see sites they're a member of.
+	// Audit C1: non-admin users only see sites they can actually open.
 	// Admins see everything (legacy single-workspace behaviour). The
 	// filtering happens after ListSites returns the full set so we can
 	// reuse the existing query without adding a JOIN-by-membership
-	// variant — at any realistic scale this is faster than a JOIN.
+	// variant, at any realistic scale this is faster than a JOIN.
+	//
+	// "Can open" is deliberately the same predicate SiteAccessMiddleware
+	// enforces, minus its two escalation branches: a direct site_members
+	// row OR membership of the site's workspace (site_access.go:106-118).
+	// Filtering on site_members alone under-reported: nothing writes a
+	// site_members row except site creation, so an invited workspace
+	// member saw an empty dashboard while every site in their workspace
+	// answered 200 by direct URL. The list stays a SUBSET of access:
+	// the legacy workspace_id='' branch and the audited cross-workspace
+	// bypass are excluded on purpose.
 	user := authmw.GetUser(r)
 	if user != nil && user.Role != "admin" {
-		ids, err := h.queries.ListSiteIDsForUser(r.Context(), user.ID)
+		ids, err := h.queries.ListAccessibleSiteIDsForUser(r.Context(), store.ListAccessibleSiteIDsForUserParams{
+			UserID:   user.ID,
+			UserID_2: user.ID,
+		})
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "Failed to load memberships")
 			return
@@ -244,6 +287,10 @@ func (h *SiteHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 	id := newID()
 	slug := strings.ToLower(strings.ReplaceAll(req.Slug, " ", "-"))
+	if err := validateSiteSlug(slug); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 
 	if err := h.queries.CreateSite(r.Context(), store.CreateSiteParams{
 		ID:             id,
@@ -270,7 +317,7 @@ func (h *SiteHandler) Create(w http.ResponseWriter, r *http.Request) {
 	// Audit C1: auto-grant the creating user ownership of the new site so
 	// they can access it (RequireSiteAccess middleware would otherwise 403
 	// them from their own freshly-created site). Admins also get a row
-	// even though they technically bypass the middleware — keeps the
+	// even though they technically bypass the middleware, keeps the
 	// member list complete for the dashboard's "who has access" view.
 	if user := authmw.GetUser(r); user != nil {
 		if err := h.queries.AddSiteMember(r.Context(), store.AddSiteMemberParams{
@@ -322,9 +369,16 @@ func (h *SiteHandler) Create(w http.ResponseWriter, r *http.Request) {
 }
 
 // seedSiteRequest is the wizard payload for POST /api/sites/seed.
+//
+// WorkspaceID mirrors createSiteRequest: optional, and when supplied it
+// goes through the same resolveWorkspaceForCreate membership check the
+// non-wizard create path has used since Phase 30.2. Omitting it keeps
+// the previous behaviour (the caller's oldest workspace), so older
+// clients are unaffected.
 type seedSiteRequest struct {
-	Type string `json:"type"`
-	Info struct {
+	WorkspaceID string `json:"workspace_id"`
+	Type        string `json:"type"`
+	Info        struct {
 		Name         string `json:"name"`
 		Slug         string `json:"slug"`
 		Domain       string `json:"domain"`
@@ -374,8 +428,8 @@ func (req *seedSiteRequest) normalize() error {
 	if req.Info.Name == "" {
 		return errors.New("info.name is required")
 	}
-	if req.Info.Slug == "" || len(req.Info.Slug) > 50 || !slugPattern.MatchString(req.Info.Slug) {
-		return errors.New("info.slug must match ^[a-z0-9-]+$ (1-50 chars)")
+	if err := validateSiteSlug(req.Info.Slug); err != nil {
+		return err
 	}
 	if req.Info.Lang == "" {
 		req.Info.Lang = "en"
@@ -475,7 +529,9 @@ func (h *SiteHandler) Seed(w http.ResponseWriter, r *http.Request) {
 
 	// Phase 30.2: Seed needs the same workspace gate Create has.
 	// Resolves the user's workspace, refuses with 402 over plan caps.
-	workspaceID, err := h.resolveWorkspaceForCreate(r, "")
+	// The wizard sends workspace_id explicitly once the operator has more
+	// than one workspace; empty still means "the caller's oldest".
+	workspaceID, err := h.resolveWorkspaceForCreate(r, req.WorkspaceID)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -764,8 +820,8 @@ func (h *SiteHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Slug != nil {
 		newSlug := strings.ToLower(strings.TrimSpace(*req.Slug))
-		if newSlug == "" || len(newSlug) > 50 || !slugPattern.MatchString(newSlug) {
-			writeError(w, http.StatusBadRequest, "slug must match ^[a-z0-9-]+$ (1-50 chars)")
+		if err := validateSiteSlug(newSlug); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
 		params.Slug = newSlug
@@ -996,12 +1052,25 @@ func (h *SiteHandler) resolveWorkspaceForCreate(r *http.Request, requested strin
 		return "", errors.New("not authenticated")
 	}
 	if requested != "" {
+		// The workspace must exist and be live regardless of who asked.
+		// The admin branch below skips the membership check, and without
+		// this an admin typo minted a site pointing at a workspace id
+		// that does not exist: invisible to every list and ungateable by
+		// workspace membership, because both sides key off a row that
+		// isn't there.
+		ws, err := h.queries.GetWorkspaceByID(r.Context(), requested)
+		if err != nil {
+			return "", errors.New("workspace not found")
+		}
+		if ws.Status == workspaceStatusDeleted {
+			return "", errors.New("workspace has been deleted")
+		}
 		// Verify membership before trusting the body. Admins (the
 		// seeded OSS admin) bypass; cloud non-admins must be members.
 		if user.Role == "admin" {
 			return requested, nil
 		}
-		_, err := h.queries.GetWorkspaceMembership(r.Context(), store.GetWorkspaceMembershipParams{
+		_, err = h.queries.GetWorkspaceMembership(r.Context(), store.GetWorkspaceMembershipParams{
 			WorkspaceID: requested,
 			UserID:      user.ID,
 		})

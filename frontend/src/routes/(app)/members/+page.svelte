@@ -28,8 +28,8 @@
 	const isAdmin = $derived(me?.role === 'admin');
 
 	const roleOptions = [
-		{ value: 'editor', label: 'Editor (full workspace access)' },
-		{ value: 'admin', label: 'Admin (can also invite + remove members)' }
+		{ value: 'editor', label: 'Editor (access via workspace membership)' },
+		{ value: 'admin', label: 'Admin (full access to every workspace)' }
 	];
 
 	async function load() {
@@ -140,10 +140,12 @@
 	<header class="mt-3 flex items-start justify-between gap-4">
 		<div>
 			<h1 class="font-display text-3xl font-extralight tracking-tight text-text-primary">
-				Workspace members
+				Platform users
 			</h1>
 			<p class="mt-1 text-[13px] text-text-secondary">
-				Atomicsite is invite-only. Mint a one-time signup link below and share it with your teammate.
+				Everyone with an account on this instance. To give someone access to a set of sites, invite
+				them into a <a href="/workspaces" class="text-accent hover:underline">workspace</a> instead:
+				an account created here alone belongs to no workspace and sees nothing.
 			</p>
 		</div>
 		{#if isAdmin}

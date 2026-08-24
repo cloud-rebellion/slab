@@ -244,6 +244,10 @@ type Querier interface {
 	DeleteWebhookSubscription(ctx context.Context, id string) error
 	DeleteWorkspace(ctx context.Context, id string) error
 	DeleteWorkspaceInvite(ctx context.Context, arg DeleteWorkspaceInviteParams) error
+	// Same atomic guard for a role change that takes someone OUT of owner.
+	// Promotions and owner->owner no-ops do not go through here; they use the
+	// plain upsert, because neither can reduce the owner count.
+	DemoteWorkspaceMemberGuarded(ctx context.Context, arg DemoteWorkspaceMemberGuardedParams) (int64, error)
 	// Records the obligation to tell BrightCRM about an identified visitor. Called
 	// in the same tx as the visit_sessions write, so the local claim and the
 	// outbound obligation cannot diverge.
@@ -353,6 +357,21 @@ type Querier interface {
 	IncrementDiscountCodeUsedCount(ctx context.Context, arg IncrementDiscountCodeUsedCountParams) error
 	IncrementTokenVersion(ctx context.Context, id string) error
 	InsertCWVEvent(ctx context.Context, arg InsertCWVEventParams) error
+	// Every site the user may open, which is NOT the same as their
+	// site_members rows: SiteAccessMiddleware also clears a request when the
+	// user is a member of the site's workspace (site_access.go branch 3),
+	// and nothing writes a site_members row except site creation. Listing on
+	// site_members alone therefore showed an invited workspace member an
+	// empty dashboard while every one of those sites was reachable by URL.
+	//
+	// Deliberately a SUBSET of what the gate clears: it omits the legacy
+	// workspace_id='' admin branch and the audited cross-workspace bypass,
+	// so the list can never be a superset of access. The workspace_id != ''
+	// guard is what keeps legacy un-backfilled rows from being handed to
+	// every workspace member at once.
+	//
+	// Same user id is bound twice.
+	ListAccessibleSiteIDsForUser(ctx context.Context, arg ListAccessibleSiteIDsForUserParams) ([]string, error)
 	ListActiveApps(ctx context.Context) ([]App, error)
 	ListActiveGlobalBlocksBySite(ctx context.Context, siteID string) ([]GlobalBlock, error)
 	// Conversion goals + events (Phase 31.1, 2026-05-06).
@@ -513,6 +532,10 @@ type Querier interface {
 	ListWaitlist(ctx context.Context) ([]Waitlist, error)
 	ListWebhookDeliveriesBySite(ctx context.Context, arg ListWebhookDeliveriesBySiteParams) ([]WebhookDelivery, error)
 	ListWebhookSubscriptionsBySite(ctx context.Context, siteID string) ([]WebhookSubscription, error)
+	// Ordered so "the user's default workspace" (the first row, used by
+	// resolveWorkspaceForCreate when no workspace_id is supplied) is stable
+	// across calls. Unordered, a multi-workspace agency user got an
+	// arbitrary client workspace for a new site.
 	ListWorkspaceIDsForUser(ctx context.Context, userID string) ([]string, error)
 	ListWorkspaceMembers(ctx context.Context, workspaceID string) ([]ListWorkspaceMembersRow, error)
 	// Returns every workspace except those already in the deleted state
@@ -572,6 +595,19 @@ type Querier interface {
 	ReleaseDiscountCodeUse(ctx context.Context, arg ReleaseDiscountCodeUseParams) (int64, error)
 	RemoveSiteMember(ctx context.Context, arg RemoveSiteMemberParams) error
 	RemoveWorkspaceMember(ctx context.Context, arg RemoveWorkspaceMemberParams) error
+	// Removes a member, but refuses to remove the LAST owner. The guard lives in
+	// the statement rather than in Go on purpose: a read-then-write pair
+	// (count owners, then delete) is check-then-act, and two concurrent removals
+	// both read the same stale count and both proceed, leaving a workspace with
+	// zero owners and nobody able to manage it. Measured at 299/300 races under
+	// WAL with busy_timeout, and 300/300 under the production connection config
+	// (WAL only makes the second writer WAIT for the lock; it does not stop two
+	// readers acting on the same stale count).
+	//
+	// Returns rows-affected: 0 means the delete was refused (or the row was
+	// already gone), so callers must distinguish those with a prior existence
+	// read and report a 409.
+	RemoveWorkspaceMemberGuarded(ctx context.Context, arg RemoveWorkspaceMemberGuardedParams) (int64, error)
 	// Sets deletion_requested_at to now() and bumps token_version so
 	// existing sessions can react. Idempotent: re-requesting overwrites
 	// the timestamp (useful if the user wants to refresh the cooling-
@@ -722,6 +758,12 @@ type Querier interface {
 	UpdateWebhookSubscription(ctx context.Context, arg UpdateWebhookSubscriptionParams) error
 	UpdateWebhookSubscriptionStatus(ctx context.Context, arg UpdateWebhookSubscriptionStatusParams) error
 	UpdateWorkspace(ctx context.Context, arg UpdateWorkspaceParams) error
+	// Role change for someone who is ALREADY a member. A plain UPDATE, never an
+	// upsert: AddWorkspaceMember's INSERT..ON CONFLICT would RESURRECT a row that
+	// a concurrent RemoveMember had just deleted, because the caller's existence
+	// read happened before that delete. UPDATE touches zero rows when the row is
+	// gone, which is the correct outcome. Callers report 0 rows as 404.
+	UpdateWorkspaceMemberRoleIfMember(ctx context.Context, arg UpdateWorkspaceMemberRoleIfMemberParams) (int64, error)
 	UpdateWorkspacePlan(ctx context.Context, arg UpdateWorkspacePlanParams) error
 	UpdateWorkspaceStatus(ctx context.Context, arg UpdateWorkspaceStatusParams) error
 	UpdateWorkspaceStripe(ctx context.Context, arg UpdateWorkspaceStripeParams) error

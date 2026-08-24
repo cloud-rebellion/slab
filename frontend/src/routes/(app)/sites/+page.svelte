@@ -7,9 +7,35 @@
 	import EmptyState from '$lib/components/ui/EmptyState.svelte';
 	import Skeleton from '$lib/components/ui/Skeleton.svelte';
 	import Tooltip from '$lib/components/ui/Tooltip.svelte';
+	import { currentWorkspace } from '$lib/stores/currentWorkspace.svelte';
 
 	let loading = $state(true);
 	let sites = $state<Site[]>([]);
+
+	// Group by workspace so an agency operator can tell whose site is whose.
+	// Sites already carry workspace_id from the API; the names come from the
+	// workspace list the layout loader fetched. A site whose workspace is not
+	// in that list (a platform admin sees every site, including workspaces
+	// they are not a member of) falls back to a neutral heading rather than
+	// being dropped.
+	const grouped = $derived.by(() => {
+		const names = new Map(currentWorkspace.all.map((w) => [w.id, w.name]));
+		const order: string[] = [];
+		const bucket = new Map<string, Site[]>();
+		for (const site of sites) {
+			const key = site.workspace_id || '';
+			if (!bucket.has(key)) {
+				bucket.set(key, []);
+				order.push(key);
+			}
+			bucket.get(key)?.push(site);
+		}
+		return order.map((id) => ({
+			id,
+			name: names.get(id) ?? 'Other sites',
+			sites: bucket.get(id) ?? []
+		}));
+	});
 
 	async function load(): Promise<void> {
 		loading = true;
@@ -63,7 +89,9 @@
 	<div class="mx-auto max-w-6xl space-y-10">
 		<header class="flex items-end justify-between gap-6">
 			<div class="space-y-2">
-				<p class="font-mono text-[11px] uppercase tracking-[0.2em] text-text-muted">workspaces</p>
+				<p class="font-mono text-[11px] uppercase tracking-[0.2em] text-text-muted">
+					{currentWorkspace.value?.name ?? 'sites'}
+				</p>
 				<h1 class="page-title">
 					Sites
 				</h1>
@@ -95,8 +123,14 @@
 				{/snippet}
 			</EmptyState>
 		{:else}
+			{#each grouped as group (group.id)}
+				{#if grouped.length > 1}
+					<h2 class="mb-3 text-[11px] font-mono uppercase tracking-[0.2em] text-text-muted">
+						{group.name}
+					</h2>
+				{/if}
 			<section class="grid grid-cols-1 gap-5 md:grid-cols-2 lg:grid-cols-3">
-				{#each sites as site, i (site.id)}
+				{#each group.sites as site, i (site.id)}
 					<a
 						href={`/sites/${site.id}`}
 						class={`group block ${staggerClass(i)} transition-transform duration-200 hover:translate-y-[-2px]`}
@@ -154,6 +188,7 @@
 					</a>
 				{/each}
 			</section>
+			{/each}
 		{/if}
 	</div>
 </div>

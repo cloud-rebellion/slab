@@ -63,6 +63,60 @@ func (q *Queries) GetSiteMembership(ctx context.Context, arg GetSiteMembershipPa
 	return i, err
 }
 
+const listAccessibleSiteIDsForUser = `-- name: ListAccessibleSiteIDsForUser :many
+SELECT s.id AS site_id
+FROM sites s
+WHERE s.id IN (SELECT sm.site_id FROM site_members sm WHERE sm.user_id = ?)
+   OR (s.workspace_id != ''
+       AND s.workspace_id IN (
+         SELECT wm.workspace_id FROM workspace_members wm
+         JOIN workspaces w ON w.id = wm.workspace_id
+         WHERE wm.user_id = ? AND w.status != 'deleted'
+       ))
+`
+
+type ListAccessibleSiteIDsForUserParams struct {
+	UserID   string `json:"user_id"`
+	UserID_2 string `json:"user_id_2"`
+}
+
+// Every site the user may open, which is NOT the same as their
+// site_members rows: SiteAccessMiddleware also clears a request when the
+// user is a member of the site's workspace (site_access.go branch 3),
+// and nothing writes a site_members row except site creation. Listing on
+// site_members alone therefore showed an invited workspace member an
+// empty dashboard while every one of those sites was reachable by URL.
+//
+// Deliberately a SUBSET of what the gate clears: it omits the legacy
+// workspace_id=” admin branch and the audited cross-workspace bypass,
+// so the list can never be a superset of access. The workspace_id != ”
+// guard is what keeps legacy un-backfilled rows from being handed to
+// every workspace member at once.
+//
+// Same user id is bound twice.
+func (q *Queries) ListAccessibleSiteIDsForUser(ctx context.Context, arg ListAccessibleSiteIDsForUserParams) ([]string, error) {
+	rows, err := q.db.QueryContext(ctx, listAccessibleSiteIDsForUser, arg.UserID, arg.UserID_2)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var site_id string
+		if err := rows.Scan(&site_id); err != nil {
+			return nil, err
+		}
+		items = append(items, site_id)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listSiteIDsForUser = `-- name: ListSiteIDsForUser :many
 SELECT site_id FROM site_members WHERE user_id = ?
 `

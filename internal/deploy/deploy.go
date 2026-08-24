@@ -27,7 +27,11 @@ type Target struct {
 	// contains the slug (not the site ID). LocalDeployer.Validate accepts the
 	// path's tenant segment matching either SiteID or Slug. Optional: when
 	// empty, only SiteID is checked.
-	Slug   string
+	Slug string
+	// Root is the directory local deploys must stay inside, from
+	// config.LocalDeployRoot. Empty disables the positional scope check, which
+	// is only correct for a single-tenant install with no root configured.
+	Root   string
 	Name   string
 	Kind   string
 	Config map[string]any

@@ -627,6 +627,7 @@ func (s *Server) Router() http.Handler {
 		wsR.Delete("/api/workspaces/{workspaceID}", wsH.Delete)
 		wsR.Get("/api/workspaces/{workspaceID}/members", wsH.ListMembers)
 		wsR.Post("/api/workspaces/{workspaceID}/members", wsH.AddMember)
+		wsR.Patch("/api/workspaces/{workspaceID}/members/{userID}", wsH.UpdateMemberRole)
 		wsR.Delete("/api/workspaces/{workspaceID}/members/{userID}", wsH.RemoveMember)
 		wsR.Get("/api/workspaces/{workspaceID}/invites", wsH.ListInvites)
 		wsR.Post("/api/workspaces/{workspaceID}/invites", wsH.CreateInvite)

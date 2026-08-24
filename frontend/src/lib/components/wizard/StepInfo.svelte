@@ -2,9 +2,24 @@
 	import Input from '$lib/components/ui/Input.svelte';
 	import Select from '$lib/components/ui/Select.svelte';
 	import { deriveSlug, transliterateSlugChars, updateInfo, wizard } from '$lib/stores/wizard.svelte';
+	import { currentWorkspace } from '$lib/stores/currentWorkspace.svelte';
 
 	const SLUG_RE = /^[a-z0-9-]+$/;
 	const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+	// The picker only earns its place when the operator actually has more than
+	// one workspace. At n=1 the site silently lands in the only one there is,
+	// and at n=0 the server refuses the create with a clear message anyway.
+	const workspaceOptions = $derived(
+		currentWorkspace.all.map((w) => ({ value: w.id, label: w.name }))
+	);
+	const showWorkspacePicker = $derived(workspaceOptions.length > 1);
+	let workspaceValue = $state(
+		wizard.value.info.workspace_id || currentWorkspace.value?.id || ''
+	);
+	$effect(() => {
+		updateInfo({ workspace_id: workspaceValue });
+	});
 
 	const langOptions = [
 		{ value: 'sv', label: 'Swedish' },
@@ -155,6 +170,12 @@
 			}}
 			error={errors.email}
 		/>
+		{#if showWorkspacePicker}
+			<div class="flex flex-col gap-1.5">
+				<span class="text-[12px] font-medium text-text-secondary">Workspace</span>
+				<Select options={workspaceOptions} bind:value={workspaceValue} />
+			</div>
+		{/if}
 		<div class="flex flex-col gap-1.5">
 			<span class="text-[12px] font-medium text-text-secondary">Primary language</span>
 			<Select options={langOptions} bind:value={langValue} />

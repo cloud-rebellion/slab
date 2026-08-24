@@ -21,7 +21,7 @@ SELECT w.id, w.name, w.slug, w.plan, w.region, w.billing_email,
        wm.role
 FROM workspaces w
 JOIN workspace_members wm ON wm.workspace_id = w.id
-WHERE wm.user_id = ?
+WHERE wm.user_id = ? AND w.status != 'deleted'
 ORDER BY w.created_at ASC;
 
 -- name: ListAllWorkspaces :many

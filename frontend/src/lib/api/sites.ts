@@ -121,6 +121,10 @@ export interface SeedSiteBranding {
 }
 
 export interface SeedSiteRequest {
+	// Top-level, matching seedSiteRequest in internal/handlers/sites.go: NOT
+	// nested inside `info`. Optional: omitted means the caller's oldest
+	// workspace, which is what a single-workspace operator always wants.
+	workspace_id?: string;
 	type: SiteType;
 	info: SeedSiteInfo;
 	structure: SeedSiteStructure;

@@ -184,7 +184,7 @@ func TestBackfillSiteMembersForAdmin_Idempotent(t *testing.T) {
 		t.Errorf("after backfill: ListSiteIDsForUser = %v, want 2 sites", ids)
 	}
 
-	// Second pass: idempotent — count must not double.
+	// Second pass: idempotent, count must not double.
 	if err := q.BackfillSiteMembersForAdmin(ctx, "admin1"); err != nil {
 		t.Fatalf("second backfill: %v", err)
 	}
@@ -258,5 +258,63 @@ func TestSiteAccess_WorkspaceIsolation(t *testing.T) {
 	}
 	if rows[0].ResourceID != wsB {
 		t.Errorf("audit ResourceID=%q, want site's workspace %s", rows[0].ResourceID, wsB)
+	}
+}
+
+// TestSiteAccess_DeletedWorkspaceRevokesItsSites pins the half of the
+// soft-delete invariant that was missing.
+//
+// WorkspaceAccessMiddleware began refusing a workspace with status='deleted',
+// but this middleware's workspace-membership branch did not, so the same user
+// at the same moment got 404 on GET /api/workspaces/{id} and 200 with data on
+// GET /api/sites/{id}: across roughly a hundred site routes including form
+// submissions and other PII, plus the agent-key surface. The admin UI told the
+// operator "Everyone loses access to it."
+func TestSiteAccess_DeletedWorkspaceRevokesItsSites(t *testing.T) {
+	sqlDB, q := openTestDB(t)
+	const wsID = "aaaaaaaaaaaaaaaaaaaaaaaa"
+	const userID = "u-ws-member"
+	const siteID = "bbbbbbbbbbbbbbbbbbbbbbbb"
+
+	seedUserAndSite(t, sqlDB, "editor", userID, siteID)
+	if _, err := sqlDB.Exec(
+		`INSERT INTO workspaces (id, name, slug, plan, region, status) VALUES (?, 'WS', 'ws-del', 'oss', 'eu', 'active')`,
+		wsID,
+	); err != nil {
+		t.Fatalf("seed workspace: %v", err)
+	}
+	if _, err := sqlDB.Exec(`UPDATE sites SET workspace_id = ? WHERE id = ?`, wsID, siteID); err != nil {
+		t.Fatalf("attach site to workspace: %v", err)
+	}
+	if err := q.AddWorkspaceMember(context.Background(), store.AddWorkspaceMemberParams{
+		WorkspaceID: wsID, UserID: userID, Role: "member",
+	}); err != nil {
+		t.Fatalf("seed workspace member: %v", err)
+	}
+	user := &AuthUser{ID: userID, Role: "editor"}
+
+	// Access is granted purely by workspace membership while the workspace lives.
+	if rr := runRouted(t, SiteAccessMiddleware(q), user, siteID); rr.Code != http.StatusOK {
+		t.Fatalf("active workspace: status=%d, want 200 (body=%s)", rr.Code, rr.Body.String())
+	}
+
+	if _, err := sqlDB.Exec(`UPDATE workspaces SET status = 'deleted' WHERE id = ?`, wsID); err != nil {
+		t.Fatalf("soft-delete workspace: %v", err)
+	}
+
+	if rr := runRouted(t, SiteAccessMiddleware(q), user, siteID); rr.Code != http.StatusForbidden {
+		t.Fatalf("deleted workspace still serves its sites: status=%d, want 403 (body=%s)", rr.Code, rr.Body.String())
+	}
+
+	// A platform admin keeps the audited break-glass path, so a mistaken
+	// delete stays recoverable by an operator.
+	admin := &AuthUser{ID: "u-admin", Role: "admin"}
+	if _, err := sqlDB.Exec(
+		`INSERT INTO users (id, email, password_hash, name, role) VALUES ('u-admin', 'a@example.com', '', '', 'admin')`,
+	); err != nil {
+		t.Fatalf("seed admin: %v", err)
+	}
+	if rr := runRouted(t, SiteAccessMiddleware(q), admin, siteID); rr.Code != http.StatusOK {
+		t.Fatalf("platform admin lost break-glass access: status=%d, want 200", rr.Code)
 	}
 }

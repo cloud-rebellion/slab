@@ -207,3 +207,99 @@ func TestNew_KnownKinds(t *testing.T) {
 		t.Fatalf("New(\"nope\"): want error")
 	}
 }
+
+// TestLocalValidate_PositionalScope covers the attack the review crew found
+// against the previous containment check, plus the legitimate shapes that must
+// keep working.
+//
+// The old rule asked whether the site's slug appeared ANYWHERE in the path.
+// A tenant slugged "blog" therefore satisfied it against another tenant's
+// /srv/atomicsite/victimco/dist/blog, and Deploy renames the existing
+// directory aside and deletes it. No denylist could fix that: the colliding
+// segment is a directory the VICTIM named.
+func TestLocalValidate_PositionalScope(t *testing.T) {
+	const root = "/srv/atomicsite"
+	d := &LocalDeployer{}
+
+	mk := func(siteID, slug, path string) Target {
+		return Target{
+			SiteID: siteID,
+			Slug:   slug,
+			Root:   root,
+			Kind:   "local",
+			Config: map[string]any{"path": path},
+		}
+	}
+
+	// The attack: attacker's own slug appears deep inside the victim's tree.
+	if err := d.Validate(mk("attacker-id", "blog", "/srv/atomicsite/victimco/dist/blog")); err == nil {
+		t.Error("attacker slug nested in a victim's directory was accepted")
+	}
+	// Same shape via the site id.
+	if err := d.Validate(mk("attacker-id", "blog", "/srv/atomicsite/victimco/attacker-id")); err == nil {
+		t.Error("attacker id nested under a victim's directory was accepted")
+	}
+	// Structural-name slugs, which the earlier denylist tried to handle.
+	if err := d.Validate(mk("attacker-id", "dist", "/srv/atomicsite/victimco/dist")); err == nil {
+		t.Error("structural slug matched a victim's path")
+	}
+	// Escaping the root entirely.
+	if err := d.Validate(mk("attacker-id", "acme", "/etc/acme")); err == nil {
+		t.Error("path outside the deploy root was accepted")
+	}
+	if err := d.Validate(mk("attacker-id", "acme", "/srv/atomicsite/../../etc/acme")); err == nil {
+		t.Error("traversal out of the deploy root was accepted")
+	}
+
+	// Legitimate shapes must still pass. Validate also stats the filesystem,
+	// so these run against a real temporary root shaped like the production
+	// one (/srv/atomicsite/{slug}/dist).
+	realRoot := t.TempDir()
+	mkReal := func(siteID, slug, path string) Target {
+		return Target{
+			SiteID: siteID,
+			Slug:   slug,
+			Root:   realRoot,
+			Kind:   "local",
+			Config: map[string]any{"path": path},
+		}
+	}
+	for _, tc := range []struct{ slug, rel string }{
+		{"acme", "acme/dist"},
+		{"acme", "acme"},
+		{"demo-1700000000", "demo-1700000000/dist"}, // the live demo site's own target shape
+	} {
+		if err := os.MkdirAll(filepath.Join(realRoot, tc.slug), 0o755); err != nil {
+			t.Fatalf("mkdir: %v", err)
+		}
+		full := filepath.Join(realRoot, tc.rel)
+		if err := d.Validate(mkReal("some-site-id", tc.slug, full)); err != nil {
+			t.Errorf("legitimate path %q was refused: %v", full, err)
+		}
+	}
+
+	// And the attack must stay refused against that same real root.
+	if err := os.MkdirAll(filepath.Join(realRoot, "victimco", "dist", "blog"), 0o755); err != nil {
+		t.Fatalf("mkdir victim: %v", err)
+	}
+	if err := d.Validate(mkReal("attacker-id", "blog", filepath.Join(realRoot, "victimco", "dist", "blog"))); err == nil {
+		t.Error("attacker slug nested in a real victim directory was accepted")
+	}
+
+	// With no root configured the check DEGRADES to the older containment
+	// rule rather than disappearing: a missing field must not silently become
+	// a tenancy hole. So an unrooted target still has to name its own site.
+	unrootedBase := t.TempDir()
+	if err := d.Validate(Target{
+		SiteID: "s", Slug: "acme", Kind: "local",
+		Config: map[string]any{"path": filepath.Join(unrootedBase, "acme", "dist")},
+	}); err != nil {
+		t.Errorf("unrooted install, own slug in path: %v", err)
+	}
+	if err := d.Validate(Target{
+		SiteID: "s", Slug: "acme", Kind: "local",
+		Config: map[string]any{"path": filepath.Join(unrootedBase, "someone-else", "dist")},
+	}); err == nil {
+		t.Error("unrooted install lost its scope check entirely")
+	}
+}

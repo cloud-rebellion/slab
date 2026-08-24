@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import { currentWorkspace } from '$lib/stores/currentWorkspace.svelte';
 	import { goto } from '$app/navigation';
 	import * as api from '$lib/api';
 	import type { Evaluation, Site } from '$lib/api/types';
@@ -22,6 +23,9 @@
 		created_at: string;
 		grades: Evaluation[];
 	}
+
+	// This tile used to print the site count and label it "active workspaces".
+	const workspaceCount = $derived(currentWorkspace.all.length);
 
 	let loading = $state(true);
 	let loadError = $state<string | null>(null);
@@ -192,7 +196,7 @@
 						{sites.length}
 					</p>
 					<p class="mt-1 text-xs text-text-muted">
-						{sites.length === 1 ? '1 active workspace' : `${sites.length} active workspaces`}
+						{workspaceCount === 1 ? 'in 1 workspace' : `across ${workspaceCount} workspaces`}
 					</p>
 				</div>
 

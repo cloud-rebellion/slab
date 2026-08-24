@@ -1,3 +1,59 @@
 <!doctype html>
-<title>Slab</title>
-<!-- go:embed stub; the real frontend is copied here by the Docker build (bun run build). -->
+<html lang="en" data-theme="light">
+	<head>
+		<meta charset="utf-8" />
+		<link rel="icon" href="/favicon.svg" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<title>Atomicsite</title>
+		<script>
+			(function () {
+				try {
+					var t = localStorage.getItem('atomicsite_theme');
+					if (t === 'dark' || t === 'light') {
+						document.documentElement.setAttribute('data-theme', t);
+					}
+				} catch (e) {}
+			})();
+		</script>
+		<!--
+			Admin UI font preload. Loads every curated family the Branding
+			page offers so the right-side preview renders the chosen font
+			for real. Self-hosted under /fonts/* per the EU-sovereignty
+			policy (no fonts.googleapis.com / fonts.gstatic.com at runtime).
+		-->
+		<link rel="preload" as="font" type="font/woff2" href="/fonts/UcC73FwrK3iLTeHuS_nVMrMxCp50SjIa1ZL7.woff2" crossorigin />
+		<link rel="stylesheet" href="/fonts/fonts.css" />
+		<link href="/_app/immutable/entry/start.Ci4fFyWg.js" rel="modulepreload">
+		<link href="/_app/immutable/chunks/BsX4cZrw.js" rel="modulepreload">
+		<link href="/_app/immutable/chunks/DB_tzpTP.js" rel="modulepreload">
+		<link href="/_app/immutable/chunks/QTnfLwEv.js" rel="modulepreload">
+		<link href="/_app/immutable/chunks/BuFlayix.js" rel="modulepreload">
+		<link href="/_app/immutable/entry/app.BnrnHJKK.js" rel="modulepreload">
+		<link href="/_app/immutable/chunks/xihTtKlq.js" rel="modulepreload">
+		<link href="/_app/immutable/nodes/0.D_V532ow.js" rel="modulepreload">
+		<link href="/_app/immutable/chunks/Cd8s_jU5.js" rel="modulepreload">
+		<link href="/_app/immutable/chunks/B_IghqAD.js" rel="modulepreload">
+		
+		<link href="/_app/immutable/assets/0.DUGKoUwi.css" rel="stylesheet">
+	</head>
+	<body data-sveltekit-preload-data="hover">
+		<div style="display: contents">
+			<script>
+				{
+					__sveltekit_n6vng4 = {
+						base: ""
+					};
+
+					const element = document.currentScript.parentElement;
+
+					Promise.all([
+						import("/_app/immutable/entry/start.Ci4fFyWg.js"),
+						import("/_app/immutable/entry/app.BnrnHJKK.js")
+					]).then(([kit, app]) => {
+						kit.start(app, element);
+					});
+				}
+			</script>
+		</div>
+	</body>
+</html>

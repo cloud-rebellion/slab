@@ -28,12 +28,42 @@ import (
 	"strings"
 	"time"
 
+	"github.com/bright-interaction/slab/internal/billing"
 	"github.com/bright-interaction/slab/internal/config"
 	authmw "github.com/bright-interaction/slab/internal/middleware"
 	"github.com/bright-interaction/slab/internal/store"
 )
 
 const workspaceInviteTTL = 7 * 24 * time.Hour
+
+// workspaceStatusDeleted is the soft-delete sentinel written by Delete
+// and by the retention lifecycle sweep. A workspace in this state is
+// invisible to its members (ListMine filters it, WorkspaceAccessMiddleware
+// refuses it) but the row survives for the 90-day grace period.
+const workspaceStatusDeleted = "deleted"
+
+// defaultWorkspacePlan is what a self-hosted (single-deployment) install
+// gets: the OSS plan, which billing.Limit treats as unlimited. Cloud
+// self-serve signups instead start on the smallest real tier with a
+// trial, matching the schema note at internal/db/schema.sql:56.
+const (
+	defaultWorkspacePlan     = "oss"
+	cloudSignupWorkspacePlan = "solo"
+	cloudSignupTrial         = 14 * 24 * time.Hour
+)
+
+// cloudMode reports whether this binary is serving the multi-tenant
+// Cloud deployment rather than a single self-hosted install.
+func (h *WorkspaceHandler) cloudMode() bool {
+	return h.cfg != nil && h.cfg.DeploymentMode == config.DeploymentModeCloud
+}
+
+// validWorkspaceRoles is the workspace-role vocabulary. Distinct from the
+// platform vocabulary in users.role (admin|editor|support): do not mix
+// the two.
+func validWorkspaceRole(role string) bool {
+	return role == "owner" || role == "admin" || role == "member"
+}
 
 // WorkspaceHandler covers CRUD + members + invites for workspaces.
 type WorkspaceHandler struct {
@@ -199,13 +229,44 @@ func (h *WorkspaceHandler) Create(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "slug must be lowercase letters, digits, hyphens (3-40 chars, no leading/trailing hyphen)")
 		return
 	}
-	plan := req.Plan
-	if plan == "" {
-		plan = "oss"
+	// Who may create at all. On a self-hosted instance workspaces are an
+	// operator concept: the admin creates one per client and invites into
+	// it. Cloud is the opposite, self-serve signup IS a workspace create,
+	// so any authenticated user may create there.
+	if user.Role != "admin" && !h.cloudMode() {
+		writeError(w, http.StatusForbidden, "Only an administrator can create a workspace on this instance")
+		return
+	}
+	// The plan decides the quota caps, so it is not caller-controlled.
+	// Before this gate any authenticated user could POST {"plan":"agency"}
+	// and self-grant the €299 caps, and because billing.Lookup falls back
+	// to oss (which is UNLIMITED) for an unrecognised key, a typo granted
+	// more than the most expensive real plan. Only a platform admin may
+	// name a plan, and only one that actually exists.
+	plan := defaultWorkspacePlan
+	if h.cloudMode() {
+		plan = cloudSignupWorkspacePlan
+	}
+	if requested := strings.TrimSpace(req.Plan); requested != "" {
+		if user.Role != "admin" {
+			writeError(w, http.StatusForbidden, "Only an administrator can choose a plan")
+			return
+		}
+		if _, ok := billing.Plans[requested]; !ok {
+			writeError(w, http.StatusBadRequest, "Unknown plan")
+			return
+		}
+		plan = requested
 	}
 	billing := strings.TrimSpace(req.BillingEmail)
 	if billing == "" {
 		billing = user.Email
+	}
+	// A cloud self-serve workspace lands on a trial; an operator-created
+	// one has no trial clock at all.
+	trialEndsAt := ""
+	if h.cloudMode() && user.Role != "admin" {
+		trialEndsAt = time.Now().UTC().Add(cloudSignupTrial).Format(time.RFC3339)
 	}
 	id := newID()
 	if err := h.queries.CreateWorkspace(r.Context(), store.CreateWorkspaceParams{
@@ -216,7 +277,7 @@ func (h *WorkspaceHandler) Create(w http.ResponseWriter, r *http.Request) {
 		Region:       "eu",
 		BillingEmail: billing,
 		Status:       "active",
-		TrialEndsAt:  "",
+		TrialEndsAt:  trialEndsAt,
 	}); err != nil {
 		writeError(w, http.StatusBadRequest, "Failed to create workspace (slug taken?)")
 		return
@@ -243,22 +304,40 @@ func (h *WorkspaceHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := urlParam(r, "workspaceID")
+	// Pointers, so an omitted field is distinguishable from an explicit
+	// empty one. UpdateWorkspace writes both columns unconditionally, so
+	// the previous value-typed struct silently blanked billing_email on
+	// every rename: the settings form only ever sends the field it
+	// changed. nil now means "leave it", "" means "clear it".
 	var req struct {
-		Name         string `json:"name"`
-		BillingEmail string `json:"billing_email"`
+		Name         *string `json:"name"`
+		BillingEmail *string `json:"billing_email"`
 	}
 	if err := parseJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "Invalid request body")
 		return
 	}
-	if strings.TrimSpace(req.Name) == "" {
+	current, err := h.queries.GetWorkspaceByID(r.Context(), id)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "Workspace not found")
+		return
+	}
+	name := current.Name
+	if req.Name != nil {
+		name = strings.TrimSpace(*req.Name)
+	}
+	if name == "" {
 		writeError(w, http.StatusBadRequest, "name is required")
 		return
 	}
+	billingEmail := current.BillingEmail
+	if req.BillingEmail != nil {
+		billingEmail = strings.TrimSpace(*req.BillingEmail)
+	}
 	if err := h.queries.UpdateWorkspace(r.Context(), store.UpdateWorkspaceParams{
 		ID:           id,
-		Name:         strings.TrimSpace(req.Name),
-		BillingEmail: strings.TrimSpace(req.BillingEmail),
+		Name:         name,
+		BillingEmail: billingEmail,
 	}); err != nil {
 		writeError(w, http.StatusInternalServerError, "Failed to update workspace")
 		return
@@ -295,7 +374,11 @@ func (h *WorkspaceHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"status": "deleted"})
 }
 
-// ListMembers returns members of one workspace.
+// ListMembers returns members of one workspace. Readable by ANY member,
+// deliberately: a colleague roster is ordinary product information and
+// the members page has to render for a plain member. The asymmetry with
+// ListInvites (admin-only) is intentional: a pending invite is a
+// privilege-escalation primitive, a roster is not.
 func (h *WorkspaceHandler) ListMembers(w http.ResponseWriter, r *http.Request) {
 	id := urlParam(r, "workspaceID")
 	rows, err := h.queries.ListWorkspaceMembers(r.Context(), id)
@@ -325,8 +408,35 @@ func (h *WorkspaceHandler) AddMember(w http.ResponseWriter, r *http.Request) {
 	if role == "" {
 		role = "member"
 	}
-	if role != "owner" && role != "admin" && role != "member" {
+	if !validWorkspaceRole(role) {
 		writeError(w, http.StatusBadRequest, "role must be owner, admin, or member")
+		return
+	}
+	// AddMember doubles as a role change, because AddWorkspaceMember is an
+	// upsert. That makes it a THIRD writer of the owner count, and it was left
+	// unguarded when the other two were fixed: the sole owner could post
+	// themselves at role "member" and take the workspace to zero owners in a
+	// single request. Any transition that moves an existing owner off owner
+	// goes through the same atomic guard the other two writers use.
+	if existing, err := h.queries.GetWorkspaceMembership(r.Context(), store.GetWorkspaceMembershipParams{
+		WorkspaceID: id,
+		UserID:      req.UserID,
+	}); err == nil && existing.Role == "owner" && role != "owner" {
+		affected, err := h.queries.DemoteWorkspaceMemberGuarded(r.Context(), store.DemoteWorkspaceMemberGuardedParams{
+			Role:          role,
+			WorkspaceID:   id,
+			UserID:        req.UserID,
+			WorkspaceID_2: id,
+		})
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "Failed to add member")
+			return
+		}
+		if affected == 0 {
+			writeError(w, http.StatusConflict, "Cannot demote the last owner")
+			return
+		}
+		writeJSON(w, http.StatusCreated, map[string]any{"status": "ok"})
 		return
 	}
 	if err := h.queries.AddWorkspaceMember(r.Context(), store.AddWorkspaceMemberParams{
@@ -348,33 +458,108 @@ func (h *WorkspaceHandler) RemoveMember(w http.ResponseWriter, r *http.Request) 
 	}
 	id := urlParam(r, "workspaceID")
 	userID := urlParam(r, "userID")
-	rows, err := h.queries.ListWorkspaceMembers(r.Context(), id)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "Failed to load members")
-		return
-	}
-	owners := 0
-	targetIsOwner := false
-	for _, m := range rows {
-		if m.Role == "owner" {
-			owners++
-			if m.UserID == userID {
-				targetIsOwner = true
-			}
-		}
-	}
-	if targetIsOwner && owners <= 1 {
-		writeError(w, http.StatusConflict, "Cannot remove the last owner")
-		return
-	}
-	if err := h.queries.RemoveWorkspaceMember(r.Context(), store.RemoveWorkspaceMemberParams{
+	// Existence first, so "no such member" is a 404 rather than being folded
+	// into the guard's zero-rows result below.
+	if _, err := h.queries.GetWorkspaceMembership(r.Context(), store.GetWorkspaceMembershipParams{
 		WorkspaceID: id,
 		UserID:      userID,
 	}); err != nil {
+		writeError(w, http.StatusNotFound, "Not a member of this workspace")
+		return
+	}
+	// The last-owner guard is IN the delete. Counting owners in Go first and
+	// then deleting is check-then-act: two concurrent removals both read the
+	// same count, both pass, and the workspace is left with no owner at all.
+	affected, err := h.queries.RemoveWorkspaceMemberGuarded(r.Context(), store.RemoveWorkspaceMemberGuardedParams{
+		WorkspaceID:   id,
+		UserID:        userID,
+		WorkspaceID_2: id,
+	})
+	if err != nil {
 		writeError(w, http.StatusInternalServerError, "Failed to remove member")
 		return
 	}
+	if affected == 0 {
+		writeError(w, http.StatusConflict, "Cannot remove the last owner")
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"status": "ok"})
+}
+
+// UpdateMemberRole changes an existing member's role. Owner-only, and
+// granting "owner" additionally requires the caller to be an owner, so
+// escalation stays monotone with CreateInvite.
+//
+// Deliberately refuses to create a membership: the target must already be
+// a member, otherwise PATCH would be a second AddMember that skips its
+// checks. Reuses AddWorkspaceMember, which is an upsert
+// (workspace_members.sql:1-4), rather than adding a near-duplicate query.
+func (h *WorkspaceHandler) UpdateMemberRole(w http.ResponseWriter, r *http.Request) {
+	if !authmw.RequireWorkspaceRole(w, r, "owner") {
+		return
+	}
+	id := urlParam(r, "workspaceID")
+	userID := urlParam(r, "userID")
+	var req struct {
+		Role string `json:"role"`
+	}
+	if err := parseJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "Invalid request body")
+		return
+	}
+	if !validWorkspaceRole(req.Role) {
+		writeError(w, http.StatusBadRequest, "role must be owner, admin, or member")
+		return
+	}
+	current, err := h.queries.GetWorkspaceMembership(r.Context(), store.GetWorkspaceMembershipParams{
+		WorkspaceID: id,
+		UserID:      userID,
+	})
+	if err != nil {
+		writeError(w, http.StatusNotFound, "Not a member of this workspace")
+		return
+	}
+	// Only a change that takes someone OUT of owner can strip the last one.
+	// That path carries the guard inside the UPDATE, for the same
+	// check-then-act reason as RemoveMember. Promotions and owner->owner
+	// no-ops cannot reduce the count, so they take the plain upsert.
+	if current.Role == "owner" && req.Role != "owner" {
+		affected, err := h.queries.DemoteWorkspaceMemberGuarded(r.Context(), store.DemoteWorkspaceMemberGuardedParams{
+			Role:          req.Role,
+			WorkspaceID:   id,
+			UserID:        userID,
+			WorkspaceID_2: id,
+		})
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "Failed to update member role")
+			return
+		}
+		if affected == 0 {
+			writeError(w, http.StatusConflict, "Cannot demote the last owner")
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "role": req.Role})
+		return
+	}
+	// Every other transition (promotion, or owner->owner) cannot reduce the
+	// owner count, but it must still not RESURRECT a membership: the existence
+	// read above happened before any concurrent RemoveMember, and an upsert
+	// would re-create the row that removal just deleted. A plain UPDATE
+	// touches nothing when the row is gone.
+	affected, err := h.queries.UpdateWorkspaceMemberRoleIfMember(r.Context(), store.UpdateWorkspaceMemberRoleIfMemberParams{
+		Role:        req.Role,
+		WorkspaceID: id,
+		UserID:      userID,
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "Failed to update member role")
+		return
+	}
+	if affected == 0 {
+		writeError(w, http.StatusNotFound, "Not a member of this workspace")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "role": req.Role})
 }
 
 // CreateInvite mints a one-time signup token scoped to this workspace.
@@ -403,8 +588,15 @@ func (h *WorkspaceHandler) CreateInvite(w http.ResponseWriter, r *http.Request) 
 	if role == "" {
 		role = "member"
 	}
-	if role != "owner" && role != "admin" && role != "member" {
+	if !validWorkspaceRole(role) {
 		writeError(w, http.StatusBadRequest, "role must be owner, admin, or member")
+		return
+	}
+	// Escalation is monotone: you cannot invite someone in above your own
+	// level. RequireWorkspaceRole("admin") above accepts owner OR admin, so
+	// without this a workspace admin could mint an owner invite, redeem it
+	// (the token is returned in the response body) and promote themselves.
+	if role == "owner" && !authmw.RequireWorkspaceRole(w, r, "owner") {
 		return
 	}
 	tokenBytes := make([]byte, 24)

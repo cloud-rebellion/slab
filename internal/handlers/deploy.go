@@ -286,6 +286,7 @@ func (h *DeployHandler) CreateTarget(w http.ResponseWriter, r *http.Request) {
 	if err := deployer.Validate(deploy.Target{
 		SiteID: siteID,
 		Slug:   siteSlug,
+		Root:   h.cfg.LocalDeployRoot,
 		Name:   req.Name,
 		Kind:   req.Kind,
 		Config: req.Config,
@@ -460,6 +461,7 @@ func (h *DeployHandler) UpdateTarget(w http.ResponseWriter, r *http.Request) {
 		ID:     existing.ID,
 		SiteID: siteID,
 		Slug:   siteSlug,
+		Root:   h.cfg.LocalDeployRoot,
 		Name:   name,
 		Kind:   kind,
 		Config: config,
