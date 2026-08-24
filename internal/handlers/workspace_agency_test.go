@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -14,7 +15,6 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/bright-interaction/slab/internal/config"
-	dbpkg "github.com/bright-interaction/slab/internal/db"
 	authmw "github.com/bright-interaction/slab/internal/middleware"
 	"github.com/bright-interaction/slab/internal/store"
 )
@@ -469,22 +469,7 @@ func TestWorkspaceStatusGate_OnlyDeletedIsRefused(t *testing.T) {
 // ---------------------------------------------------------------------
 
 func TestLastOwnerInvariant_HoldsUnderConcurrentRemoval(t *testing.T) {
-	dir := t.TempDir()
-	dsn := "file:" + filepath.Join(dir, "race.sqlite") +
-		"?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)"
-	sqlDB, err := sql.Open("sqlite", dsn)
-	if err != nil {
-		t.Fatalf("open db: %v", err)
-	}
-	// Production-exact: cmd/server opens SQLite with a single connection, and
-	// that is precisely the configuration under which the old check-then-act
-	// guard failed 300/300: the pool serialises op-by-op, so both handlers
-	// complete their read before either one writes.
-	sqlDB.SetMaxOpenConns(1)
-	defer sqlDB.Close()
-	if _, err := sqlDB.Exec(string(dbpkg.Schema)); err != nil {
-		t.Fatalf("apply schema: %v", err)
-	}
+	sqlDB := newRaceDB(t, "race.sqlite")
 	q := store.New(sqlDB)
 	ctx := context.Background()
 
@@ -542,22 +527,7 @@ func TestLastOwnerInvariant_HoldsUnderConcurrentRemoval(t *testing.T) {
 }
 
 func TestLastOwnerInvariant_HoldsUnderConcurrentDemotion(t *testing.T) {
-	dir := t.TempDir()
-	dsn := "file:" + filepath.Join(dir, "race2.sqlite") +
-		"?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)"
-	sqlDB, err := sql.Open("sqlite", dsn)
-	if err != nil {
-		t.Fatalf("open db: %v", err)
-	}
-	// Production-exact: cmd/server opens SQLite with a single connection, and
-	// that is precisely the configuration under which the old check-then-act
-	// guard failed 300/300: the pool serialises op-by-op, so both handlers
-	// complete their read before either one writes.
-	sqlDB.SetMaxOpenConns(1)
-	defer sqlDB.Close()
-	if _, err := sqlDB.Exec(string(dbpkg.Schema)); err != nil {
-		t.Fatalf("apply schema: %v", err)
-	}
+	sqlDB := newRaceDB(t, "race2.sqlite")
 	q := store.New(sqlDB)
 	ctx := context.Background()
 
@@ -750,30 +720,82 @@ func TestRemoveMember_RevokesSiteGrantsInThatWorkspace(t *testing.T) {
 	}
 }
 
-// A second platform admin has no workspace membership (ensureDefaultWorkspace
-// backfills the first admin only). They must be told to create one, not have
-// their sites silently filed in whichever workspace happens to be oldest,
-// which on this estate is the one holding a client's site.
-func TestResolveWorkspaceForCreate_SecondAdminGetsNoEstateFallback(t *testing.T) {
+// An admin with no membership of their own gets the estate's only workspace,
+// and only when there is exactly one.
+//
+// ensureDefaultWorkspace backfills a membership for the FIRST admin only, so a
+// colleague promoted later has none either. With several workspaces present,
+// "the first one" is somebody else's, and on this estate that is the workspace
+// holding a client's site: their demo would have been filed inside it.
+func TestResolveWorkspaceForCreate_AdminFallbackOnlyWhenUnambiguous(t *testing.T) {
+	// One workspace: the single-tenant install keeps working.
 	db, q := setupDeployTestDB(t)
-	const clientWS = "ws-client-0000000000001"
-	seedWorkspace(t, q, clientWS, "default", "oss")
-	seedWorkspaceUser(t, q, "u-second-admin")
-
+	const soleWS = "ws-sole-0000000000000001"
+	seedWorkspace(t, q, soleWS, "default", "oss")
+	seedWorkspaceUser(t, q, "u-only-admin")
 	h := NewSiteHandler(&config.Config{}, q, db)
-	r := asRoleUser(chi.NewRouter(), "u-second-admin", "admin")
+	r := asRoleUser(chi.NewRouter(), "u-only-admin", "admin")
 	r.Post("/api/sites", h.Create)
 
 	code, body := doAuthzReq(t, r, http.MethodPost, "/api/sites",
+		map[string]any{"name": "Solo", "slug": "solo-site"})
+	if code != http.StatusCreated {
+		t.Fatalf("admin on a single-workspace install: status=%d, want 201 (body=%s)", code, body)
+	}
+
+	// Two workspaces: ambiguous, so refuse rather than guess.
+	db2, q2 := setupDeployTestDB(t)
+	const clientWS = "ws-client-0000000000001"
+	seedWorkspace(t, q2, clientWS, "default", "oss")
+	seedWorkspace(t, q2, "ws-other-00000000000001", "other", "oss")
+	seedWorkspaceUser(t, q2, "u-second-admin")
+	h2 := NewSiteHandler(&config.Config{}, q2, db2)
+	r2 := asRoleUser(chi.NewRouter(), "u-second-admin", "admin")
+	r2.Post("/api/sites", h2.Create)
+
+	code, body = doAuthzReq(t, r2, http.MethodPost, "/api/sites",
 		map[string]any{"name": "Demo", "slug": "demo-site"})
 	if code != http.StatusBadRequest {
-		t.Fatalf("second admin with no workspace: status=%d, want 400 (body=%s)", code, body)
+		t.Fatalf("second admin, several workspaces: status=%d, want 400 (body=%s)", code, body)
 	}
 	if !strings.Contains(body, "not in a workspace") {
 		t.Errorf("unhelpful refusal: %s", body)
 	}
-	sites, _ := q.ListSitesByWorkspace(context.Background(), clientWS)
+	sites, _ := q2.ListSitesByWorkspace(context.Background(), clientWS)
 	if len(sites) != 0 {
 		t.Errorf("a site landed in the client workspace: %d", len(sites))
 	}
+}
+
+// newRaceDB is newSchemaDB with a DSN the driver actually honours.
+//
+// The shared fixture opens `?_journal_mode=WAL&_busy_timeout=5000&...`, which
+// is mattn syntax that modernc.org/sqlite IGNORES, so those fixtures are not
+// in WAL and have no busy timeout. Harmless for most tests, fatal to the point
+// of a concurrency test: under the ignored DSN the owner-count race presents
+// as SQLITE_BUSY rather than a lost update, which looks like the guard working
+// (measured 0/300 vs 299/300).
+//
+// It still copies the prebuilt template rather than applying internal/db.Schema,
+// which is what the schema-fixture guard protects (~38ms vs ~441ms).
+func newRaceDB(t *testing.T, file string) *sql.DB {
+	t.Helper()
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, file)
+	blank, err := os.ReadFile(schemaTemplatePath(t))
+	if err != nil {
+		t.Fatalf("read schema template: %v", err)
+	}
+	if err := os.WriteFile(dbPath, blank, 0o600); err != nil {
+		t.Fatalf("write test db: %v", err)
+	}
+	sqlDB, err := sql.Open("sqlite", dbPath+"?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)")
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	// Production-exact: cmd/server runs a single connection, the configuration
+	// under which the old check-then-act guard failed 300/300.
+	sqlDB.SetMaxOpenConns(1)
+	t.Cleanup(func() { sqlDB.Close() })
+	return sqlDB
 }

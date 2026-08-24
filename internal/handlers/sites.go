@@ -1081,12 +1081,20 @@ func (h *SiteHandler) resolveWorkspaceForCreate(r *http.Request, requested strin
 	}
 	ids, err := h.queries.ListWorkspaceIDsForUser(r.Context(), user.ID)
 	if err != nil || len(ids) == 0 {
-		// Deliberately NO estate-wide fallback. ensureDefaultWorkspace
-		// backfills a membership for the FIRST admin only, so a second admin
-		// (a colleague added later) has none, and "first workspace in the
-		// estate" is somebody else's, typically the one holding a client's
-		// site. Silently creating their sites in a client's workspace is
-		// worse than telling them to make their own.
+		// An admin with no membership of their own falls back to the estate's
+		// only workspace, and ONLY when there is exactly one. That keeps the
+		// single-tenant install working (ensureDefaultWorkspace backfills a
+		// membership for the FIRST admin, so this covers the seeded-admin and
+		// fresh-install paths) while refusing the ambiguous case: a second
+		// admin added later has no membership either, and picking "the first
+		// workspace" out of several would file their sites in somebody else's,
+		// typically the one holding a client's site.
+		if user.Role == "admin" {
+			all, err := h.queries.ListAllWorkspaces(r.Context())
+			if err == nil && len(all) == 1 {
+				return all[0].ID, nil
+			}
+		}
 		return "", errors.New("you are not in a workspace yet; create one first")
 	}
 	return ids[0], nil
