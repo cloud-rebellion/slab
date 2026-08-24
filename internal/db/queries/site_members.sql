@@ -54,3 +54,16 @@ WHERE s.id IN (SELECT sm.site_id FROM site_members sm WHERE sm.user_id = ?)
 INSERT INTO site_members (site_id, user_id, role)
 SELECT s.id, ?, 'owner' FROM sites s
 WHERE NOT EXISTS (SELECT 1 FROM site_members WHERE site_id = s.id);
+
+-- name: RemoveSiteMembershipsForWorkspaceUser :execrows
+-- Revokes a user's per-site grants for every site in one workspace. Removing
+-- someone from workspace_members alone did NOT do this: site_members is
+-- checked first in SiteAccessMiddleware and short-circuits, and a site's
+-- creator is auto-granted role='owner' there. So a removed member kept
+-- permanent owner access to every site they had created, while the admin UI
+-- promised "will lose access to every site in this workspace". Authz is a
+-- live DB read per request, so this is not a session that expires; the row
+-- has to go.
+DELETE FROM site_members
+WHERE site_members.user_id = ?
+  AND site_members.site_id IN (SELECT s.id FROM sites s WHERE s.workspace_id = ?);

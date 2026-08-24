@@ -152,3 +152,49 @@ func TestWorkspaceSignup_ExpiredAndMalformedExpiryFailClosed(t *testing.T) {
 		}
 	}
 }
+
+// An invite minted before a workspace was deleted must not still create an
+// account and a live session inside it. Delete is an UPDATE, so the invite
+// table's ON DELETE CASCADE never fires and nothing purges pending invites.
+func TestWorkspaceSignup_RefusesDeletedWorkspace(t *testing.T) {
+	_, q := setupDeployTestDB(t)
+	ctx := context.Background()
+	const wsID = "ws-gonewhen-00000000001"
+	if err := q.CreateWorkspace(ctx, store.CreateWorkspaceParams{
+		ID: wsID, Name: "Gone", Slug: "ws-gone", Plan: "oss",
+		Region: "eu", BillingEmail: "b@example.com", Status: "active",
+	}); err != nil {
+		t.Fatalf("create workspace: %v", err)
+	}
+	const token = "deadbeefdeadbeefdeadbeefdeadbeef"
+	if err := q.CreateWorkspaceInvite(ctx, store.CreateWorkspaceInviteParams{
+		ID: "inv-gone", WorkspaceID: wsID, Email: "late@example.com",
+		Role: "member", Token: token, CreatedBy: "admin",
+		ExpiresAt: time.Now().Add(workspaceInviteTTL).UTC().Format(time.RFC3339),
+	}); err != nil {
+		t.Fatalf("create invite: %v", err)
+	}
+	if err := q.UpdateWorkspacePlan(ctx, store.UpdateWorkspacePlanParams{
+		ID: wsID, Plan: "oss", Status: "deleted",
+	}); err != nil {
+		t.Fatalf("soft-delete: %v", err)
+	}
+
+	h := NewWorkspaceHandler(&config.Config{BaseURL: "https://example.com"}, q)
+	router := chi.NewRouter()
+	router.Get("/api/cloud/signup/{token}", h.SignupInfo)
+	router.Post("/api/cloud/signup/{token}", h.SignupRedeem)
+
+	code, body := doAuthzReq(t, router, http.MethodGet, "/api/cloud/signup/"+token, nil)
+	if code != http.StatusGone {
+		t.Errorf("SignupInfo into a deleted workspace: status=%d, want 410 (body=%s)", code, body)
+	}
+	code, body = doAuthzReq(t, router, http.MethodPost, "/api/cloud/signup/"+token,
+		map[string]any{"name": "Late", "password": "late-password-123456"})
+	if code != http.StatusGone {
+		t.Fatalf("SignupRedeem into a deleted workspace: status=%d, want 410 (body=%s)", code, body)
+	}
+	if _, err := q.GetUserByEmail(ctx, "late@example.com"); err == nil {
+		t.Error("an account was created inside a deleted workspace")
+	}
+}

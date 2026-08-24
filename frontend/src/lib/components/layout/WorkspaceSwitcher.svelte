@@ -5,6 +5,8 @@
 	import type { Workspace } from '$lib/api/workspaces';
 	import { currentWorkspace, setWorkspace } from '$lib/stores/currentWorkspace.svelte';
 	import { clearSite } from '$lib/stores/currentSite.svelte';
+	import { auth } from '$lib/stores/auth.svelte';
+	import { deploymentMode } from '$lib/stores/mode.svelte';
 
 	// Mirrors SiteSwitcher, with two deliberate differences.
 	//
@@ -18,6 +20,8 @@
 	let listEl = $state<HTMLDivElement | null>(null);
 
 	const workspaces = $derived(currentWorkspace.all);
+	// Matches the server rule: platform admins always, others only in cloud mode.
+	const canCreate = $derived(auth.value?.role === 'admin' || deploymentMode.isCloud);
 	const activeId = $derived(currentWorkspace.value?.id ?? null);
 	const activeName = $derived(currentWorkspace.value?.name ?? null);
 
@@ -94,9 +98,23 @@
 			{#if workspaces.length === 0}
 				<div class="px-3 py-6 text-center">
 					<p class="text-[13px] text-text-secondary">You are not in a workspace yet.</p>
-					<p class="mt-1 text-[11px] text-text-muted">
-						An administrator creates one and invites you into it.
-					</p>
+					{#if canCreate}
+						<p class="mt-1 text-[11px] text-text-muted">
+							Create one per client or demo to keep their builds apart.
+						</p>
+						<button
+							type="button"
+							class="mt-3 inline-flex h-8 items-center justify-center gap-1.5 rounded-md bg-accent px-3 text-[12px] font-medium text-accent-fg hover:bg-accent-hover"
+							onclick={manageWorkspaces}
+						>
+							<Plus class="h-3.5 w-3.5" />
+							Create your first workspace
+						</button>
+					{:else}
+						<p class="mt-1 text-[11px] text-text-muted">
+							An administrator creates one and invites you into it.
+						</p>
+					{/if}
 				</div>
 			{:else}
 				{#if workspaces.length > 5}

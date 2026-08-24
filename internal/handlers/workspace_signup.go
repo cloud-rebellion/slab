@@ -45,6 +45,16 @@ func validateWorkspaceInvite(row store.WorkspaceInvite) error {
 // page render the invitee's email, workspace, and role, plus whether an
 // account with that email already exists (drives which form the page
 // shows: set-a-password vs log-in-to-accept).
+// workspaceIsLive reports whether the invite's workspace still exists and has
+// not been soft-deleted. Delete is an UPDATE, so the ON DELETE CASCADE on
+// workspace_invites never fires and nothing purges them: without this an
+// invite minted before a delete still creates an account, sets a real session
+// cookie, and drops the person into a workspace that is supposed to be gone.
+func (h *WorkspaceHandler) workspaceIsLive(r *http.Request, workspaceID string) bool {
+	ws, err := h.queries.GetWorkspaceByID(r.Context(), workspaceID)
+	return err == nil && ws.Status != workspaceStatusDeleted
+}
+
 func (h *WorkspaceHandler) SignupInfo(w http.ResponseWriter, r *http.Request) {
 	token := urlParam(r, "token")
 	row, err := h.queries.GetWorkspaceInviteByToken(r.Context(), token)
@@ -54,6 +64,10 @@ func (h *WorkspaceHandler) SignupInfo(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := validateWorkspaceInvite(row); err != nil {
 		writeError(w, http.StatusGone, err.Error())
+		return
+	}
+	if !h.workspaceIsLive(r, row.WorkspaceID) {
+		writeError(w, http.StatusGone, "This workspace is no longer available")
 		return
 	}
 	workspaceName := ""
@@ -85,6 +99,10 @@ func (h *WorkspaceHandler) SignupRedeem(w http.ResponseWriter, r *http.Request) 
 	}
 	if err := validateWorkspaceInvite(row); err != nil {
 		writeError(w, http.StatusGone, err.Error())
+		return
+	}
+	if !h.workspaceIsLive(r, row.WorkspaceID) {
+		writeError(w, http.StatusGone, "This workspace is no longer available")
 		return
 	}
 

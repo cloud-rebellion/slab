@@ -594,6 +594,15 @@ type Querier interface {
 	// Return a reserved use when the payment ultimately fails/expires/cancels.
 	ReleaseDiscountCodeUse(ctx context.Context, arg ReleaseDiscountCodeUseParams) (int64, error)
 	RemoveSiteMember(ctx context.Context, arg RemoveSiteMemberParams) error
+	// Revokes a user's per-site grants for every site in one workspace. Removing
+	// someone from workspace_members alone did NOT do this: site_members is
+	// checked first in SiteAccessMiddleware and short-circuits, and a site's
+	// creator is auto-granted role='owner' there. So a removed member kept
+	// permanent owner access to every site they had created, while the admin UI
+	// promised "will lose access to every site in this workspace". Authz is a
+	// live DB read per request, so this is not a session that expires; the row
+	// has to go.
+	RemoveSiteMembershipsForWorkspaceUser(ctx context.Context, arg RemoveSiteMembershipsForWorkspaceUserParams) (int64, error)
 	RemoveWorkspaceMember(ctx context.Context, arg RemoveWorkspaceMemberParams) error
 	// Removes a member, but refuses to remove the LAST owner. The guard lives in
 	// the statement rather than in Go on purpose: a read-then-write pair

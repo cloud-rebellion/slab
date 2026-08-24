@@ -483,6 +483,18 @@ func (h *WorkspaceHandler) RemoveMember(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusConflict, "Cannot remove the last owner")
 		return
 	}
+	// Removing the workspace membership is not enough on its own: site_members
+	// is checked FIRST in SiteAccessMiddleware and short-circuits, and every
+	// site's creator holds an owner row there. Without this the removed member
+	// keeps permanent access to everything they built, which is the opposite
+	// of what the UI tells the operator.
+	if _, err := h.queries.RemoveSiteMembershipsForWorkspaceUser(r.Context(), store.RemoveSiteMembershipsForWorkspaceUserParams{
+		UserID:      userID,
+		WorkspaceID: id,
+	}); err != nil {
+		writeError(w, http.StatusInternalServerError, "Member removed but site access could not be revoked; retry")
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"status": "ok"})
 }
 

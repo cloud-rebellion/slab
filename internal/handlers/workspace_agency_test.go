@@ -687,3 +687,93 @@ func TestUpdateMemberRole_DoesNotResurrectARemovedMember(t *testing.T) {
 		t.Fatal("a removed member was resurrected by a role change")
 	}
 }
+
+// Removing someone from a workspace has to revoke the sites they built there.
+// site_members is checked first in SiteAccessMiddleware and short-circuits, and
+// a site's creator holds an owner row in it, so removing only the workspace
+// membership left permanent access to everything they had created.
+func TestRemoveMember_RevokesSiteGrantsInThatWorkspace(t *testing.T) {
+	_, q := setupDeployTestDB(t)
+	ctx := context.Background()
+	const wsID = "ws-offboard-00000000001"
+	const otherWS = "ws-keepmine-00000000001"
+	seedWorkspace(t, q, wsID, "ws-offboard", "oss")
+	seedWorkspace(t, q, otherWS, "ws-keepmine", "oss")
+	seedWorkspaceUser(t, q, "u-owner-off")
+	seedWorkspaceUser(t, q, "u-leaver")
+	for _, m := range []struct{ user, role string }{{"u-owner-off", "owner"}, {"u-leaver", "member"}} {
+		if err := q.AddWorkspaceMember(ctx, store.AddWorkspaceMemberParams{
+			WorkspaceID: wsID, UserID: m.user, Role: m.role,
+		}); err != nil {
+			t.Fatalf("seed member: %v", err)
+		}
+	}
+
+	mkSite := func(id, slug, ws string) {
+		if err := q.CreateSite(ctx, store.CreateSiteParams{
+			ID: id, WorkspaceID: ws, Name: slug, Slug: slug,
+			PrimaryColor: "#000000", SecondaryColor: "#000000",
+			BgColor: "#ffffff", TextColor: "#000000",
+			FontHeading: "Inter", FontBody: "Inter", Lang: "en",
+		}); err != nil {
+			t.Fatalf("create site %s: %v", slug, err)
+		}
+		if err := q.AddSiteMember(ctx, store.AddSiteMemberParams{
+			SiteID: id, UserID: "u-leaver", Role: "owner",
+		}); err != nil {
+			t.Fatalf("grant site member: %v", err)
+		}
+	}
+	mkSite("site-built-000000000001", "built-here", wsID)
+	// A site in a DIFFERENT workspace they are still entitled to keep.
+	mkSite("site-elsewhere-00000001", "built-elsewhere", otherWS)
+
+	h := NewWorkspaceHandler(&config.Config{}, q)
+	r := withWorkspaceRole(asRoleUser(chi.NewRouter(), "u-owner-off", "editor"), wsID, "owner")
+	r.Delete("/api/workspaces/{workspaceID}/members/{userID}", h.RemoveMember)
+
+	code, body := doAuthzReq(t, r, http.MethodDelete, "/api/workspaces/"+wsID+"/members/u-leaver", nil)
+	if code != http.StatusOK {
+		t.Fatalf("remove member: status=%d, want 200 (body=%s)", code, body)
+	}
+
+	if _, err := q.GetSiteMembership(ctx, store.GetSiteMembershipParams{
+		SiteID: "site-built-000000000001", UserID: "u-leaver",
+	}); err == nil {
+		t.Error("removed member kept an owner grant on a site in that workspace")
+	}
+	// Scoped: their grants elsewhere are untouched.
+	if _, err := q.GetSiteMembership(ctx, store.GetSiteMembershipParams{
+		SiteID: "site-elsewhere-00000001", UserID: "u-leaver",
+	}); err != nil {
+		t.Errorf("removal reached into another workspace's site grants: %v", err)
+	}
+}
+
+// A second platform admin has no workspace membership (ensureDefaultWorkspace
+// backfills the first admin only). They must be told to create one, not have
+// their sites silently filed in whichever workspace happens to be oldest,
+// which on this estate is the one holding a client's site.
+func TestResolveWorkspaceForCreate_SecondAdminGetsNoEstateFallback(t *testing.T) {
+	db, q := setupDeployTestDB(t)
+	const clientWS = "ws-client-0000000000001"
+	seedWorkspace(t, q, clientWS, "default", "oss")
+	seedWorkspaceUser(t, q, "u-second-admin")
+
+	h := NewSiteHandler(&config.Config{}, q, db)
+	r := asRoleUser(chi.NewRouter(), "u-second-admin", "admin")
+	r.Post("/api/sites", h.Create)
+
+	code, body := doAuthzReq(t, r, http.MethodPost, "/api/sites",
+		map[string]any{"name": "Demo", "slug": "demo-site"})
+	if code != http.StatusBadRequest {
+		t.Fatalf("second admin with no workspace: status=%d, want 400 (body=%s)", code, body)
+	}
+	if !strings.Contains(body, "not in a workspace") {
+		t.Errorf("unhelpful refusal: %s", body)
+	}
+	sites, _ := q.ListSitesByWorkspace(context.Background(), clientWS)
+	if len(sites) != 0 {
+		t.Errorf("a site landed in the client workspace: %d", len(sites))
+	}
+}

@@ -205,3 +205,30 @@ func (q *Queries) RemoveSiteMember(ctx context.Context, arg RemoveSiteMemberPara
 	_, err := q.db.ExecContext(ctx, removeSiteMember, arg.SiteID, arg.UserID)
 	return err
 }
+
+const removeSiteMembershipsForWorkspaceUser = `-- name: RemoveSiteMembershipsForWorkspaceUser :execrows
+DELETE FROM site_members
+WHERE site_members.user_id = ?
+  AND site_members.site_id IN (SELECT s.id FROM sites s WHERE s.workspace_id = ?)
+`
+
+type RemoveSiteMembershipsForWorkspaceUserParams struct {
+	UserID      string `json:"user_id"`
+	WorkspaceID string `json:"workspace_id"`
+}
+
+// Revokes a user's per-site grants for every site in one workspace. Removing
+// someone from workspace_members alone did NOT do this: site_members is
+// checked first in SiteAccessMiddleware and short-circuits, and a site's
+// creator is auto-granted role='owner' there. So a removed member kept
+// permanent owner access to every site they had created, while the admin UI
+// promised "will lose access to every site in this workspace". Authz is a
+// live DB read per request, so this is not a session that expires; the row
+// has to go.
+func (q *Queries) RemoveSiteMembershipsForWorkspaceUser(ctx context.Context, arg RemoveSiteMembershipsForWorkspaceUserParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, removeSiteMembershipsForWorkspaceUser, arg.UserID, arg.WorkspaceID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}

@@ -1081,15 +1081,13 @@ func (h *SiteHandler) resolveWorkspaceForCreate(r *http.Request, requested strin
 	}
 	ids, err := h.queries.ListWorkspaceIDsForUser(r.Context(), user.ID)
 	if err != nil || len(ids) == 0 {
-		// Admin path falls back to the first existing workspace
-		// (the OSS auto-bootstrap one).
-		if user.Role == "admin" {
-			all, err := h.queries.ListAllWorkspaces(r.Context())
-			if err == nil && len(all) > 0 {
-				return all[0].ID, nil
-			}
-		}
-		return "", errors.New("user has no workspace; create one first")
+		// Deliberately NO estate-wide fallback. ensureDefaultWorkspace
+		// backfills a membership for the FIRST admin only, so a second admin
+		// (a colleague added later) has none, and "first workspace in the
+		// estate" is somebody else's, typically the one holding a client's
+		// site. Silently creating their sites in a client's workspace is
+		// worse than telling them to make their own.
+		return "", errors.New("you are not in a workspace yet; create one first")
 	}
 	return ids[0], nil
 }
