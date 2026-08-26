@@ -266,6 +266,14 @@ func captureScreenshot(ctx context.Context, target string, req ScreenshotRequest
 		chromedp.Flag("webrtc-ip-handling-policy", "disable_non_proxied_udp"),
 		chromedp.WindowSize(vw, vh),
 	)
+	// On macOS, --headless since Chrome 112 launches the FULL browser binary,
+	// which lives in an .app bundle and therefore registers with the Dock and
+	// makes macOS clone the bundle to validate its signature on every launch.
+	// chrome-headless-shell is a bare binary with no bundle: no Dock icon, and
+	// measured 0 code-sign clones per launch against full Chrome's 1.
+	if p := os.Getenv("CHROME_PATH"); p != "" {
+		opts = append(opts, chromedp.ExecPath(p))
+	}
 	allocCtx, allocCancel := chromedp.NewExecAllocator(captureCtx, opts...)
 	defer allocCancel()
 	browserCtx, browserCancel := chromedp.NewContext(allocCtx)
