@@ -266,12 +266,24 @@ func captureScreenshot(ctx context.Context, target string, req ScreenshotRequest
 		chromedp.Flag("webrtc-ip-handling-policy", "disable_non_proxied_udp"),
 		chromedp.WindowSize(vw, vh),
 	)
-	// On macOS, --headless since Chrome 112 launches the FULL browser binary,
-	// which lives in an .app bundle and therefore registers with the Dock and
-	// makes macOS clone the bundle to validate its signature on every launch.
-	// chrome-headless-shell is a bare binary with no bundle: no Dock icon, and
-	// measured 0 code-sign clones per launch against full Chrome's 1.
-	if p := os.Getenv("CHROME_PATH"); p != "" {
+	// DELIBERATELY NOT CHROME_PATH, which svar and leadscraper both honour.
+	//
+	// chrome-headless-shell has no .app bundle, so on macOS it avoids the Dock
+	// icon and the per-launch code-sign clone that full Chrome incurs -- but it
+	// SILENTLY IGNORES --webrtc-ip-handling-policy. Measured on two binaries
+	// from the same build: full Chrome 20 STUN datagrams, 0 with the flag;
+	// headless shell 20, and 24 with the flag. That flag is the only thing
+	// closing UDP here (see the comment on it below and screenshot_egress.go):
+	// the proxy is TCP-only, so without it a rendered page can sweep internal
+	// ranges over stun: URLs and read liveness off ICE-candidate timing without
+	// the proxy ever seeing a packet.
+	//
+	// Reading the estate-wide CHROME_PATH here would let a setting made for
+	// quieter scraping silently disarm a security boundary in an unrelated
+	// component. A screenshot-specific variable makes that an explicit,
+	// local decision instead. Leave it unset unless you have verified the
+	// binary enforces the policy.
+	if p := os.Getenv("SCREENSHOT_CHROME_PATH"); p != "" {
 		opts = append(opts, chromedp.ExecPath(p))
 	}
 	allocCtx, allocCancel := chromedp.NewExecAllocator(captureCtx, opts...)
