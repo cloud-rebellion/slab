@@ -18,6 +18,12 @@
 # architecture. Pinned 2026-07-29 = bun 1.3.14.
 FROM oven/bun:1-alpine@sha256:5acc90a93e91ff07bf72aa90a7c9f0fa189765aec90b47bdbf2152d2196383c0 AS frontend
 WORKDIR /app/frontend
+ARG PUBLIC_FLARE_DSN
+ARG PUBLIC_FLARE_ENVIRONMENT=production
+ARG PUBLIC_FLARE_RELEASE=development
+ENV PUBLIC_FLARE_DSN=${PUBLIC_FLARE_DSN} \
+    PUBLIC_FLARE_ENVIRONMENT=${PUBLIC_FLARE_ENVIRONMENT} \
+    PUBLIC_FLARE_RELEASE=${PUBLIC_FLARE_RELEASE}
 COPY frontend/package.json frontend/bun.lock ./
 RUN --mount=type=cache,target=/root/.bun/install/cache \
     bun install --frozen-lockfile
