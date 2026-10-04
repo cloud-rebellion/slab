@@ -29,7 +29,6 @@ const maxTextBytes = 2048;
 const maxFrames = 32;
 const duplicateWindowMs = 10_000;
 const defaultMaxEventsPerMinute = 20;
-
 function boundedText(value: unknown, fallback: string): string {
 	const text = typeof value === 'string' ? value : fallback;
 	const scrubbed = text
@@ -41,14 +40,43 @@ function boundedText(value: unknown, fallback: string): string {
 	return scrubbed.length > maxTextBytes ? `${scrubbed.slice(0, maxTextBytes)}…` : scrubbed;
 }
 
+// Browser paths are untrusted. A nonnumeric signing token or customer slug can
+// look like an ordinary word, so only these fixed route words may cross the
+// public DSN boundary. Everything else becomes a template segment.
+const safeRouteSegments = new Set([
+	'_app', 'accept-invite', 'account', 'accounts', 'admin', 'alerts', 'api', 'app',
+	'assets', 'auth', 'build', 'business-health', 'callbacks', 'chunks', 'connectors',
+	'contacts', 'contracts', 'customers', 'dashboards', 'deals', 'docs', 'documents',
+	'dsn', 'entry', 'files', 'forgot-password', 'immutable', 'integrations', 'issues',
+	'jobs', 'login', 'logout', 'logs', 'members', 'metrics', 'monitors', 'nodes',
+	'overview', 'pipelines', 'profile', 'projects', 'public', 'register', 'releases',
+	'reset-password', 'runs', 'search', 'settings', 'sign', 'spans', 'static', 'tasks',
+	'teams', 'traces', 'users', 'verify', 'webhooks', 'workflows'
+]);
+
+/** Return a bounded route template without arbitrary path segments. */
+export function scrubFlareBrowserPath(raw: string, maxLength = 512): string {
+	let path = raw;
+	try {
+		// Decode at most twice so encoded separators cannot hide path segments.
+		for (let i = 0; i < 2; i++) {
+			const decoded = decodeURIComponent(path);
+			if (decoded === path) break;
+			path = decoded;
+		}
+	} catch {
+		// An invalid escape is still safe because unknown segments are replaced.
+	}
+	const segments = path.split('/').filter(Boolean).slice(0, 12);
+	const template = segments.map((segment) => safeRouteSegments.has(segment.toLowerCase())
+		? segment.toLowerCase() : ':id');
+	return (`/${template.join('/')}`).slice(0, Math.max(1, maxLength));
+}
+
 function safePage(): string | undefined {
 	if (typeof location === 'undefined') return undefined;
-	// Query strings and fragments routinely contain tokens and user input. The
-	// path is still useful for grouping, but collapse common identifier-shaped
-	// segments so a customer id cannot become an unbounded tag.
-	const path = location.pathname
-		.replace(/\/(?:\d{2,}|[0-9a-f]{8}-[0-9a-f-]{13,}|[0-9a-f]{16,})(?=\/|$)/gi, '/:id')
-		.slice(0, 512);
+	// Query strings, fragments, and arbitrary path segments can all carry tokens.
+	const path = scrubFlareBrowserPath(location.pathname);
 	return `${location.origin}${path}`;
 }
 
@@ -86,9 +114,9 @@ function eventID(): string {
 function frameFilename(raw: string): string {
 	try {
 		const url = new URL(raw, typeof location === 'undefined' ? undefined : location.href);
-		return `${url.origin}${url.pathname}`.slice(0, 512);
+		return `${url.origin}${scrubFlareBrowserPath(url.pathname)}`.slice(0, 512);
 	} catch {
-		return boundedText(raw, 'unknown').split('?')[0]?.split('#')[0] ?? 'unknown';
+		return 'unknown';
 	}
 }
 
@@ -231,7 +259,7 @@ export function installFlareBrowserCapture(options: FlareBrowserCaptureOptions):
 		try {
 			if (raw) {
 				const url = new URL(raw, location.href);
-				resource = `${element}:${url.origin}${url.pathname}`.slice(0, 512);
+				resource = `${element}:${url.origin}${scrubFlareBrowserPath(url.pathname)}`.slice(0, 512);
 			}
 		} catch {
 			resource = element;
