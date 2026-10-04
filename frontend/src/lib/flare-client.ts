@@ -29,6 +29,8 @@ const maxTextBytes = 2048;
 const maxFrames = 32;
 const duplicateWindowMs = 10_000;
 const defaultMaxEventsPerMinute = 20;
+const browserCanaryPages = new WeakSet<Window>();
+const browserCanaryMessage = 'Atomicsite Flare browser source-map canary v1';
 function boundedText(value: unknown, fallback: string): string {
 	const text = typeof value === 'string' ? value : fallback;
 	const scrubbed = text
@@ -274,6 +276,8 @@ interface FlareBoundaryEventDetail {
  * in the bundle. The DSN is an ingest-only credential and is rate limited by
  * Flare. React error boundaries can report handled render failures by
  * dispatching `flare:exception` with `{ error, componentStack }`.
+ * An operator can dispatch `flare:browser-canary` to report one fixed,
+ * handled error per page. Its stack originates in this loaded client module.
  */
 export function installFlareBrowserCapture(options: FlareBrowserCaptureOptions): () => void {
 	if (typeof window === 'undefined' || !options.dsn?.trim()) return () => {};
@@ -312,15 +316,24 @@ export function installFlareBrowserCapture(options: FlareBrowserCaptureOptions):
 		const detail = (event as CustomEvent<FlareBoundaryEventDetail>).detail;
 		if (detail) send(detail.error ?? new Error('React error boundary caught an error'), detail.componentStack);
 	};
+	const onCanary = () => {
+		if (browserCanaryPages.has(window)) return;
+		browserCanaryPages.add(window);
+		const error = new Error(browserCanaryMessage);
+		error.name = 'FlareBrowserCanary';
+		send(error);
+	};
 	window.addEventListener('error', onError);
 	window.addEventListener('unhandledrejection', onRejection);
 	if (options.captureResourceErrors !== false) window.addEventListener('error', onResourceError, true);
 	window.addEventListener('flare:exception', onBoundary);
+	window.addEventListener('flare:browser-canary', onCanary);
 	return () => {
 		window.removeEventListener('error', onError);
 		window.removeEventListener('unhandledrejection', onRejection);
 		if (options.captureResourceErrors !== false) window.removeEventListener('error', onResourceError, true);
 		window.removeEventListener('flare:exception', onBoundary);
+		window.removeEventListener('flare:browser-canary', onCanary);
 		delete (window as Window & { [marker]?: boolean })[marker];
 	};
 }
