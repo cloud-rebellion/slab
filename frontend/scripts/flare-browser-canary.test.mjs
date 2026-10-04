@@ -49,8 +49,12 @@ test('browser canary reports a fixed handled error once per page, even after rei
 test('asset naming accepts a same-origin compiled script only with loaded-script evidence', async () => {
   const origin = 'https://slab.example';
   const script = `${origin}/_app/immutable/chunks/flare-client.ABCDEFGH.js`;
-  setGlobal('document', { scripts: [{ src: script }] });
-  expect(await flareBrowserAssetName(script, origin)).toMatch(/^flare-asset-sha256:[0-9a-f]{64}$/);
+  const scriptWithQuery = `${script}?cache=1`;
+  setGlobal('document', { scripts: [{ src: script }, { src: scriptWithQuery }] });
+  // This is the Stage uploader's SHA-256 of origin + pathname, with no query.
+  const assetName = 'flare-asset-sha256:5a9ae4016a92d4f884925bf88936b481ae493da73e8543f748f8a97062067b3a';
+  expect(await flareBrowserAssetName(script, origin)).toBe(assetName);
+  expect(await flareBrowserAssetName(scriptWithQuery, origin)).toBe(assetName);
   expect(await flareBrowserAssetName(`${origin}/_app/immutable/chunks/forged.ABCDEFGH.js`, origin)).toBeUndefined();
   expect(await flareBrowserAssetName('https://other.example/_app/immutable/chunks/flare-client.ABCDEFGH.js', origin)).toBeUndefined();
 });
