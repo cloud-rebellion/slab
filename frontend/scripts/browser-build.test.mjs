@@ -20,7 +20,7 @@ async function fixture() {
   const publicDir = join(root, 'build');
   const mapsDir = join(root, 'source-maps');
   const asset = '_app/immutable/chunks/app.12345678.js';
-  const script = 'throw new Error("test")';
+  const script = `const dsn = "${dsn}"; const release = "${release}"; throw new Error("test")`;
   const map = '{"version":3,"sources":["src/app.ts"],"names":[],"mappings":"AAAA"}';
   await mkdir(join(publicDir, '_app/immutable/chunks'), { recursive: true });
   await writeFile(join(publicDir, asset), script);
@@ -60,6 +60,17 @@ test('configured browser ingest requires an exact source revision', async () => 
   await stageSourceMaps(publicDir, mapsDir);
   await expect(writeBuildManifest(publicDir, mapsDir, join(root, 'manifest.json'), dsn, 'development'))
     .rejects.toThrow('full source commit');
+});
+
+test('manifest rejects a bundle that omits configured browser capture', async () => {
+  const { root, publicDir, mapsDir, asset } = await fixture();
+  await stageSourceMaps(publicDir, mapsDir);
+  await writeFile(join(publicDir, asset), `const release = "${release}"`);
+  await expect(writeBuildManifest(publicDir, mapsDir, join(root, 'manifest.json'), dsn, release))
+    .rejects.toThrow('public scripts do not contain');
+  await writeFile(join(publicDir, asset), `const dsn = "${dsn}"`);
+  await expect(writeBuildManifest(publicDir, mapsDir, join(root, 'manifest.json'), dsn, release))
+    .rejects.toThrow('public scripts do not contain');
 });
 
 test('manifest refuses public maps or maps without a matching public script', async () => {

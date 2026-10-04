@@ -83,6 +83,19 @@ export async function writeBuildManifest(
       throw new Error('each JavaScript source map must match a public script');
     }
   }
+  if (browserDSN?.trim()) {
+    let compiledDSN = false;
+    let compiledRelease = false;
+    for (const name of Object.keys(publicFiles)) {
+      if (!name.endsWith('.js')) continue;
+      const script = await readFile(join(publicDir, name), 'utf8');
+      compiledDSN ||= script.includes(browserDSN.trim());
+      compiledRelease ||= script.includes(exactRelease);
+    }
+    if (!compiledDSN || !compiledRelease) {
+      throw new Error('public scripts do not contain the configured browser DSN and exact release');
+    }
+  }
   const manifest = {
     version: 2,
     program_id: 'atomicsite',

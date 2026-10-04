@@ -4,6 +4,9 @@ import { defineConfig } from 'vite';
 
 export default defineConfig({
 	plugins: [tailwindcss(), sveltekit()],
+	// Vite only exposes VITE_* by default. The browser bridge reads these
+	// public, build-time values through import.meta.env.
+	envPrefix: ['VITE_', 'PUBLIC_FLARE_'],
 	server: {
 		port: 5174,
 		proxy: {
