@@ -111,33 +111,70 @@ function eventID(): string {
 	return `${Date.now().toString(16)}${Math.random().toString(16).slice(2)}`.slice(0, 32).padEnd(32, '0');
 }
 
-function frameFilename(raw: string): string {
+// A stack frame needs a stable asset identity to select its release's source
+// map, but script URLs can carry customer IDs or signing tokens. Only known
+// build output shapes on the current app origin qualify. An arbitrary .js URL
+// from a route, a sourceURL comment, or another origin becomes `unknown`.
+// The upload helper in examples/browser/source-map-name.mjs uses this same
+// `origin + pathname` input so CI can name the matching artifact.
+const compiledScriptPaths = [
+	/^\/_app\/immutable\/(?:chunks|entry|nodes)\/(?:[A-Za-z0-9_-]{1,64}\.)?[A-Za-z0-9_-]{8,80}\.m?js$/,
+	/^\/_astro\/(?:[A-Za-z0-9_-]{1,64}\.)?[A-Za-z0-9_-]{8,80}\.m?js$/,
+	/^\/(?:assets|build\/assets|static\/js)\/[A-Za-z0-9._-]{1,64}[-.][A-Za-z0-9_-]{8,80}\.m?js$/
+];
+
+function wasLoadedAsScript(url: URL): boolean {
+	// A sourceURL inside eval can claim any filename. Require evidence that the
+	// browser loaded this exact URL as a script or module preload on this page.
+	const loadedURL = `${url.origin}${url.pathname}${url.search}`;
+	if (typeof document !== 'undefined' && document.scripts) {
+		for (const script of Array.from(document.scripts).slice(0, 256)) {
+			try {
+				const src = new URL(script.src);
+				if (`${src.origin}${src.pathname}${src.search}` === loadedURL) return true;
+			} catch {
+				// Inline scripts have no src.
+			}
+		}
+	}
+	if (typeof performance !== 'undefined' && typeof performance.getEntriesByName === 'function') {
+		return performance.getEntriesByName(loadedURL, 'resource').some((entry) =>
+			['script', 'link'].includes((entry as PerformanceResourceTiming).initiatorType));
+	}
+	return false;
+}
+
+export async function flareBrowserAssetName(raw: string, pageOrigin = typeof location === 'undefined' ? '' : location.origin): Promise<string | undefined> {
 	try {
 		const url = new URL(raw, typeof location === 'undefined' ? undefined : location.href);
-		return `${url.origin}${scrubFlareBrowserPath(url.pathname)}`.slice(0, 512);
+		if (!['http:', 'https:'].includes(url.protocol) || url.origin !== pageOrigin ||
+			!compiledScriptPaths.some((pattern) => pattern.test(url.pathname)) || !wasLoadedAsScript(url)) return undefined;
+		if (url.pathname.length > 2048 || typeof crypto === 'undefined' || !crypto.subtle) return undefined;
+		const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(url.origin + url.pathname));
+		return `flare-asset-sha256:${Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('')}`;
 	} catch {
-		return 'unknown';
+		return undefined;
 	}
 }
 
-function parseStack(stack: string | undefined): StackFrame[] {
+async function parseStack(stack: string | undefined): Promise<StackFrame[]> {
 	if (!stack) return [];
-	const frames: StackFrame[] = [];
+	const matched: Array<{ fn: string; file: string; lineno: number; colno?: number }> = [];
 	for (const line of stack.split('\n').slice(0, maxFrames)) {
 		const trimmed = line.trim();
 		let match = trimmed.match(/^at\s+(.*?)\s+\(?(.+?):(\d+)(?::(\d+))?\)?$/);
 		if (!match) match = trimmed.match(/^(.*?)@(.+?):(\d+)(?::(\d+))?$/);
 		if (!match) continue;
 		const [, fn, file, lineNumber, columnNumber] = match;
-		frames.push({
-			filename: frameFilename(file ?? ''),
-			function: boundedText(fn || '<anonymous>', '<anonymous>'),
-			lineno: Number(lineNumber),
-			colno: columnNumber ? Number(columnNumber) : undefined,
-			in_app: true
-		});
+		matched.push({ fn: fn || '<anonymous>', file: file ?? '', lineno: Number(lineNumber), colno: columnNumber ? Number(columnNumber) : undefined });
 	}
-	return frames;
+	return Promise.all(matched.map(async ({ fn, file, lineno, colno }) => ({
+		filename: await flareBrowserAssetName(file) ?? 'unknown',
+		function: boundedText(fn, '<anonymous>'),
+		lineno,
+		colno,
+		in_app: true
+	})));
 }
 
 function errorDetails(value: unknown): { type: string; message: string; stack?: string } {
@@ -176,46 +213,51 @@ function installSender(dsn: ParsedDsn, options: FlareBrowserCaptureOptions): (va
 		if (previous && now - previous < duplicateWindowMs) return;
 		recent.set(signature, now);
 		sentInWindow++;
+		const page = safePage();
 
-		const payload = JSON.stringify({
-			event_id: eventID(),
-			platform: 'javascript',
-			level: 'error',
-			environment: boundedText(options.environment, 'production'),
-			release: boundedText(options.release, ''),
-			timestamp: now / 1000,
-			message: details.message,
-			exception: {
-				values: [{
-					type: details.type,
-					value: details.message,
-					stacktrace: { frames: parseStack(stack ?? details.stack) }
-				}]
-			},
-			request: safePage() ? { url: safePage() } : undefined,
-			tags: { source: 'flare-browser-capture' }
-		});
-
-		// text/plain is a CORS-safelisted request, so cross-origin ingest does not
-		// need a preflight. sendBeacon is the most reliable path during unload;
-		// keepalive fetch covers browsers that reject the beacon queue.
-		const body = new Blob([payload], { type: 'text/plain' });
-		let queued = false;
-		if (typeof navigator !== 'undefined' && typeof navigator.sendBeacon === 'function') {
-			queued = navigator.sendBeacon(dsn.endpoint, body);
-		}
-		if (!queued && typeof fetch === 'function') {
-			void fetch(dsn.endpoint, {
-				method: 'POST',
-				body: payload,
-				headers: { 'Content-Type': 'text/plain' },
-				mode: 'no-cors',
-				credentials: 'omit',
-				keepalive: true
-			}).catch(() => {
-				// Reporting must never surface as an application error or recurse.
+		void parseStack(stack ?? details.stack).then((frames) => {
+			const payload = JSON.stringify({
+				event_id: eventID(),
+				platform: 'javascript',
+				level: 'error',
+				environment: boundedText(options.environment, 'production'),
+				release: boundedText(options.release, ''),
+				timestamp: now / 1000,
+				message: details.message,
+				exception: {
+					values: [{
+						type: details.type,
+						value: details.message,
+						stacktrace: { frames }
+					}]
+				},
+					request: page ? { url: page } : undefined,
+				tags: { source: 'flare-browser-capture' }
 			});
-		}
+
+			// text/plain is a CORS-safelisted request, so cross-origin ingest does not
+			// need a preflight. sendBeacon is the most reliable path during unload;
+			// keepalive fetch covers browsers that reject the beacon queue.
+			const body = new Blob([payload], { type: 'text/plain' });
+			let queued = false;
+			if (typeof navigator !== 'undefined' && typeof navigator.sendBeacon === 'function') {
+				queued = navigator.sendBeacon(dsn.endpoint, body);
+			}
+			if (!queued && typeof fetch === 'function') {
+				void fetch(dsn.endpoint, {
+					method: 'POST',
+					body: payload,
+					headers: { 'Content-Type': 'text/plain' },
+					mode: 'no-cors',
+					credentials: 'omit',
+					keepalive: true
+				}).catch(() => {
+					// Reporting must never surface as an application error or recurse.
+				});
+			}
+		}).catch(() => {
+			// A stack parser or browser crypto failure cannot become an app error.
+		});
 	};
 }
 
