@@ -1,5 +1,7 @@
 cmd/server/frontend/build
 frontend/build
+frontend/source-maps
+frontend/build-manifest.json
 frontend/node_modules
 frontend/.svelte-kit
 bin

@@ -28,7 +28,12 @@ COPY frontend/package.json frontend/bun.lock ./
 RUN --mount=type=cache,target=/root/.bun/install/cache \
     bun install --frozen-lockfile
 COPY frontend/ .
-RUN bun run build
+RUN bun scripts/write-build-manifest.mjs --validate-config && \
+    bun run build --sourcemap hidden && \
+    bun scripts/stage-source-maps.mjs && \
+    bun scripts/write-build-manifest.mjs
+# This named stage retains private maps for exact-release symbol upload. Only
+# the hash manifest crosses into the runtime image; Go embeds the public build.
 
 # Stage 2: Go server. The frontend build is copied in for go:embed.
 #
@@ -67,6 +72,7 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 # stack are required for the headless screenshot tool. bun is copied
 # from the official image so the per-site Astro build can run.
 FROM debian:bookworm-slim
+COPY --chmod=0444 --from=frontend /app/frontend/build-manifest.json /etc/atomicsite/browser-build-manifest.json
 RUN apt-get update -qq \
     && apt-get install -y -qq --no-install-recommends \
        ca-certificates tzdata \

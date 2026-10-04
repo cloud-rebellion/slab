@@ -10,6 +10,8 @@ build/
 out/
 frontend/.svelte-kit/
 frontend/build/
+frontend/source-maps/
+frontend/build-manifest.json
 cmd/server/frontend/build/
 
 # Environment
