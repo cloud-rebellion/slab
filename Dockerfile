@@ -48,7 +48,7 @@ RUN bun scripts/write-build-manifest.mjs --validate-config && \
 # external linker pulling in libduckdb statically). We force pure
 # external linking with -extldflags '-static' so the produced binary
 # can run on alpine 3.20 without dragging glibc.
-FROM golang:1.26.6-bookworm AS backend
+FROM golang:1.26.10-bookworm@sha256:632dff7351799a5a9954a48dc06670ade72ee44e8c351cdc0e5a57af2fea21af AS backend
 WORKDIR /app
 RUN apt-get update -qq \
     && apt-get install -y -qq --no-install-recommends \

@@ -2,13 +2,11 @@ module github.com/bright-interaction/slab
 
 go 1.26.3
 
-// Pinned to the toolchain the container image already builds with. Without this,
-// go.mod permits an older Go and govulncheck reports the standard-library
-// vulnerabilities fixed in 1.26.6 (net/http ReadHeaderTimeout on the unencrypted
-// HTTP/2 check, encoding/xml and encoding/asn1 decode recursion, x/net/idna
-// Punycode label rejection) as reachable. The pin makes the
-// version that keeps this safe a guarantee rather than a property of the base image.
-toolchain go1.26.6
+// Pinned to the exact toolchain the container image builds with. Go 1.26.10 is
+// the first patch in this cohort that closes every reachable standard-library
+// advisory reported for Slab on 2026-10-26, including GO-2026-6809. Keep this
+// directive, the Docker builder digest, and Stage's Slab scan image in lockstep.
+toolchain go1.26.10
 
 require (
 	github.com/HugoSmits86/nativewebp v1.2.1
