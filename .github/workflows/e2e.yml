@@ -1,61 +1,125 @@
-name: Atomicsite E2E
+name: Slab E2E
 
 on:
   push:
     branches: [main]
     paths:
       - 'atomicsite/**'
+      - '.github/workflows/**'
+      - 'go.mod'
+      - 'go.sum'
+      - 'Makefile'
+      - 'cmd/**'
+      - 'ee/**'
+      - 'frontend/**'
+      - 'internal/**'
+      - 'scripts/**'
+      - 'tests/**'
   pull_request:
     paths:
       - 'atomicsite/**'
+      - '.github/workflows/**'
+      - 'go.mod'
+      - 'go.sum'
+      - 'Makefile'
+      - 'cmd/**'
+      - 'ee/**'
+      - 'frontend/**'
+      - 'internal/**'
+      - 'scripts/**'
+      - 'tests/**'
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
+  layout:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      context: ${{ steps.scope.outputs.context }}
+      root: ${{ steps.scope.outputs.root }}
+      go_mod: ${{ steps.scope.outputs.go_mod }}
+      go_sum: ${{ steps.scope.outputs.go_sum }}
+      frontend: ${{ steps.scope.outputs.frontend }}
+      e2e: ${{ steps.scope.outputs.e2e }}
+      ee_applicable: ${{ steps.scope.outputs.ee_applicable }}
+      go_matrix: ${{ steps.scope.outputs.go_matrix }}
+      ee_reason: ${{ steps.scope.outputs.ee_reason }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prove source context and keep the original build lanes
+        id: scope
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PYTHONDONTWRITEBYTECODE=1
+          private=atomicsite/scripts/ci-context.py
+          public=scripts/ci-context.py
+          if [[ ( -e "$private" || -L "$private" ) && ( -e "$public" || -L "$public" ) ]]; then
+            echo 'Ambiguous Slab CI context scripts' >&2
+            exit 1
+          elif [[ -f "$private" && ! -L "$private" ]]; then
+            script="$private"
+          elif [[ -f "$public" && ! -L "$public" ]]; then
+            script="$public"
+          else
+            echo 'Missing regular Slab CI context script' >&2
+            exit 1
+          fi
+          python3 "$(dirname "$script")/test_ci_context.py"
+          python3 "$script" --workspace "$GITHUB_WORKSPACE" --github-output "$GITHUB_OUTPUT"
+
   e2e:
+    needs: [layout]
     runs-on: ubuntu-latest
     timeout-minutes: 25
-    defaults:
-      run:
-        working-directory: atomicsite
+    env:
+      PROJECT_ROOT: ${{ needs.layout.outputs.root }}
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-go@v5
         with:
-          go-version-file: atomicsite/go.mod
+          go-version-file: ${{ needs.layout.outputs.go_mod }}
           cache: true
-          cache-dependency-path: atomicsite/go.sum
+          cache-dependency-path: ${{ needs.layout.outputs.go_sum }}
 
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.3.9
 
       - name: Install frontend deps
-        working-directory: atomicsite/frontend
+        working-directory: ${{ needs.layout.outputs.frontend }}
         run: bun install --frozen-lockfile
 
       - name: Build frontend (embedded into Go binary)
-        working-directory: atomicsite
+        working-directory: ${{ needs.layout.outputs.root }}
         run: make frontend
 
       - name: Build atomicsite Go binary
-        working-directory: atomicsite
+        working-directory: ${{ needs.layout.outputs.root }}
         run: go build -o bin/atomicsite ./cmd/server
 
       - name: Install E2E deps
-        working-directory: atomicsite/tests/e2e
+        working-directory: ${{ needs.layout.outputs.e2e }}
         run: bun install --frozen-lockfile
 
       - name: Patch playwright-core for Bun compat
-        working-directory: atomicsite/tests/e2e
+        working-directory: ${{ needs.layout.outputs.e2e }}
         run: bun scripts/patch-playwright.mjs
 
       - name: Install Playwright Chromium
-        working-directory: atomicsite/tests/e2e
+        working-directory: ${{ needs.layout.outputs.e2e }}
         run: bunx playwright install --with-deps chromium
 
+      - name: Verify temporary loopback TLS fixture lifecycle
+        working-directory: ${{ needs.layout.outputs.e2e }}
+        run: bun test scripts/tls-fixture.test.mjs
+
       - name: Run Playwright E2E
-        working-directory: atomicsite/tests/e2e
+        working-directory: ${{ needs.layout.outputs.e2e }}
         env:
           CI: '1'
         run: bunx playwright test
@@ -65,7 +129,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: playwright-report
-          path: atomicsite/tests/e2e/playwright-report/
+          path: ${{ needs.layout.outputs.root }}/tests/e2e/playwright-report/
           retention-days: 30
 
       - name: Upload Playwright traces
@@ -73,5 +137,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: playwright-traces
-          path: atomicsite/tests/e2e/test-results/
+          path: ${{ needs.layout.outputs.root }}/tests/e2e/test-results/
           retention-days: 14

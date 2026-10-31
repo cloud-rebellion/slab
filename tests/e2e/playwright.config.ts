@@ -1,5 +1,8 @@
 import { defineConfig } from '@playwright/test';
 import path from 'node:path';
+import { currentTLSFixture } from './scripts/tls-fixture';
+
+const tlsFixture = currentTLSFixture();
 
 const TEST_PORT = process.env.TEST_PORT ?? '18290';
 const STUB_COOKIEPROOF_PORT = process.env.STUB_COOKIEPROOF_PORT ?? '18291';
@@ -28,7 +31,9 @@ export default defineConfig({
 	fullyParallel: false,
 	workers: 1,
 	retries: process.env.CI ? 1 : 0,
-	reporter: process.env.CI ? [['html', { open: 'never' }], ['list']] : 'list',
+	reporter: process.env.CI
+		? [['./tls-fixture-reporter.ts'], ['html', { open: 'never' }], ['list']]
+		: [['./tls-fixture-reporter.ts'], ['list']],
 	timeout: 60_000,
 	expect: { timeout: 8_000 },
 
@@ -57,7 +62,9 @@ export default defineConfig({
 			env: {
 				STUB_COOKIEPROOF_PORT,
 				STUB_CRM_PORT,
-				STUB_DOCKYARD_PORT
+				STUB_DOCKYARD_PORT,
+				SLAB_E2E_TLS_CERT_FILE: tlsFixture.certFile,
+				SLAB_E2E_TLS_KEY_FILE: tlsFixture.keyFile
 			}
 		},
 		{
@@ -94,7 +101,7 @@ export default defineConfig({
 				CRM_SYNC_MIN_INTERVAL_SECONDS: '1',
 				// Trust the self-signed cert the dockyard stub serves over TLS so
 				// internal/deploy/dockyard.go's outbound HTTPS calls succeed.
-				SSL_CERT_FILE: path.resolve(__dirname, 'fixtures/certs/stub-cert.pem'),
+				SSL_CERT_FILE: tlsFixture.certFile,
 				// Override the per-site nginx access log dir so the analytics parser
 				// can tail a path the test can append to (default /var/log/atomicsite
 				// is unwritable in CI).

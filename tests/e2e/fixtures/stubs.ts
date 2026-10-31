@@ -11,8 +11,6 @@
 import { serve, type Server } from 'bun';
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { readFileSync } from 'node:fs';
-import { join, dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
 
 type Call = {
 	method: string;
@@ -65,8 +63,11 @@ function jsonOk(data: unknown = { ok: true }, status = 200): Response {
 
 type StubOpts = { tls?: boolean };
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const certDir = join(__dirname, 'certs');
+const certFile = process.env.SLAB_E2E_TLS_CERT_FILE;
+const keyFile = process.env.SLAB_E2E_TLS_KEY_FILE;
+if (!certFile || !keyFile) {
+	throw new Error('Missing temporary TLS fixture from the Playwright configuration');
+}
 
 function makeServer(
 	label: keyof typeof calls,
@@ -90,8 +91,8 @@ function makeServer(
 	};
 	if (opts.tls) {
 		cfg.tls = {
-			cert: readFileSync(join(certDir, 'stub-cert.pem')),
-			key: readFileSync(join(certDir, 'stub-key.pem'))
+			cert: readFileSync(certFile),
+			key: readFileSync(keyFile)
 		};
 	}
 	return serve(cfg);

@@ -10,51 +10,115 @@
 # - Tests run with -race -count=1 to catch data races and avoid stale
 #   cached results.
 
-name: Atomicsite OSS CI
+name: Slab OSS CI
 
 on:
   push:
     branches: [main]
     paths:
       - 'atomicsite/**'
+      - '.github/workflows/**'
+      - 'go.mod'
+      - 'go.sum'
+      - 'Makefile'
+      - 'cmd/**'
+      - 'ee/**'
+      - 'frontend/**'
+      - 'internal/**'
+      - 'scripts/**'
+      - 'tests/**'
   pull_request:
     paths:
       - 'atomicsite/**'
+      - '.github/workflows/**'
+      - 'go.mod'
+      - 'go.sum'
+      - 'Makefile'
+      - 'cmd/**'
+      - 'ee/**'
+      - 'frontend/**'
+      - 'internal/**'
+      - 'scripts/**'
+      - 'tests/**'
   workflow_dispatch:
 
-defaults:
-  run:
-    working-directory: atomicsite
+permissions:
+  contents: read
 
 jobs:
+  layout:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      context: ${{ steps.scope.outputs.context }}
+      root: ${{ steps.scope.outputs.root }}
+      go_mod: ${{ steps.scope.outputs.go_mod }}
+      go_sum: ${{ steps.scope.outputs.go_sum }}
+      frontend: ${{ steps.scope.outputs.frontend }}
+      e2e: ${{ steps.scope.outputs.e2e }}
+      ee_applicable: ${{ steps.scope.outputs.ee_applicable }}
+      go_matrix: ${{ steps.scope.outputs.go_matrix }}
+      ee_reason: ${{ steps.scope.outputs.ee_reason }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prove source context and keep the original build lanes
+        id: scope
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PYTHONDONTWRITEBYTECODE=1
+          private=atomicsite/scripts/ci-context.py
+          public=scripts/ci-context.py
+          if [[ ( -e "$private" || -L "$private" ) && ( -e "$public" || -L "$public" ) ]]; then
+            echo 'Ambiguous Slab CI context scripts' >&2
+            exit 1
+          elif [[ -f "$private" && ! -L "$private" ]]; then
+            script="$private"
+          elif [[ -f "$public" && ! -L "$public" ]]; then
+            script="$public"
+          else
+            echo 'Missing regular Slab CI context script' >&2
+            exit 1
+          fi
+          python3 "$(dirname "$script")/test_ci_context.py"
+          python3 "$script" --workspace "$GITHUB_WORKSPACE" --github-output "$GITHUB_OUTPUT"
+
   go-test:
+    needs: [layout]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     strategy:
       fail-fast: false
-      matrix:
-        build_tags: ['', 'ee']
+      matrix: ${{ fromJSON(needs.layout.outputs.go_matrix) }}
+    env:
+      PROJECT_ROOT: ${{ needs.layout.outputs.root }}
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-go@v5
         with:
-          go-version-file: atomicsite/go.mod
+          go-version-file: ${{ needs.layout.outputs.go_mod }}
           cache: true
-          cache-dependency-path: atomicsite/go.sum
+          cache-dependency-path: ${{ needs.layout.outputs.go_sum }}
 
       - name: Install C++ toolchain (DuckDB CGO)
+        working-directory: ${{ needs.layout.outputs.root }}
         run: sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends build-essential
 
       - name: go vet (tags=${{ matrix.build_tags }})
+        working-directory: ${{ needs.layout.outputs.root }}
         run: go vet -tags='${{ matrix.build_tags }}' ./...
 
       - name: go test (tags=${{ matrix.build_tags }})
+        working-directory: ${{ needs.layout.outputs.root }}
         run: go test -tags='${{ matrix.build_tags }}' -race -count=1 ./...
 
   frontend-check:
+    needs: [layout]
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    env:
+      PROJECT_ROOT: ${{ needs.layout.outputs.root }}
     steps:
       - uses: actions/checkout@v4
 
@@ -63,21 +127,23 @@ jobs:
           bun-version: 1.3.9
 
       - name: Install frontend deps
-        working-directory: atomicsite/frontend
+        working-directory: ${{ needs.layout.outputs.frontend }}
         run: bun install --frozen-lockfile
 
       - name: svelte-check (zero errors gate)
-        working-directory: atomicsite/frontend
+        working-directory: ${{ needs.layout.outputs.frontend }}
         run: bunx svelte-check --tsconfig ./tsconfig.json --threshold error
 
       - name: TypeScript noEmit
-        working-directory: atomicsite/frontend
+        working-directory: ${{ needs.layout.outputs.frontend }}
         run: bunx tsc --noEmit
 
   frontend-build:
-    needs: [frontend-check]
+    needs: [layout, frontend-check]
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    env:
+      PROJECT_ROOT: ${{ needs.layout.outputs.root }}
     steps:
       - uses: actions/checkout@v4
 
@@ -86,46 +152,52 @@ jobs:
           bun-version: 1.3.9
 
       - name: Install frontend deps
-        working-directory: atomicsite/frontend
+        working-directory: ${{ needs.layout.outputs.frontend }}
         run: bun install --frozen-lockfile
 
       - name: Build SvelteKit admin SPA
-        working-directory: atomicsite/frontend
+        working-directory: ${{ needs.layout.outputs.frontend }}
         run: bun run build
 
       - name: Upload frontend build artifact
         uses: actions/upload-artifact@v4
         with:
           name: atomicsite-frontend-build
-          path: atomicsite/frontend/build/
+          path: ${{ needs.layout.outputs.root }}/frontend/build/
           retention-days: 7
 
   go-build:
-    needs: [go-test, frontend-build]
+    needs: [layout, go-test, frontend-build]
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    env:
+      PROJECT_ROOT: ${{ needs.layout.outputs.root }}
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-go@v5
         with:
-          go-version-file: atomicsite/go.mod
+          go-version-file: ${{ needs.layout.outputs.go_mod }}
           cache: true
-          cache-dependency-path: atomicsite/go.sum
+          cache-dependency-path: ${{ needs.layout.outputs.go_sum }}
 
       - name: Install C++ toolchain (DuckDB CGO)
+        working-directory: ${{ needs.layout.outputs.root }}
         run: sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends build-essential
 
       - name: Download frontend build
         uses: actions/download-artifact@v4
         with:
           name: atomicsite-frontend-build
-          path: atomicsite/cmd/server/frontend/build/
+          path: ${{ needs.layout.outputs.root }}/cmd/server/frontend/build/
 
       - name: Build Go binary (OSS)
+        working-directory: ${{ needs.layout.outputs.root }}
         run: go build -o bin/atomicsite ./cmd/server
 
-      - name: Build Go binary (cloud, -tags ee)
+      - name: Build Go binary (cloud, -tags ee; private context only)
+        working-directory: ${{ needs.layout.outputs.root }}
+        if: needs.layout.outputs.ee_applicable == 'true'
         run: go build -tags ee -o bin/atomicsite-cloud ./cmd/server
 
       - name: Upload binaries
@@ -133,17 +205,19 @@ jobs:
         with:
           name: atomicsite-binaries
           path: |
-            atomicsite/bin/atomicsite
-            atomicsite/bin/atomicsite-cloud
+            ${{ needs.layout.outputs.root }}/bin/atomicsite
+            ${{ needs.layout.outputs.root }}/bin/atomicsite-cloud
           retention-days: 7
 
   quickstart-smoke:
     # Validates the README's "60-second quickstart" path: a fresh
     # checkout, no env vars, no DB. The binary should boot, seed the
     # admin user, and answer /api/health within 30s.
-    needs: [go-build]
+    needs: [layout, go-build]
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    env:
+      PROJECT_ROOT: ${{ needs.layout.outputs.root }}
     steps:
       - uses: actions/checkout@v4
 
@@ -151,23 +225,26 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: atomicsite-binaries
-          path: atomicsite/bin/
+          path: ${{ needs.layout.outputs.root }}/bin/
 
       - name: Make binary executable
-        run: chmod +x atomicsite/bin/atomicsite
+        working-directory: ${{ needs.layout.outputs.root }}
+        run: chmod +x bin/atomicsite
 
       - name: Boot atomicsite
+        working-directory: ${{ needs.layout.outputs.root }}
         run: |
-          mkdir -p atomicsite/data
+          mkdir -p data
           # ATOMICSITE_ENV=development: the smoke boot runs on loopback
           # with the sentinel secrets. Without this the binary correctly
           # refuses to start, because an absent ATOMICSITE_ENV means
           # production.
           ATOMICSITE_ENV=development \
-            ./atomicsite/bin/atomicsite > /tmp/atomicsite.log 2>&1 &
+            ./bin/atomicsite > /tmp/atomicsite.log 2>&1 &
           echo $! > /tmp/atomicsite.pid
 
       - name: Wait for /api/health to respond
+        working-directory: ${{ needs.layout.outputs.root }}
         run: |
           for i in $(seq 1 30); do
             if curl -fsS http://127.0.0.1:8080/api/health > /tmp/health.json; then
@@ -184,6 +261,7 @@ jobs:
           exit 1
 
       - name: Stop atomicsite
+        working-directory: ${{ needs.layout.outputs.root }}
         if: always()
         run: kill $(cat /tmp/atomicsite.pid) || true
 
@@ -198,9 +276,11 @@ jobs:
     # Untested backups are not backups; this job locks the contract
     # so a regression in VACUUM INTO or schema-versioning surfaces
     # before customers find out.
-    needs: [go-build]
+    needs: [layout, go-build]
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    env:
+      PROJECT_ROOT: ${{ needs.layout.outputs.root }}
     steps:
       - uses: actions/checkout@v4
 
@@ -208,18 +288,20 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: atomicsite-binaries
-          path: atomicsite/bin/
+          path: ${{ needs.layout.outputs.root }}/bin/
 
       - name: Make binary executable
-        run: chmod +x atomicsite/bin/atomicsite
+        working-directory: ${{ needs.layout.outputs.root }}
+        run: chmod +x bin/atomicsite
 
       - name: Boot first server + seed a row
+        working-directory: ${{ needs.layout.outputs.root }}
         run: |
           mkdir -p /tmp/atomicsite-source/data
           (cd /tmp/atomicsite-source && \
             ATOMICSITE_ENV=development \
             DATA_DIR=/tmp/atomicsite-source/data \
-            $GITHUB_WORKSPACE/atomicsite/bin/atomicsite > /tmp/source.log 2>&1) &
+            $GITHUB_WORKSPACE/$PROJECT_ROOT/bin/atomicsite > /tmp/source.log 2>&1) &
           echo $! > /tmp/source.pid
           # Wait for boot.
           for i in $(seq 1 30); do
@@ -241,15 +323,17 @@ jobs:
           wait $(cat /tmp/source.pid) 2>/dev/null || true
 
       - name: Run backup-db CLI
+        working-directory: ${{ needs.layout.outputs.root }}
         run: |
           mkdir -p /tmp/atomicsite-backup
           DATA_DIR=/tmp/atomicsite-source/data \
-            $GITHUB_WORKSPACE/atomicsite/bin/atomicsite backup-db \
+            $GITHUB_WORKSPACE/$PROJECT_ROOT/bin/atomicsite backup-db \
             --output=/tmp/atomicsite-backup/snapshot.db
           ls -la /tmp/atomicsite-backup/snapshot.db
           test -s /tmp/atomicsite-backup/snapshot.db
 
       - name: Restore snapshot into a second data dir + boot
+        working-directory: ${{ needs.layout.outputs.root }}
         run: |
           mkdir -p /tmp/atomicsite-restored/data
           cp /tmp/atomicsite-backup/snapshot.db /tmp/atomicsite-restored/data/atomicsite.db
@@ -258,7 +342,7 @@ jobs:
             DATA_DIR=/tmp/atomicsite-restored/data \
             PORT=8090 \
             BASE_URL=http://localhost:8090 \
-            $GITHUB_WORKSPACE/atomicsite/bin/atomicsite > /tmp/restored.log 2>&1) &
+            $GITHUB_WORKSPACE/$PROJECT_ROOT/bin/atomicsite > /tmp/restored.log 2>&1) &
           echo $! > /tmp/restored.pid
           for i in $(seq 1 30); do
             if curl -fsS http://127.0.0.1:8090/api/health >/dev/null; then break; fi
@@ -266,6 +350,7 @@ jobs:
           done
 
       - name: Verify the seeded admin still authenticates against the restore
+        working-directory: ${{ needs.layout.outputs.root }}
         run: |
           # If the round-trip was clean, the admin password from the
           # SOURCE server still works on the RESTORED server. Failure
@@ -283,6 +368,7 @@ jobs:
           echo "Restore verified: admin login round-tripped"
 
       - name: Verify schema_versions table survives
+        working-directory: ${{ needs.layout.outputs.root }}
         run: |
           # The schema_versions row exists on every healthy boot
           # (cmd/server/main.go records it). Its survival in the
@@ -290,6 +376,7 @@ jobs:
           curl -fsS http://127.0.0.1:8090/api/health | grep -q '"sqlite":"ok"'
 
       - name: Stop both servers
+        working-directory: ${{ needs.layout.outputs.root }}
         if: always()
         run: |
           kill $(cat /tmp/restored.pid) 2>/dev/null || true
