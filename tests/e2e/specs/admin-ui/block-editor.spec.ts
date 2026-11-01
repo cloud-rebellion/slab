@@ -25,9 +25,14 @@ test.describe('Block editor', () => {
 		await loggedInPage.getByRole('button', { name: 'Text', exact: true }).click();
 
 		// The block expands; save the page (button "Save changes").
+		const savedResponse = loggedInPage.waitForResponse((response) =>
+			response.request().method() === 'PUT' &&
+			new URL(response.url()).pathname === `/api/sites/${site.id}/pages/${page.id}/blocks/bulk`
+		);
 		await loggedInPage.getByRole('button', { name: /save changes/i }).click();
+		expect((await savedResponse).status()).toBe(200);
 		// After save the button label flips back to "Saved".
-		await expect(loggedInPage.getByRole('button', { name: /saved|save changes/i })).toBeVisible();
+		await expect(loggedInPage.getByRole('button', { name: 'Saved', exact: true })).toBeVisible();
 
 		// Reload, the text block should still be there (one block in the list).
 		await loggedInPage.reload();

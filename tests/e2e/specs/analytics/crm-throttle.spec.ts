@@ -1,9 +1,11 @@
 import { request } from '@playwright/test';
+import { randomUUID } from 'node:crypto';
 import { test, expect, u } from '../../fixtures/auth';
 import {
 	createSite,
 	deleteSite,
-	getStubCalls,
+	crmDeliveryTimeoutMs,
+	waitForOwnedCRMCalls,
 	resetStub,
 	type Site
 } from '../../fixtures/data';
@@ -14,14 +16,14 @@ import {
 // in the CRM stub.
 //
 // /t/pageview itself does not currently call the CRM client, so the only
-// outbound channel we can observe from e2e is the consent path. We assert
-// the bypass-on-identified property here.
+// outbound channel we can observe from e2e is the consent path. Delivery is
+// durable and batched, so assert the bypass for each unique owned event.
 
-async function postConsent(ctx: Awaited<ReturnType<typeof request.newContext>>, siteId: string) {
+async function postConsent(ctx: Awaited<ReturnType<typeof request.newContext>>, siteId: string, page: string) {
 	return ctx.post(u('/t/consent'), {
 		data: {
 			siteId,
-			page: '/',
+			page,
 			consent: {
 				version: 1,
 				timestamp: Math.floor(Date.now() / 1000),
@@ -45,28 +47,28 @@ test.describe('analytics: identified events bypass throttler', () => {
 		for (const id of cleanup) await deleteSite(adminApi, id);
 	});
 
-	test('three rapid consents all reach CRM (identified events skip throttle)', async () => {
-		await resetStub('crm');
+	test('three rapid consents all reach CRM (identified events skip throttle)', async ({ adminApi }) => {
+		const marker = '/e2e-crm-throttle/' + randomUUID();
+		const pages = [marker + '/1', marker + '/2', marker + '/3'];
+		const waitMs = await crmDeliveryTimeoutMs(adminApi, pages.length);
+		test.setTimeout(waitMs + 20_000);
+		await resetStub('crm'); // Observations only; older outbox rows remain.
 		const ctx = await request.newContext({
 			extraHTTPHeaders: { 'Content-Type': 'application/json' }
 		});
 		try {
-			const r1 = await postConsent(ctx, site.id);
-			const r2 = await postConsent(ctx, site.id);
-			const r3 = await postConsent(ctx, site.id);
+			const r1 = await postConsent(ctx, site.id, pages[0]);
+			const r2 = await postConsent(ctx, site.id, pages[1]);
+			const r3 = await postConsent(ctx, site.id, pages[2]);
 			expect([r1.status(), r2.status(), r3.status()]).toEqual([204, 204, 204]);
 		} finally {
 			await ctx.dispose();
 		}
 
-		// Wait for SendAsync goroutines.
-		let calls: unknown[] = [];
-		const deadline = Date.now() + 5_000;
-		while (Date.now() < deadline) {
-			calls = (await getStubCalls('crm')) as unknown[];
-			if (calls.length >= 3) break;
-			await new Promise((r) => setTimeout(r, 100));
-		}
+		const calls = await waitForOwnedCRMCalls(site.id, pages, waitMs);
 		expect(calls.length).toBeGreaterThanOrEqual(3);
+		// Duplicate/replayed delivery of one event cannot stand in for the
+		// other two, and unrelated durable backlog cannot satisfy this case.
+		expect(pages.every((page) => calls.some((call) => call.body.page?.url === page))).toBe(true);
 	});
 });

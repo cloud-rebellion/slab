@@ -8,7 +8,7 @@ test.describe('Cmd+K palette', () => {
 		if (site) await deleteSite(adminApi, site.id);
 	});
 
-	test('Meta+K opens palette, typing filters, Enter selects', async ({
+	test('ControlOrMeta+K opens palette, typing filters, Enter selects', async ({
 		loggedInPage,
 		adminApi
 	}) => {
@@ -23,7 +23,7 @@ test.describe('Cmd+K palette', () => {
 		await loggedInPage.locator('body').click({ position: { x: 5, y: 5 } });
 
 		// CommandPalette listens on window keydown for meta/ctrl + K.
-		await loggedInPage.keyboard.press('Meta+K');
+		await loggedInPage.keyboard.press('ControlOrMeta+K');
 		// Palette input has aria-label "Command palette search".
 		const input = loggedInPage.getByLabel(/command palette search/i);
 		await expect(input).toBeVisible({ timeout: 5_000 });

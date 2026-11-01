@@ -306,22 +306,22 @@ export async function seedDeployTarget(
 	const configs: Record<typeof kind, Record<string, unknown>> = {
 		local: { path: `/tmp/${siteID}/atomicsite-deploy-${rand()}`, public_url: 'http://127.0.0.1:9999' },
 		rsync: {
-			host: '127.0.0.1',
+			// Reserved .invalid metadata passes offline validation without a routable target.
+			host: 'rsync.e2e.invalid',
 			user: 'tester',
 			port: 22022,
 			path: `/tmp/atomicsite-rsync-${rand()}`,
-			public_url: 'http://127.0.0.1:9998',
+			public_url: 'https://site.e2e.invalid',
 			private_key_pem: '-----BEGIN OPENSSH PRIVATE KEY-----\nfake\n-----END OPENSSH PRIVATE KEY-----\n'
 		},
 		dockyard: {
-			// Dockyard validation requires HTTPS URL + UUID server_id. The stub
-			// terminates TLS via fixtures/certs/, and the binary trusts it via
-			// SSL_CERT_FILE injected by playwright.config.ts.
-			dockyard_url: E2E_CONSTANTS.STUB_DOCKYARD,
+			// Save-time validation is DNS-free. Deployment refuses the reserved
+			// .invalid SSH destination before rsync or any Dockyard request.
+			dockyard_url: 'https://dockyard.e2e.invalid',
 			api_key: 'e2e-dy-key',
 			server_id: '00000000-0000-4000-8000-000000000001',
 			domain: 'e2e.example.test',
-			host: '127.0.0.1',
+			host: 'rsync.e2e.invalid',
 			user: 'deploy',
 			port: 22022,
 			host_path: '/srv/sites/e2e',
@@ -358,6 +358,74 @@ export async function getStubCalls(stub: 'cookieproof' | 'crm' | 'dockyard'): Pr
 	} finally {
 		await ctx.dispose();
 	}
+}
+
+// Match the existing durable outbox contract: at most two 50-row drain
+// batches, 30 seconds per tick, a 5-second sender deadline and 5 seconds
+// for fixture polling. Do not speed up the production drainer for this suite.
+const CRM_OUTBOX_DRAIN_MS = 30_000;
+const CRM_OUTBOX_BATCH = 50;
+const CRM_SEND_TIMEOUT_MS = 5_000;
+const CRM_POLL_MARGIN_MS = 5_000;
+
+export type CRMStubCall = {
+	method: string;
+	path: string;
+	headers: Record<string, string>;
+	body: { event: string; site_id: string; page?: { url?: string } };
+	hmacOk?: boolean;
+};
+
+export async function crmDeliveryTimeoutMs(
+	api: APIRequestContext,
+	expectedEvents: number
+): Promise<number> {
+	if (!Number.isSafeInteger(expectedEvents) || expectedEvents < 1 || expectedEvents > CRM_OUTBOX_BATCH) {
+		throw new Error('Invalid owned CRM fixture event count');
+	}
+	const response = await api.get(u('/api/health'));
+	if (!response.ok()) throw new Error('CRM fixture health request failed');
+	const health = (await response.json()) as { crm_outbox_pending?: unknown };
+	const pending = health.crm_outbox_pending;
+	if (typeof pending !== 'number' || !Number.isSafeInteger(pending) || pending < 0) {
+		throw new Error('CRM fixture outbox count is unavailable');
+	}
+	const batches = Math.ceil((pending + expectedEvents) / CRM_OUTBOX_BATCH);
+	if (batches < 1 || batches > 2) {
+		throw new Error('CRM fixture backlog exceeds the bounded two-batch delivery window');
+	}
+	return batches * CRM_OUTBOX_DRAIN_MS + CRM_SEND_TIMEOUT_MS + CRM_POLL_MARGIN_MS;
+}
+
+export async function waitForOwnedCRMCalls(
+	siteID: string,
+	pages: string[],
+	timeoutMs: number
+): Promise<CRMStubCall[]> {
+	const expected = new Set(pages);
+	if (expected.size === 0 || expected.size !== pages.length) {
+		throw new Error('CRM fixture proof pages must be nonempty and unique');
+	}
+	let owned: CRMStubCall[] = [];
+	const deadline = Date.now() + timeoutMs;
+	do {
+		owned = (await getStubCalls('crm')).filter((value): value is CRMStubCall => {
+			if (value === null || typeof value !== 'object') return false;
+			const call = value as Partial<CRMStubCall>;
+			return call.method === 'POST' &&
+				call.path === '/webhook' &&
+				call.body !== undefined &&
+				call.body !== null &&
+				typeof call.body === 'object' &&
+				call.body.site_id === siteID &&
+				call.body.event === 'identified' &&
+				typeof call.body.page?.url === 'string' &&
+				expected.has(call.body.page.url);
+		});
+		if (pages.every((page) => owned.some((call) => call.body.page?.url === page))) return owned;
+		await new Promise((resolve) => setTimeout(resolve, 100));
+	} while (Date.now() < deadline);
+	return owned;
 }
 
 export async function resetStub(stub: 'cookieproof' | 'crm' | 'dockyard'): Promise<void> {

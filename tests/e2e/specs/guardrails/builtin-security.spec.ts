@@ -118,11 +118,12 @@ test.describe('guardrails: built-in security checks', () => {
 		}
 	});
 
-	test('admin endpoint for block creation does NOT enforce guardrails (known)', async ({
+	test('admin block creation enforces the same security guardrails and still accepts clean data', async ({
 		adminApi
 	}) => {
-		// Admin block-create handler bypasses GuardrailEngine; <script> goes
-		// through. This documents the actual behavior so we notice if it changes.
+		const before = await adminApi.get(u(`/api/sites/${site.id}/pages/${page.id}/blocks`));
+		expect(before.ok()).toBe(true);
+		const beforeIDs = ((await before.json()).blocks as { id: string }[]).map((b) => b.id).sort();
 		const res = await adminApi.post(u(`/api/sites/${site.id}/pages/${page.id}/blocks`), {
 			data: {
 				block_type: 'text',
@@ -130,6 +131,24 @@ test.describe('guardrails: built-in security checks', () => {
 				sort_order: 99
 			}
 		});
-		expect(res.status()).toBe(201);
+		expect(res.status()).toBe(422);
+		const body = await res.json();
+		expect(body.error).toBe('Guardrail violations');
+		expect(body.violations).toEqual(
+			expect.arrayContaining([expect.objectContaining({ rule: 'security', severity: 'error' })])
+		);
+
+		const after = await adminApi.get(u(`/api/sites/${site.id}/pages/${page.id}/blocks`));
+		expect(after.ok()).toBe(true);
+		expect(((await after.json()).blocks as { id: string }[]).map((b) => b.id).sort()).toEqual(beforeIDs);
+
+		const clean = await adminApi.post(u(`/api/sites/${site.id}/pages/${page.id}/blocks`), {
+			data: {
+				block_type: 'text',
+				data: { content: 'An ordinary admin-authored paragraph.' },
+				sort_order: 99
+			}
+		});
+		expect(clean.status()).toBe(201);
 	});
 });

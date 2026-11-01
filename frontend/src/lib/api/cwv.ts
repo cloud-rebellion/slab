@@ -19,5 +19,5 @@ export interface CWVOverview {
 }
 
 export function getCWVOverview(siteID: string, since: string = '7d'): Promise<CWVOverview> {
-	return apiGet(`/api/sites/${siteID}/analytics/cwv?since=${encodeURIComponent(since)}`);
+	return apiGet(`/sites/${siteID}/analytics/cwv?since=${encodeURIComponent(since)}`);
 }

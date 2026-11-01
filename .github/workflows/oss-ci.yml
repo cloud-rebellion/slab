@@ -303,6 +303,7 @@ jobs:
         run: |
           mkdir -p /tmp/atomicsite-source/data
           (cd /tmp/atomicsite-source && \
+            exec env \
             ATOMICSITE_ENV=development \
             DATA_DIR=/tmp/atomicsite-source/data \
             $GITHUB_WORKSPACE/$PROJECT_ROOT/bin/atomicsite > /tmp/source.log 2>&1) &
@@ -342,6 +343,7 @@ jobs:
           mkdir -p /tmp/atomicsite-restored/data
           cp /tmp/atomicsite-backup/snapshot.db /tmp/atomicsite-restored/data/atomicsite.db
           (cd /tmp/atomicsite-restored && \
+            exec env \
             ATOMICSITE_ENV=development \
             DATA_DIR=/tmp/atomicsite-restored/data \
             PORT=8090 \

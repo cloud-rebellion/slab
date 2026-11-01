@@ -69,25 +69,81 @@ test.describe('admin-api: block + page preview source', () => {
 		expect(res.status()).toBe(404);
 	});
 
-	test('GET block preview escapes HTML metacharacters in data', async ({ adminApi }) => {
+	test('unsafe script input is rejected before persistence; safe text preview escapes metacharacters', async ({
+		adminApi
+	}) => {
+		// The shared admin/agent/MCP write guard rejects scripts. Legacy stored-data
+		// escaping is pinned by builder.TestRenderBlock_HTMLEscape.
+		const before = await adminApi.get(u(`/api/sites/${site.id}/pages/${page.id}/blocks`));
+		expect(before.ok()).toBe(true);
+		const beforeIDs = ((await before.json()).blocks as { id: string }[]).map((b) => b.id).sort();
+		const refused = await adminApi.post(u(`/api/sites/${site.id}/pages/${page.id}/blocks`), {
+			data: {
+				block_type: 'text',
+				data: { heading: '<script>alert(1)</script>', text: 'AT&T' }
+			}
+		});
+		expect(refused.status()).toBe(422);
+		const rejection = await refused.json();
+		expect(rejection.error).toBe('Guardrail violations');
+		expect(rejection.violations).toEqual(
+			expect.arrayContaining([expect.objectContaining({ rule: 'security', severity: 'error' })])
+		);
+
+		const after = await adminApi.get(u(`/api/sites/${site.id}/pages/${page.id}/blocks`));
+		expect(after.ok()).toBe(true);
+		expect(((await after.json()).blocks as { id: string }[]).map((b) => b.id).sort()).toEqual(beforeIDs);
+
 		const block = await createBlock(adminApi, site.id, page.id, {
 			block_type: 'text',
-			data: { heading: '<script>alert(1)</script>', text: 'AT&T' }
+			data: { heading: '<example> & text', text: 'AT&T' }
 		});
 		const res = await adminApi.get(
 			u(`/api/sites/${site.id}/pages/${page.id}/blocks/${block.id}/preview`)
 		);
 		expect(res.ok()).toBe(true);
 		const body = await res.json();
-		expect(body.astro).not.toContain('<script>');
-		expect(body.astro).toContain('&lt;script&gt;alert(1)&lt;/script&gt;');
+		expect(body.astro).not.toContain('<example>');
+		expect(body.astro).toContain('&lt;example&gt; &amp; text');
 		expect(body.astro).toContain('AT&amp;T');
 	});
 
-	test('GET block preview rewrites javascript: URLs to safe anchors', async ({ adminApi }) => {
+	test('unsafe URL input is rejected before persistence; safe CTA preview preserves its URL', async ({
+		adminApi
+	}) => {
+		// Render-time rewriting of legacy data remains pinned by
+		// builder.TestRenderBlock_RejectsDangerousScheme; current writes refuse it.
+		const before = await adminApi.get(u(`/api/sites/${site.id}/pages/${page.id}/blocks`));
+		expect(before.ok()).toBe(true);
+		const beforeIDs = ((await before.json()).blocks as { id: string }[]).map((b) => b.id).sort();
+		const refused = await adminApi.post(u(`/api/sites/${site.id}/pages/${page.id}/blocks`), {
+			data: {
+				block_type: 'cta',
+				data: {
+					label: 'Book a discovery call',
+					cta_text: 'Book a discovery call',
+					cta_url: 'javascript:alert(1)'
+				}
+			}
+		});
+		expect(refused.status()).toBe(422);
+		const rejection = await refused.json();
+		expect(rejection.error).toBe('Guardrail violations');
+		expect(rejection.violations).toEqual([
+			expect.objectContaining({ rule: 'security', severity: 'error' })
+		]);
+
+		const after = await adminApi.get(u(`/api/sites/${site.id}/pages/${page.id}/blocks`));
+		expect(after.ok()).toBe(true);
+		expect(((await after.json()).blocks as { id: string }[]).map((b) => b.id).sort()).toEqual(beforeIDs);
+
 		const block = await createBlock(adminApi, site.id, page.id, {
 			block_type: 'cta',
-			data: { cta_text: 'Click', cta_url: 'javascript:alert(1)' }
+			data: {
+				label: 'Book a discovery call',
+				cta_text: 'Book a discovery call',
+				cta_url: 'https://site.e2e.invalid/contact'
+			}
 		});
 		const res = await adminApi.get(
 			u(`/api/sites/${site.id}/pages/${page.id}/blocks/${block.id}/preview`)
@@ -95,7 +151,7 @@ test.describe('admin-api: block + page preview source', () => {
 		expect(res.ok()).toBe(true);
 		const body = await res.json();
 		expect(body.astro).not.toContain('javascript:');
-		expect(body.astro).toContain('href="#"');
+		expect(body.astro).toContain('href="https://site.e2e.invalid/contact"');
 	});
 
 	test('GET page preview returns assembled .astro source', async ({ adminApi }) => {

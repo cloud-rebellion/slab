@@ -1,21 +1,21 @@
 import { request } from '@playwright/test';
-import { createHmac, timingSafeEqual } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import { test, expect, u } from '../../fixtures/auth';
 import {
 	createSite,
 	deleteSite,
 	getStubCalls,
 	resetStub,
+	crmDeliveryTimeoutMs,
+	waitForOwnedCRMCalls,
+	type CRMStubCall,
 	type Site
 } from '../../fixtures/data';
 import { E2E_CONSTANTS } from '../../playwright.config';
 
-// internal/crmsync/client.go signs every outbound webhook with HMAC-SHA256
-// over the JSON body, hex-encoded, in the header `X-Atomicsite-Signature`.
-// We re-compute the signature here from the stub's recorded body and verify
-// it matches the header the server sent. Same algorithm + secret (configured
-// in playwright.config.ts as BRIGHTCRM_WEBHOOK_SECRET) -> same hex digest.
-
+// The owned receiver verifies HMAC-SHA256 over the exact captured request
+// bytes using the same synthetic fixture key as the app. No JSON
+// re-serialization or wrong-but-hex fallback is a signature verdict.
 const SIGNATURE_HEADER = 'x-atomicsite-signature';
 
 test.describe('analytics: BrightCRM HMAC signature is valid', () => {
@@ -31,8 +31,13 @@ test.describe('analytics: BrightCRM HMAC signature is valid', () => {
 		for (const id of cleanup) await deleteSite(adminApi, id);
 	});
 
-	test('every recorded CRM call carries a valid X-Atomicsite-Signature', async () => {
-		await resetStub('crm');
+	test('owned CRM calls have exact raw-body HMAC and forged hex is invalid', async ({ adminApi }) => {
+		const proofPage = '/e2e-crm-hmac/' + randomUUID();
+		const waitMs = await crmDeliveryTimeoutMs(adminApi, 1);
+		// At most two existing outbox ticks plus bounded request/cleanup time.
+		// The single-batch case retains the suite's normal 60-second budget.
+		test.setTimeout(waitMs + 20_000);
+		await resetStub('crm'); // Clears observations, never the durable outbox.
 
 		const ctx = await request.newContext({
 			extraHTTPHeaders: { 'Content-Type': 'application/json' }
@@ -41,7 +46,7 @@ test.describe('analytics: BrightCRM HMAC signature is valid', () => {
 			const res = await ctx.post(u('/t/consent'), {
 				data: {
 					siteId: site.id,
-					page: '/',
+					page: proofPage,
 					consent: {
 						version: 1,
 						timestamp: Math.floor(Date.now() / 1000),
@@ -55,39 +60,31 @@ test.describe('analytics: BrightCRM HMAC signature is valid', () => {
 			await ctx.dispose();
 		}
 
-		// Wait for SendAsync.
-		let calls: Array<{ headers: Record<string, string>; body: unknown }> = [];
-		const deadline = Date.now() + 5_000;
-		while (Date.now() < deadline) {
-			calls = (await getStubCalls('crm')) as typeof calls;
-			if (calls.length >= 1) break;
-			await new Promise((r) => setTimeout(r, 100));
-		}
+		const calls = await waitForOwnedCRMCalls(site.id, [proofPage], waitMs);
 		expect(calls.length).toBeGreaterThanOrEqual(1);
-
-		const secret = E2E_CONSTANTS.STUB_CRM_SECRET;
-		for (const c of calls) {
-			const sig = c.headers[SIGNATURE_HEADER];
-			expect(sig, 'X-Atomicsite-Signature missing on CRM call').toBeTruthy();
-			// crmsync.Client serialises Event with Go's encoding/json. Replay the
-			// same byte sequence to verify the signature.
-			const bodyBytes = Buffer.from(JSON.stringify(c.body), 'utf8');
-			const expected = createHmac('sha256', secret).update(bodyBytes).digest('hex');
-			// Compare timing-safe; lengths must match exactly first.
-			const a = Buffer.from(sig, 'utf8');
-			const b = Buffer.from(expected, 'utf8');
-			// JSON re-serialisation may not reproduce Go's byte-exact output
-			// (key ordering / unicode escaping), so we compare the digest length
-			// + presence; a hard byte-equal check is provided when feasible.
-			expect(a.length).toBe(b.length);
-			if (a.length === b.length) {
-				const equal = timingSafeEqual(a, b);
-				// If our re-serialisation matched Go's, this is a strict pass. If
-				// not, document the mismatch but still require a hex-formatted sig.
-				if (!equal) {
-					expect(sig).toMatch(/^[0-9a-f]{64}$/);
-				}
-			}
+		for (const call of calls) {
+			const signature = call.headers[SIGNATURE_HEADER];
+			expect(typeof signature === 'string' && /^[0-9a-f]{64}$/.test(signature)).toBe(true);
+			expect(call.hmacOk, 'HMAC must match the exact captured request bytes').toBe(true);
 		}
+
+		// A syntactically valid hex string must never count as a valid HMAC.
+		// This touches only the owned receiver stub, not the app or outbox.
+		const forgedPage = proofPage + '/forged';
+		const probe = await request.newContext();
+		try {
+			const response = await probe.post(E2E_CONSTANTS.STUB_CRM + '/webhook', {
+				headers: { [SIGNATURE_HEADER]: '0'.repeat(64) },
+				data: { event: 'identified', site_id: site.id, page: { url: forgedPage } }
+			});
+			expect(response.ok()).toBe(true);
+		} finally {
+			await probe.dispose();
+		}
+		const forged = ((await getStubCalls('crm')) as CRMStubCall[]).filter(
+			(call) => call.body.site_id === site.id && call.body.page?.url === forgedPage
+		);
+		expect(forged.length).toBe(1);
+		expect(forged[0].hmacOk).toBe(false);
 	});
 });

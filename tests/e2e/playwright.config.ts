@@ -65,6 +65,7 @@ export default defineConfig({
 				STUB_COOKIEPROOF_PORT,
 				STUB_CRM_PORT,
 				STUB_DOCKYARD_PORT,
+				BRIGHTCRM_WEBHOOK_SECRET: E2E_CONSTANTS.STUB_CRM_SECRET,
 				SLAB_E2E_TLS_CERT_FILE: tlsFixture.certFile,
 				SLAB_E2E_TLS_KEY_FILE: tlsFixture.keyFile
 			}
@@ -99,7 +100,7 @@ export default defineConfig({
 				COOKIEPROOF_API_BASE: `http://127.0.0.1:${STUB_COOKIEPROOF_PORT}`,
 				COOKIEPROOF_ADMIN_TOKEN: 'e2e-cookieproof-token',
 				BRIGHTCRM_WEBHOOK_URL: `http://127.0.0.1:${STUB_CRM_PORT}/webhook`,
-				BRIGHTCRM_WEBHOOK_SECRET: 'e2e-crm-hmac-secret',
+				BRIGHTCRM_WEBHOOK_SECRET: E2E_CONSTANTS.STUB_CRM_SECRET,
 				CRM_SYNC_MIN_INTERVAL_SECONDS: '1',
 				// Trust the self-signed cert the dockyard stub serves over TLS so
 				// internal/deploy/dockyard.go's outbound HTTPS calls succeed.

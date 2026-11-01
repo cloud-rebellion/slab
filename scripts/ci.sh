@@ -83,7 +83,7 @@ frontend_build() {
   [ -f frontend/package.json ] || { echo "no frontend/package.json"; return 0; }
   if [ "${ATOMICSITE_CI_SKIP_FRONTEND:-0}" = "1" ]; then return 99; fi
   command -v bun >/dev/null 2>&1 || { echo "bun is not installed (this repo is bun-only)" >&2; return 1; }
-  ( cd frontend && bun install --frozen-lockfile >/dev/null 2>&1 && bun run build >/dev/null 2>&1 )
+  ( cd frontend && bun install --frozen-lockfile >/dev/null 2>&1 && bun test src/lib/api/cwv.test.ts && bun run build >/dev/null 2>&1 )
 }
 
 secret_scan() {

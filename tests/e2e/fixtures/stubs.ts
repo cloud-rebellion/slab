@@ -121,15 +121,16 @@ const cookieproof = makeServer('cookieproof', cpPort, async (req) => {
 
 const crm = makeServer('crm', crmPort, async (req) => {
 	const url = new URL(req.url);
-	const rawText = await req.text();
+	const rawBytes = Buffer.from(await req.arrayBuffer());
+	const rawText = rawBytes.toString('utf8');
 	let body: unknown = rawText;
 	try {
 		body = rawText ? JSON.parse(rawText) : null;
 	} catch {}
-	const sig = req.headers.get('x-bright-signature') ?? '';
+	const sig = req.headers.get('x-atomicsite-signature') ?? '';
 	let hmacOk = false;
 	if (sig && rawText) {
-		const expected = createHmac('sha256', crmSecret).update(rawText).digest('hex');
+		const expected = createHmac('sha256', crmSecret).update(rawBytes).digest('hex');
 		try {
 			hmacOk =
 				expected.length === sig.length &&

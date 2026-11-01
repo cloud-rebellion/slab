@@ -1,4 +1,4 @@
-import { test, expect } from '../../fixtures/auth';
+import { test, expect, u } from '../../fixtures/auth';
 import { createBlock, createPage, createSite, deleteSite, type Site } from '../../fixtures/data';
 
 test.describe('Pages editor – editable per-block code', () => {
@@ -41,8 +41,13 @@ test.describe('Pages editor – editable per-block code', () => {
 		await loggedInPage.getByRole('button', { name: /^Convert$/, exact: true }).click();
 
 		// Page-level save.
+		const savedResponse = loggedInPage.waitForResponse((response) =>
+			response.request().method() === 'PUT' &&
+			new URL(response.url()).pathname === `/api/sites/${site.id}/pages/${page.id}/blocks/bulk`
+		);
 		await loggedInPage.getByRole('button', { name: /save changes/i }).click();
-		await expect(loggedInPage.getByRole('button', { name: /saved|save changes/i })).toBeVisible();
+		expect((await savedResponse).status()).toBe(200);
+		await expect(loggedInPage.getByRole('button', { name: 'Saved', exact: true })).toBeVisible();
 
 		// Reload, verify the block_type is now raw_astro by checking the chip.
 		await loggedInPage.reload();
@@ -50,7 +55,7 @@ test.describe('Pages editor – editable per-block code', () => {
 		await expect(loggedInPage.getByText(/^RAW_ASTRO$/i).first()).toBeVisible();
 
 		// Confirm on the API side too.
-		const res = await adminApi.get(`/api/sites/${site.id}/pages/${page.id}/blocks`);
+		const res = await adminApi.get(u(`/api/sites/${site.id}/pages/${page.id}/blocks`));
 		const body = await res.json();
 		const block = body.blocks?.[0];
 		expect(block.block_type).toBe('raw_astro');

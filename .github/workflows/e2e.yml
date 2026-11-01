@@ -77,6 +77,7 @@ jobs:
     timeout-minutes: 25
     env:
       PROJECT_ROOT: ${{ needs.layout.outputs.root }}
+      SLAB_E2E_SOURCE_CONTEXT: ${{ needs.layout.outputs.context }}
     steps:
       - uses: actions/checkout@v4
 

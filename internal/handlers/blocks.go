@@ -438,6 +438,13 @@ func (h *BlockHandler) BulkSave(w http.ResponseWriter, r *http.Request) {
 	defer tx.Rollback()
 
 	qtx := h.queries.WithTx(tx)
+	// Every read while this transaction owns the sole SQLite connection
+	// must use qtx, including queries performed by the guardrail engine.
+	// Keep a missing handler engine fail-closed instead of replacing nil.
+	guardrails := h.guardrails
+	if guardrails != nil {
+		guardrails = agent.NewGuardrailEngine(qtx)
+	}
 
 	// Validate every incoming block BEFORE clearing the page. Validating
 	// inside the insert loop would mean a violation on block 7 had already
@@ -448,7 +455,7 @@ func (h *BlockHandler) BulkSave(w http.ResponseWriter, r *http.Request) {
 		if len(b.Data) > 0 {
 			d = string(b.Data)
 		}
-		if v, bad := validateBlockWrite(r.Context(), h.guardrails, siteID, b.BlockType, d); bad {
+		if v, bad := validateBlockWrite(r.Context(), guardrails, siteID, b.BlockType, d); bad {
 			writeGuardrailViolations(w, v)
 			return
 		}

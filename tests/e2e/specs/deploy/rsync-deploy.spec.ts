@@ -9,14 +9,9 @@ import {
 	type Site
 } from '../../fixtures/data';
 
-// Rsync deploy targets a configured SSH host/port. The e2e harness does not
-// spin up sshd, so we drive the *failure* path: target validation passes,
-// deploy fires, rsync attempts to connect to 127.0.0.1:22022 (where nothing
-// listens), and the server surfaces a clean 502 with a descriptive message.
-// rsync_test.go covers the happy path at the unit level.
-//
-// If `rsync` is not on PATH the deploy would error before we observe the
-// SSH-unreachable path, so the spec is skipped in that case only.
+// Save-time validation is DNS-free; the reserved .invalid destination cannot
+// resolve to an SSH server. Exercise the request-time guard with a real build,
+// preserving the production SSRF policy and making no private-address exception.
 
 const hasRsync = (() => {
 	try {
@@ -41,7 +36,7 @@ test.describe('deploy: rsync kind', () => {
 		for (const id of cleanup) await deleteSite(adminApi, id);
 	});
 
-	test('rsync deploy without SSHD surfaces a clean failure', async ({ adminApi }) => {
+	test('rsync deploy refuses an unresolvable destination with a clean failure', async ({ adminApi }) => {
 		test.skip(!hasRsync, 'rsync not on PATH');
 		const target = await seedDeployTarget(adminApi, site.id, 'rsync');
 		const build = await triggerBuildAndWait(adminApi, site.id, 180_000);
@@ -51,6 +46,7 @@ test.describe('deploy: rsync kind', () => {
 		});
 		expect(res.status()).toBe(502);
 		const body = await res.json();
-		expect(String(body.error ?? '')).toMatch(/rsync|ssh|connection|refused/i);
+		expect(String(body.error ?? '')).toMatch(/rsync.*not an allowed destination/i);
+		expect(String(body.error ?? '')).toContain('rsync.e2e.invalid');
 	});
 });
