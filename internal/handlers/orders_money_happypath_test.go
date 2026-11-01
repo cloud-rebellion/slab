@@ -327,12 +327,14 @@ func TestOrders_ConcurrentAgentRefundsPayOutOnce(t *testing.T) {
 			"A second payout for the same order left the account for a real customer", got)
 	}
 
+	// The loser may read "refunded" before reaching the atomic claim.
+	// Both refusals are valid; every other error remains unexpected.
 	won, refused := 0, 0
 	for _, err := range errs {
 		switch {
 		case err == nil:
 			won++
-		case errors.Is(err, ErrRefundAlreadyClaimed):
+		case errors.Is(err, ErrRefundAlreadyClaimed) || err.Error() == `cannot refund order in status "refunded"`:
 			refused++
 		default:
 			t.Errorf("unexpected refund error: %v", err)

@@ -1,11 +1,13 @@
 import { request } from '@playwright/test';
+import { randomUUID } from 'node:crypto';
 import { test, expect, u } from '../../fixtures/auth';
 import {
 	createSite,
 	deleteSite,
 	getStubCalls,
 	resetStub,
-	type Site
+	crmDeliveryTimeoutMs,
+	waitForOwnedCRMCalls
 } from '../../fixtures/data';
 
 // /t/consent flow: the in-page CookieProof relay POSTs a payload after the
@@ -13,20 +15,20 @@ import {
 // an "identified" event to BrightCRM (our stub). 204 on success.
 
 test.describe('analytics: consent updates session + emits identified event', () => {
-	let site: Site;
 	const cleanup: string[] = [];
-
-	test.beforeAll(async ({ adminApi }) => {
-		site = await createSite(adminApi);
-		cleanup.push(site.id);
-	});
 
 	test.afterAll(async ({ adminApi }) => {
 		for (const id of cleanup) await deleteSite(adminApi, id);
 	});
 
-	test('analytics opt-in returns 204 and lands an identified event in the CRM stub', async () => {
-		await resetStub('crm');
+	test('analytics opt-in returns 204 and lands an identified event in the CRM stub', async ({ adminApi }) => {
+		const site = await createSite(adminApi);
+		cleanup.push(site.id);
+		const proofPage = '/e2e-consent/opt-in/' + randomUUID();
+		const proofSession = 'sess-e2e-' + randomUUID();
+		const waitMs = await crmDeliveryTimeoutMs(adminApi, 1);
+		test.setTimeout(waitMs + 20_000); // Existing bounded 60/90-second per-case budget.
+		await resetStub('crm'); // Observations only; durable outbox rows remain.
 
 		const ctx = await request.newContext({
 			extraHTTPHeaders: {
@@ -39,8 +41,8 @@ test.describe('analytics: consent updates session + emits identified event', () 
 			const res = await ctx.post(u('/t/consent'), {
 				data: {
 					siteId: site.id,
-					sessionId: 'sess-e2e',
-					page: 'https://e2e.example.test/',
+					sessionId: proofSession,
+					page: proofPage,
 					referrer: '',
 					consent: {
 						version: 1,
@@ -56,14 +58,8 @@ test.describe('analytics: consent updates session + emits identified event', () 
 			await ctx.dispose();
 		}
 
-		// SendAsync goroutine fires after the response; wait briefly.
-		let calls: Array<{ method: string; path: string; body: unknown }> = [];
-		const deadline = Date.now() + 5_000;
-		while (Date.now() < deadline) {
-			calls = (await getStubCalls('crm')) as typeof calls;
-			if (calls.length >= 1) break;
-			await new Promise((r) => setTimeout(r, 100));
-		}
+		// Identified events use the existing durable outbox delivery window.
+		const calls = await waitForOwnedCRMCalls(site.id, [proofPage], waitMs);
 		expect(calls.length, 'expected at least one CRM webhook call').toBeGreaterThanOrEqual(1);
 		const first = calls[0];
 		expect(first.method).toBe('POST');
@@ -73,8 +69,15 @@ test.describe('analytics: consent updates session + emits identified event', () 
 		expect(typeof body.visitor_id).toBe('string');
 	});
 
-	test('reject-all consent does NOT fire a CRM event', async () => {
-		await resetStub('crm');
+	test('reject-all consent does NOT fire a CRM event', async ({ adminApi }) => {
+		const site = await createSite(adminApi);
+		cleanup.push(site.id);
+		const proofPage = '/e2e-consent/reject-all/' + randomUUID();
+		const proofSession = 'sess-e2e-' + randomUUID();
+		// Reserve the delivery window for a counterfactual erroneous queued event.
+		const waitMs = await crmDeliveryTimeoutMs(adminApi, 1);
+		test.setTimeout(waitMs + 20_000); // No global suite deadline change.
+		await resetStub('crm'); // Foreign durable rows may still arrive.
 		const ctx = await request.newContext({
 			extraHTTPHeaders: { 'Content-Type': 'application/json' }
 		});
@@ -82,7 +85,8 @@ test.describe('analytics: consent updates session + emits identified event', () 
 			const res = await ctx.post(u('/t/consent'), {
 				data: {
 					siteId: site.id,
-					page: '/',
+					sessionId: proofSession,
+					page: proofPage,
 					consent: {
 						version: 1,
 						timestamp: Math.floor(Date.now() / 1000),
@@ -96,9 +100,22 @@ test.describe('analytics: consent updates session + emits identified event', () 
 		} finally {
 			await ctx.dispose();
 		}
-		await new Promise((r) => setTimeout(r, 500));
-		const calls = (await getStubCalls('crm')) as unknown[];
-		expect(calls).toHaveLength(0);
+		// Observe the full drain window, including a final poll at/after it.
+		// Reject ANY event for this fresh site: no page/event/method filter can
+		// hide a misrouted own-site event, and foreign backlog cannot fail it.
+		const deadline = Date.now() + waitMs;
+		for (;;) {
+			const calls = (await getStubCalls('crm')).filter((value) => {
+				if (value === null || typeof value !== 'object') return false;
+				const body = (value as { body?: unknown }).body;
+				return body !== null && typeof body === 'object' &&
+					(body as Record<string, unknown>).site_id === site.id;
+			});
+			expect(calls).toHaveLength(0);
+			const remaining = deadline - Date.now();
+			if (remaining <= 0) break;
+			await new Promise((resolve) => setTimeout(resolve, Math.min(100, remaining)));
+		}
 	});
 
 	test('unknown siteId returns 404', async () => {
