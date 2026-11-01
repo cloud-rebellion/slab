@@ -1,9 +1,12 @@
 import { request, type APIRequestContext } from '@playwright/test';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { test, expect, u } from '../../fixtures/auth';
 import { createSite, deleteSite, rand, type Site } from '../../fixtures/data';
 import { E2E_CONSTANTS } from '../../playwright.config';
+
+const currentDir = path.dirname(fileURLToPath(import.meta.url));
 
 // 1x1 transparent PNG
 const PNG_BYTES = Buffer.from(
@@ -14,7 +17,7 @@ const PNG_BYTES = Buffer.from(
 // Multipart upload context with the admin cookie but WITHOUT Content-Type:application/json,
 // since the auth fixture's adminApi sets that globally and breaks multipart boundaries on Bun.
 async function multipartContext(): Promise<APIRequestContext> {
-	const cookieFile = path.resolve(__dirname, '../../.tmp/admin-cookie.txt');
+	const cookieFile = path.resolve(currentDir, '../../.tmp/admin-cookie.txt');
 	const cookie = readFileSync(cookieFile, 'utf8').trim();
 	return request.newContext({
 		extraHTTPHeaders: {

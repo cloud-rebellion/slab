@@ -1,7 +1,9 @@
 import { defineConfig } from '@playwright/test';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { currentTLSFixture } from './scripts/tls-fixture';
 
+const configDir = path.dirname(fileURLToPath(import.meta.url));
 const tlsFixture = currentTLSFixture();
 
 const TEST_PORT = process.env.TEST_PORT ?? '18290';
@@ -53,7 +55,7 @@ export default defineConfig({
 			// Stubs for CookieProof / BrightCRM / Dockyard. Must come up before
 			// the atomicsite binary so it sees the env-injected URLs.
 			command: 'bun fixtures/stubs.ts',
-			cwd: __dirname,
+			cwd: configDir,
 			url: `http://127.0.0.1:${STUB_COOKIEPROOF_PORT}/__health`,
 			reuseExistingServer: false,
 			timeout: 15_000,
@@ -71,7 +73,7 @@ export default defineConfig({
 			// Wipe the test DB on every run so the seed step always starts fresh
 			// (the slug uniqueness check would 409 on a re-run otherwise).
 			command: `bash -lc 'rm -rf "$DATA_DIR" && ./bin/atomicsite'`,
-			cwd: path.resolve(__dirname, '../..'),
+			cwd: path.resolve(configDir, '../..'),
 			url: `${BASE_URL}/api/health`,
 			reuseExistingServer: false,
 			timeout: 60_000,

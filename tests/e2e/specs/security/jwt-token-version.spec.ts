@@ -1,10 +1,13 @@
 import { writeFileSync } from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { request } from '@playwright/test';
 import { test, expect, u } from '../../fixtures/auth';
 import { E2E_CONSTANTS } from '../../playwright.config';
 
-const COOKIE_FILE = path.resolve(__dirname, '../../.tmp/admin-cookie.txt');
+const currentDir = path.dirname(fileURLToPath(import.meta.url));
+
+const COOKIE_FILE = path.resolve(currentDir, '../../.tmp/admin-cookie.txt');
 
 // internal/store/users.sql.go bumps users.token_version on every password
 // change. internal/middleware/auth.go rejects JWTs whose `tv` claim is below

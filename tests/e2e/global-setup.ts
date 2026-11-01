@@ -1,9 +1,12 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { request } from '@playwright/test';
 import { E2E_CONSTANTS } from './playwright.config';
 
-const TMP_DIR = path.resolve(__dirname, '.tmp');
+const currentDir = path.dirname(fileURLToPath(import.meta.url));
+
+const TMP_DIR = path.resolve(currentDir, '.tmp');
 const COOKIE_FILE = path.join(TMP_DIR, 'admin-cookie.txt');
 
 async function waitForServer(baseURL: string, maxMs = 60_000): Promise<void> {
